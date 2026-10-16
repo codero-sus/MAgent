@@ -43,7 +43,7 @@ class Subscription:
     priority: int = 100
     delivered: int = 0
     errors: int = 0
-    id: str = field(default_factory=lambda: ulid_like("sub_"))
+    id: str = field(default_factory=lambda: ulid_like(prefix="sub_"))
 
     def accepts(self, event: AgentEvent) -> bool:
         """Report whether this subscription wants the given event."""
@@ -351,7 +351,7 @@ class EventBroadcaster:
 
     def connect(self, client_id: str = "") -> tuple[str, queue.Queue]:
         """Register a client and return ``(id, queue)``."""
-        identifier = client_id or ulid_like("sse_")
+        identifier = client_id or ulid_like(prefix="sse_")
         with self._lock:
             if len(self._clients) >= self.max_clients:
                 oldest = next(iter(self._clients))

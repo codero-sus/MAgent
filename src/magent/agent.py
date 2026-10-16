@@ -646,6 +646,9 @@ class Agent:
             try:
                 self.run(prompt, on_event=collector, **kwargs)
             except Exception as exc:  # noqa: BLE001 - surface failures as events
+                # ``run`` has already restored the agent's own callback, so the
+                # failure event is emitted (which publishes it to the bus) and
+                # then handed to the collector explicitly.
                 collector(self.emit(EventKind.RUN_FAILED, error=f"{type(exc).__name__}: {exc}"))
             finally:
                 finished.set()
@@ -653,8 +656,6 @@ class Agent:
                     condition.notify_all()
 
         thread = threading.Thread(target=worker, name=f"magent-{self.name}-stream", daemon=True)
-        previous = self.on_event
-        self.on_event = collector
         thread.start()
         try:
             while True:
@@ -667,7 +668,6 @@ class Agent:
                 if finished.is_set() and not queue:
                     break
         finally:
-            self.on_event = previous
             thread.join(timeout=1.0)
 
     def run(

@@ -52,26 +52,33 @@ def system_config_dir() -> Path:
 
 
 def user_config_dir() -> Path:
-    """Return the per-user configuration directory."""
-    if sys.platform == "win32":
-        base = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
-        return Path(base) / "magent"
-    return Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "magent"
+    """Return the per-user configuration directory.
+
+    Delegates to :func:`magent.paths.config_dir` so ``MAGENT_HOME`` and
+    ``MAGENT_CONFIG_DIR`` move the configuration along with everything else.
+    """
+    from .paths import config_dir
+
+    return config_dir()
 
 
 def user_data_dir() -> Path:
-    """Return the per-user data directory for caches, sessions, and stores."""
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
-        return Path(base) / "magent"
-    return Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "magent"
+    """Return the per-user data directory for sessions, memories and plugins.
+
+    Delegates to :func:`magent.paths.data_dir`, so ``MAGENT_DATA_DIR`` and
+    ``MAGENT_HOME`` relocate the configuration defaults and the rest of the
+    application together.
+    """
+    from .paths import data_dir
+
+    return data_dir()
 
 
 def user_cache_dir() -> Path:
-    """Return the per-user cache directory."""
-    if sys.platform == "win32":
-        return user_data_dir() / "cache"
-    return Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "magent"
+    """Return the per-user cache directory for response and embedding caches."""
+    from .paths import cache_dir
+
+    return cache_dir()
 
 
 def default_config_paths() -> list[Path]:

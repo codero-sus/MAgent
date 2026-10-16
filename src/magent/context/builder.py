@@ -266,6 +266,12 @@ class ContextBuilder:
         if self.short_term is None:
             return None
         window = getattr(self.short_term, "window", None)
+        if callable(window):
+            try:
+                window = window()
+            except Exception as exc:  # noqa: BLE001 - a broken window must not break the run
+                LOGGER.debug("short-term window lookup failed: %s", exc)
+                window = None
         summary = str(getattr(window, "summary", "") or "")
         transcript = ""
         if callable(getattr(self.short_term, "transcript", None)):

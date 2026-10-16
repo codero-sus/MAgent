@@ -389,7 +389,8 @@ class Agent:
         self.name = name
         self.logger = logger or LOGGER
         self.estimator = estimator or TokenEstimator()
-        self.events = events or EventBus()
+        # EventBus defines __len__, so an unused bus is falsy: compare with None.
+        self.events = events if events is not None else EventBus()
         self.on_event = on_event
         self.registry = registry if registry is not None else self._build_registry()
         resolved_workspace = Path(

@@ -141,20 +141,25 @@ def build_handoff(result: RunResult | None = None, *, task: str = "", from_agent
     run_id = ""
     touched: list[str] = list(files)
     if result is not None:
-        run_id = result.run_id
+        # Duck typing on purpose: a single-agent RunResult and a team result both
+        # describe finished work, and a handoff is useful after either.
+        run_id = str(getattr(result, "run_id", "") or "")
         if not text:
-            text = result.output or ""
+            text = str(getattr(result, "output", "") or "")
+        metadata = getattr(result, "metadata", None) or {}
         if not derived_task:
-            derived_task = str((result.metadata or {}).get("prompt", "") or "")
-        for step in result.steps:
-            for item in step.tool_results:
-                path = str((item.metadata or {}).get("path", "") or "")
+            derived_task = str(metadata.get("prompt", "") or "") or str(
+                getattr(result, "task", "") or "")
+        for step in getattr(result, "steps", None) or []:
+            for item in getattr(step, "tool_results", None) or []:
+                path = str((getattr(item, "metadata", None) or {}).get("path", "") or "")
                 if path and path not in touched:
                     touched.append(path)
-        if not blockers and result.error:
-            blockers = [result.error]
+        error = str(getattr(result, "error", "") or "")
+        if not blockers and error:
+            blockers = [error]
         if confidence is None:
-            confidence = 1.0 if result.succeeded else 0.4
+            confidence = 1.0 if getattr(result, "succeeded", False) else 0.4
     if confidence is None:
         confidence = 0.8 if text and not blockers else 0.3
     return Handoff(task=derived_task, summary=text, next_steps=list(next_steps), files=touched,

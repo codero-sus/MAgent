@@ -574,6 +574,15 @@ class Usage:
     audio_tokens: int = 0
     image_count: int = 0
 
+    def __post_init__(self) -> None:
+        """Fill in ``total_tokens`` when only the parts were supplied.
+
+        Backends that report a total keep it; a hand-built ``Usage(prompt, completion)``
+        otherwise summed to zero, which silently under-reported budgets and costs.
+        """
+        if not self.total_tokens:
+            self.total_tokens = int(self.prompt_tokens) + int(self.completion_tokens)
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> Usage:
         """Parse an OpenAI-style ``usage`` object, tolerating missing keys."""

@@ -56,7 +56,7 @@ def _inspect_tool(ctx: Any, registry: Any, args: argparse.Namespace) -> int:
     """Print one tool's schema and metadata."""
     name = args.query
     try:
-        tool = registry.get(name)
+        tool = registry.require(name)
     except MAgentError as exc:
         ctx.error(str(exc))
         suggestions = registry.suggest(name)
@@ -98,7 +98,7 @@ def _call_tool(ctx: Any, registry: Any, args: argparse.Namespace) -> int:
     """Invoke one tool with JSON arguments."""
     name = args.query
     try:
-        tool = registry.get(name)
+        tool = registry.require(name)
     except MAgentError as exc:
         ctx.error(str(exc))
         return 1

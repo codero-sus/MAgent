@@ -24,6 +24,7 @@ transcript can be replayed or scored by the evaluation harness.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import time
@@ -300,7 +301,7 @@ class RunOptions:
     allow_network: bool | None = None
     dry_run: bool = False
     stream: bool = False
-    structured: dict[str, Any] | None = None
+    structured: bool | dict[str, Any] | None = None
     context_block: str = ""
     memory_block: str = ""
     examples_block: str = ""
@@ -884,6 +885,11 @@ class Agent:
         except MaxIterationsError as exc:
             stop_reason = StopReason.MAX_ITERATIONS
             error_text = str(exc)
+        except StructuredOutputError:
+            # A caller that asked for a schema wants to know when the model could
+            # not satisfy it, so this one propagates instead of becoming a
+            # half-successful RunResult with ``structured=None``.
+            raise
         except (AgentError, ToolError) as exc:
             stop_reason = StopReason.ERROR
             error_text = f"{type(exc).__name__}: {exc}"
@@ -910,7 +916,6 @@ class Agent:
             "options": {key: value for key, value in options.metadata.items()},
             "tool_stats": self.registry.stats(),
         }
-        result.events = list(self.events.history(limit=500))
         self.history = list(conversation)
         self.last_run = result
         if options.remember_outcome or (options.remember_outcome is None and
@@ -925,6 +930,9 @@ class Agent:
                   output=ellipsize(result.output, 2000), steps=len(result.steps),
                   tool_calls=result.tool_call_count, usage=result.usage.to_dict(),
                   duration_ms=result.duration_ms, result=result)
+        # Captured after the terminal event so a consumer replaying
+        # ``result.events`` sees the run finish rather than a run that never did.
+        result.events = list(self.events.history(limit=500))
         return result
 
     def _finish_step(self, step: StepRecord, run_id: str) -> None:
@@ -1187,8 +1195,14 @@ class Agent:
 
     def _structured_output(self, text: str, options: RunOptions, conversation: list[Message],
                            run_id: str) -> Any:
-        """Parse and validate a structured response, repairing it once if needed."""
-        schema = options.structured or {}
+        """Parse and validate a structured response, repairing it once if needed.
+
+        ``structured=True`` asks for JSON without a schema; a dict is validated
+        against it.  Normalising here keeps the boolean form from reaching the
+        schema validator, which expects a mapping.
+        """
+        requested = options.structured
+        schema: dict[str, Any] = requested if isinstance(requested, dict) else {}
         parsed = parse_json_payload(text)
         error = "" if parsed is not None else "response did not contain parseable JSON"
         if parsed is not None and schema:
@@ -1455,15 +1469,30 @@ class Agent:
 # --------------------------------------------------------------------------- #
 
 
-def response_format_for(schema: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Convert a caller-supplied output schema into an OpenAI ``response_format``.
+def response_format_for(schema: Any) -> dict[str, Any] | None:
+    """Convert a caller-supplied output request into an OpenAI ``response_format``.
 
-    A bare JSON Schema is wrapped in the ``json_schema`` dialect; an already
-    dialect-shaped value (``{"type": "json_object"}``) is passed through, so
-    callers can use either form.
+    Accepted forms:
+
+    * ``None``/``False`` - no constraint;
+    * ``True`` - "reply with JSON", i.e. ``{"type": "json_object"}``.  Passing a
+      bool used to reach the schema branch and raise ``TypeError``, which made
+      the documented ``structured=True`` run option unusable;
+    * a JSON Schema - wrapped in the ``json_schema`` dialect;
+    * an already dialect-shaped value - passed through unchanged.
     """
-    if not schema:
+    if schema is None or schema is False:
         return None
+    if schema is True:
+        return {"type": "json_object"}
+    if isinstance(schema, str):
+        try:
+            parsed = json.loads(schema)
+        except ValueError:
+            return {"type": "json_object"}
+        return response_format_for(parsed)
+    if not isinstance(schema, dict):
+        return {"type": "json_object"}
     if "type" in schema and schema.get("type") in {"json_object", "json_schema", "text"}:
         if schema.get("type") == "json_schema" and "json_schema" in schema:
             return dict(schema)
@@ -1568,9 +1597,15 @@ def make_agent(backend: Any, **kwargs: Any) -> Agent:
     the agent constructor. This is the convenience entry point used by the CLI,
     the examples, and the test fixtures.
     """
-    agent_fields = {f.name for f in __import__("dataclasses").fields(AgentConfig)}
+    agent_fields = {field.name for field in dataclasses.fields(AgentConfig)}
     config_kwargs = {key: kwargs.pop(key) for key in list(kwargs) if key in agent_fields}
-    config = kwargs.pop("config", None) or AgentConfig(**config_kwargs)
+    supplied = kwargs.pop("config", None)
+    if supplied is not None:
+        for key, value in config_kwargs.items():
+            setattr(supplied, key, value)
+        config = supplied
+    else:
+        config = AgentConfig(**config_kwargs)
     return Agent(backend=backend, config=config, **kwargs)
 
 

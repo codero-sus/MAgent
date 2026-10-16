@@ -351,6 +351,10 @@ class SessionStore:
                 text = message.text()
                 if needle in text.lower():
                     hits.append(ellipsize(text.replace("\n", " "), 120))
+            for turn in record.turns:
+                for text in (turn.prompt, turn.answer):
+                    if text and needle in text.lower():
+                        hits.append(ellipsize(text.replace("\n", " "), 120))
             if needle in record.summary.lower():
                 hits.append(ellipsize(record.summary.replace("\n", " "), 120))
             if hits:

@@ -23,7 +23,8 @@ from ...utils.text import ellipsize
 
 def eval_command(ctx: Any, args: argparse.Namespace) -> int:
     """``magent eval`` - run an evaluation dataset or list what is available."""
-    from ...eval import (EvalRunner, REPORT_FORMATS, load_dataset, metric_names, sample_dataset)
+    from ...eval import EvalRunner, load_dataset, metric_names, sample_dataset
+    from ...eval.runner import REPORT_FORMATS
 
     action = getattr(args, "action", "") or "run"
     if action == "metrics":
@@ -60,7 +61,8 @@ def eval_command(ctx: Any, args: argparse.Namespace) -> int:
                         concurrency=args.concurrency, threshold=args.threshold or 0.0,
                         run_options={"max_iterations": args.max_iterations}
                         if getattr(args, "max_iterations", 0) else None)
-    show_progress = not ctx.quiet and ctx.config.output.format == "text"
+    machine_format = bool(args.report_format) or ctx.config.output.format != "text"
+    show_progress = not ctx.quiet and not machine_format
     report = runner.run(dataset, progress=(lambda done, total: ctx.write(
         f"\r\033[Kevaluating {done}/{total}") if show_progress else None))
     if show_progress:
@@ -88,9 +90,36 @@ def eval_command(ctx: Any, args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def _price_book(config: Any) -> Any:
+    """Build a :class:`~magent.llm.usage.PriceBook` from configuration.
+
+    Prices live in ``[pricing.prompt_per_million]`` / ``[pricing.completion_per_million]``
+    when the user configured them; an unknown model simply costs nothing, which
+    is the honest answer for a local model running on the user's own hardware.
+    """
+    from ...llm.usage import PriceBook
+
+    pricing = getattr(config, "extra", {}) or {}
+    section = pricing.get("pricing") if isinstance(pricing, dict) else {}
+    if not isinstance(section, dict):
+        return PriceBook()
+    prompt_rates = {str(key): float(value) for key, value in
+                    (section.get("prompt_per_million") or {}).items()} \
+        if isinstance(section.get("prompt_per_million"), dict) else {}
+    completion_rates = {str(key): float(value) for key, value in
+                        (section.get("completion_per_million") or {}).items()} \
+        if isinstance(section.get("completion_per_million"), dict) else {}
+    return PriceBook(prompt_per_million=prompt_rates,
+                     completion_per_million=completion_rates,
+                     default_prompt=float(section.get("default_prompt", 0.0) or 0.0),
+                     default_completion=float(section.get("default_completion", 0.0) or 0.0),
+                     currency=str(section.get("currency", "USD") or "USD"))
+
+
 def bench_command(ctx: Any, args: argparse.Namespace) -> int:
     """``magent bench`` - measure backend latency, throughput and cost."""
-    from ...llm.usage import PriceBook
+    from ...llm.base import CompletionRequest, Message
+    from ...types import Usage
 
     backend = ctx.backend
     prompt = args.prompt or "Reply with a single short sentence about the weather."
@@ -101,10 +130,15 @@ def bench_command(ctx: Any, args: argparse.Namespace) -> int:
     started = time.perf_counter()
     for index in range(repeats):
         try:
+            request = CompletionRequest(
+                messages=[Message.user(f"{prompt} ({index + 1})")],
+                model=getattr(backend, "default_model", "") or "",
+                temperature=0.0,
+                max_tokens=int(args.max_tokens or 64),
+                timeout=float(getattr(ctx.config.server, "timeout", 120.0) or 120.0),
+            )
             t0 = time.perf_counter()
-            response = backend.chat([{"role": "user", "content": f"{prompt} ({index + 1})"}],
-                                    temperature=0.0,
-                                    max_tokens=int(args.max_tokens or 64))
+            response = backend.complete(request)
             latencies.append((time.perf_counter() - t0) * 1000.0)
             usage = getattr(response, "usage", None)
             prompt_tokens += getattr(usage, "prompt_tokens", 0) or 0
@@ -113,8 +147,9 @@ def bench_command(ctx: Any, args: argparse.Namespace) -> int:
             failures.append(f"{type(exc).__name__}: {exc}")
     elapsed = time.perf_counter() - started
     model = getattr(backend, "default_model", "") or getattr(backend, "name", "")
-    prices = PriceBook.from_config(ctx.config)
-    estimate = prices.cost(model, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+    prices = _price_book(ctx.config)
+    estimate = prices.cost(model, Usage(prompt_tokens=prompt_tokens,
+                                        completion_tokens=completion_tokens))
     payload = {
         "backend": type(backend).__name__,
         "model": model,
@@ -157,8 +192,15 @@ def improvements_command(ctx: Any, args: argparse.Namespace) -> int:
     from ...paths import improvements_manifest
 
     action = getattr(args, "action", "") or "verify"
-    manifest = (Path(args.manifest).expanduser() if args.manifest
-                else improvements_manifest(root=ctx.workspace))
+    if args.manifest:
+        manifest = Path(args.manifest).expanduser()
+    else:
+        candidate = improvements_manifest(root=ctx.workspace)
+        if not candidate.is_file():
+            # A project without a manifest of its own still ships this one, which
+            # describes the installation rather than the project.
+            candidate = improvements_manifest()
+        manifest = candidate
     if not manifest.is_file():
         ctx.error(f"manifest not found at {manifest}; run `make improvements` first")
         return 1

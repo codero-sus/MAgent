@@ -91,10 +91,14 @@ def rag_command(ctx: Any, args: argparse.Namespace) -> int:
     retriever = ctx.retriever
     action = getattr(args, "action", "") or "status"
     if action == "ingest":
-        paths = list(args.paths or [])
-        if not paths:
-            paths = [str(ctx.workspace)]
-        report = retriever.ingest(paths, root=str(ctx.workspace) if not args.no_root else None)
+        raw_paths = list(args.paths or []) or [str(ctx.workspace)]
+        paths: list[Path] = []
+        for item in raw_paths:
+            candidate = Path(item).expanduser()
+            if not candidate.is_absolute() and not args.no_root:
+                candidate = ctx.workspace / candidate
+            paths.append(candidate)
+        report = retriever.ingest(paths)
         path = ctx.save_index()
         if ctx.config.output.format != "text":
             ctx.emit({"report": report.to_dict(), "index": str(path or "")},

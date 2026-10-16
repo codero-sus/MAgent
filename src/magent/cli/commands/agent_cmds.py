@@ -268,8 +268,8 @@ def plan_command(ctx: Any, args: argparse.Namespace) -> int:
     ctx.print("")
     rows = []
     for index, step in enumerate(plan.steps, start=1):
-        rows.append((str(index), step.description or step.goal, step.tool or "-",
-                     step.status or "pending"))
+        rows.append((str(index), f"{step.title or ''} {step.detail or ''}".strip(),
+                     step.tool or "-", step.status or "pending"))
     ctx.table(rows, ["#", "step", "tool", "status"])
     if getattr(plan, "notes", ""):
         ctx.print("")

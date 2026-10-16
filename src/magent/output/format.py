@@ -48,28 +48,54 @@ def normalize_format(name: str | None) -> str:
     return value if value in FORMATS else DEFAULT_FORMAT
 
 
-def to_plain(value: Any) -> Any:
-    """Convert dataclasses, enums and paths into JSON-friendly primitives."""
+CYCLE_MARKER = "<recursive>"
+"""Placeholder emitted when a value refers back to itself."""
+
+MAX_PLAIN_DEPTH = 32
+"""Depth ceiling for :func:`to_plain`, so a deep structure cannot blow the stack."""
+
+
+def to_plain(value: Any, _seen: set[int] | None = None, _depth: int = 0) -> Any:
+    """Convert dataclasses, enums and paths into JSON-friendly primitives.
+
+    Cycles are cut rather than followed: a run's final event carries the run
+    itself, so the naive walk recursed until Python raised ``RecursionError``.
+    Objects that define ``to_dict`` are asked for their own representation
+    first, because that is the shape their author intended to serialise.
+    """
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Path):
         return str(value)
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {key: to_plain(getattr(value, key)) for key in value.__dataclass_fields__}
-    if isinstance(value, Mapping):
-        return {str(key): to_plain(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [to_plain(item) for item in value]
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        try:
-            return to_plain(value.to_dict())
-        except TypeError:
-            pass
-    if hasattr(value, "__dict__"):
-        return {key: to_plain(item) for key, item in vars(value).items() if not key.startswith("_")}
-    return str(value)
+    if _depth >= MAX_PLAIN_DEPTH:
+        return CYCLE_MARKER
+    seen = _seen if _seen is not None else set()
+    identity = id(value)
+    if identity in seen:
+        return CYCLE_MARKER
+    seen.add(identity)
+    try:
+        if isinstance(value, Mapping):
+            return {str(key): to_plain(item, seen, _depth + 1) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [to_plain(item, seen, _depth + 1) for item in value]
+        converter = getattr(value, "to_dict", None)
+        if callable(converter):
+            try:
+                return to_plain(converter(), seen, _depth + 1)
+            except TypeError:
+                pass
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            return {key: to_plain(getattr(value, key), seen, _depth + 1)
+                    for key in value.__dataclass_fields__}
+        if hasattr(value, "__dict__"):
+            return {key: to_plain(item, seen, _depth + 1) for key, item in vars(value).items()
+                    if not key.startswith("_")}
+        return str(value)
+    finally:
+        seen.discard(identity)
 
 
 def to_yaml(value: Any, *, indent: int = 0) -> str:
@@ -417,7 +443,9 @@ def iter_records(value: Any) -> Iterable[Mapping[str, Any]]:
 
 
 __all__ = [
+    "CYCLE_MARKER",
     "DEFAULT_FORMAT",
+    "MAX_PLAIN_DEPTH",
     "FORMATS",
     "YAML_INDENT",
     "dump_formats",

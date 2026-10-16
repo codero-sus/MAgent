@@ -88,6 +88,14 @@ def transcript_markdown(record: SessionRecord, *, include_metadata: bool = True,
         parts.append("\n".join(f"- {line}" for line in _header_lines(record)))
     if record.summary:
         parts.append("## Summary\n\n" + record.summary)
+    if not record.messages and record.turns:
+        # Records built from turns alone still deserve a readable transcript.
+        exchange: list[str] = ["## Conversation"]
+        for turn in record.turns:
+            exchange.append(f"**USER**\n\n{turn.prompt}")
+            if turn.answer:
+                exchange.append(f"**ASSISTANT**\n\n{ellipsize(turn.answer, max_chars)}")
+        parts.append("\n\n".join(exchange))
     if record.messages:
         body: list[str] = ["## Conversation"]
         for message in record.messages:

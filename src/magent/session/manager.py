@@ -312,9 +312,13 @@ class SessionManager:
             parts.append(f"Summary: {record.summary}")
         dialogue = [message for message in record.messages
                     if str(getattr(message.role, "value", message.role)) != "system"]
-        recent = dialogue[-turns * 2:]
-        if recent:
-            parts.append("Recent exchange:\n" + messages_to_transcript(recent))
+        if dialogue:
+            parts.append("Recent exchange:\n" + messages_to_transcript(dialogue[-turns * 2:]))
+        elif record.turns:
+            recent_turns = record.turns[-turns:]
+            rendered = "\n".join(f"user: {item.prompt}\nassistant: {item.answer}"
+                                 for item in recent_turns)
+            parts.append("Recent exchange:\n" + rendered)
         tools = record.tool_usage()
         if tools:
             parts.append("Tools used: " + ", ".join(f"{name}×{count}"

@@ -37,6 +37,8 @@ COMMON_FLAGS: tuple[tuple[tuple[str, ...], dict[str, object]], ...] = (
     (("--color",), {"action": "store_true", "help": "force ANSI colour"}),
     (("--ascii",), {"action": "store_true", "help": "ASCII-only output"}),
     (("--width",), {"type": int, "default": 0, "help": "output width in columns"}),
+    (("--output-file",), {"dest": "output_file", "default": "", "metavar": "PATH",
+                          "help": "also write rendered output to this file"}),
 )
 """Flags shared by every command."""
 
@@ -100,8 +102,6 @@ def build_parser(commands: Sequence[Command] | None = None, *, prog: str = PROGR
         epilog=_epilog(items),
     )
     parser.add_argument("--version", action="version", version=f"{prog} {__version__}")
-    parser.add_argument("--output-file", dest="output_file", default="", metavar="PATH",
-                        help="also write rendered output to this file")
     _add_flags(parser, suppress_defaults=False, groups=GLOBAL_FLAGS)
 
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")

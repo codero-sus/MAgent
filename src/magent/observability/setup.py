@@ -94,7 +94,7 @@ class Observability:
         )
         self.metrics = metrics if metrics is not None else MetricsRegistry()
         self.logger = logger or LOGGER
-        self.subscriptions: list[Any] = []
+        self.subscriptions: list[tuple[Any, Any]] = []
         self.started_at = time.time()
         self.runs = 0
         self.errors = 0
@@ -140,19 +140,19 @@ class Observability:
             self.logger.debug("no event bus to observe")
             return self
         subscription = target.subscribe(self.record_event, name="observability", priority=200)
-        self.subscriptions.append(subscription)
+        # The bus owns removal, so keep it alongside the subscription: a
+        # Subscription has no cancel method of its own.
+        self.subscriptions.append((target, subscription))
         self.metrics.inc("observers_attached")
         return self
 
     def detach(self) -> int:
         """Unsubscribe from every bus; returns how many were removed."""
         removed = 0
-        for subscription in self.subscriptions:
+        for bus, subscription in list(self.subscriptions):
             try:
-                if hasattr(subscription, "cancel"):
-                    subscription.cancel()
-                elif hasattr(subscription, "unsubscribe"):
-                    subscription.unsubscribe()
+                if hasattr(bus, "unsubscribe"):
+                    bus.unsubscribe(subscription)
                 removed += 1
             except Exception as exc:  # noqa: BLE001 - detaching must not raise
                 self.logger.debug("detach failed: %s", exc)

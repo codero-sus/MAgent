@@ -252,7 +252,15 @@ class EventBus:
             }
 
     def wait_for(self, predicate: Callable[[AgentEvent], bool], *, timeout: float = 5.0) -> AgentEvent | None:
-        """Block until a matching event is published, or the timeout elapses."""
+        """Block until a matching event is published, or the timeout elapses.
+
+        Events already in the history are checked first, so a caller that waited
+        for a run to finish before subscribing still finds the event instead of
+        timing out on a race it cannot win.
+        """
+        for event in self.history(limit=None):
+            if predicate(event):
+                return event
         deadline = time.monotonic() + timeout
         found: list[AgentEvent] = []
 

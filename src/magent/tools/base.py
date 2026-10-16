@@ -749,16 +749,25 @@ class ToolRegistry:
             return self._tools.get(resolved) if resolved else None
 
     def require(self, name: str) -> Tool:
-        """Return one tool or raise :class:`ToolNotFoundError` with suggestions."""
+        """Return one tool or raise :class:`ToolNotFoundError` with suggestions.
+
+        The error carries the best near-miss plus up to eight registered names:
+        a message listing all hundred-odd tools is unreadable in a terminal and
+        useless to a model deciding what to call next.
+        """
         instance = self.get(name)
         if instance is None:
             from ..utils.diff import closest_match
 
-            suggestion = closest_match(name, self.names())
+            names = sorted(self.names())
+            suggestion = closest_match(name, names)
             hint = f" Did you mean {suggestion!r}?" if suggestion else ""
+            preview = ", ".join(names[:8])
+            more = f" (+{len(names) - 8} more)" if len(names) > 8 else ""
             self.unknown_calls[name] += 1
             raise ToolNotFoundError(
-                f"Unknown tool {name!r}.{hint} Registered: {', '.join(sorted(self.names())) or 'none'}"
+                f"Unknown tool {name!r}.{hint} Registered: {preview or 'none'}{more}",
+                details={"requested": name, "suggestion": suggestion, "registered": names},
             )
         return instance
 

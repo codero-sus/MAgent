@@ -387,7 +387,7 @@ class MagentServer:
         registry = self._registry()
         name = request.params.get("name", "")
         try:
-            tool = registry.get(name)
+            tool = registry.require(name)
         except ToolNotFoundError as exc:
             return 404, {"error": str(exc), "suggestions": registry.suggest(name)}
         arguments = request.json or {}

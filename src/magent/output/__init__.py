@@ -14,9 +14,11 @@ Public API:
 :class:`OutputSink` and friends
     where text goes: console, buffer, file, tee, timestamp, null.
 
->>> from magent.output import render_value, render_markdown
->>> render_value({"a": 1}, "json")
-'{\n  "a": 1\n}'
+>>> from magent.output import render_value, render_markdown, to_yaml
+>>> render_value({"a": 1}, "yaml")
+'a: 1'
+>>> "b:" in to_yaml({"a": 1, "b": [1, 2]})
+True
 >>> "bold" in render_markdown("**bold**", color=False)
 True
 """

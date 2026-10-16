@@ -11,7 +11,7 @@ TESTS  := tests
 .DEFAULT_GOAL := help
 
 .PHONY: help install test unit smoke smoke-tools tools lint type fmt check verify count
-.PHONY: demo doctor run serve bench eval all clean dist
+.PHONY: demo examples doctor run serve bench eval all clean dist improvements verify-quick
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -35,7 +35,13 @@ smoke-tools: ## Exercise every built-in tool against a throwaway workspace
 tools: ## List every built-in tool by category
 	PYTHONPATH=$(SRC) $(PYTHON) -m magent tools list
 
+improvements: ## Regenerate improvements.json and IMPROVEMENTS.md from the source tree
+	$(PYTHON) scripts/build_improvements.py
+
 verify: ## Prove every numbered improvement points at real code
+	$(PYTHON) scripts/verify_improvements.py --strict
+
+verify-quick: ## Verify the manifest references without regenerating
 	$(PYTHON) scripts/verify_improvements.py
 
 count: ## Print how many improvements are registered
@@ -52,10 +58,16 @@ type: ## Type check with mypy if it happens to be installed
 fmt: ## Auto-format with ruff if it happens to be installed
 	@$(PYTHON) -m ruff format $(SRC) $(TESTS) examples scripts || echo "ruff not installed"
 
-check: test verify smoke smoke-tools ## Tests + improvement verification + smoke runs
+check: test smoke smoke-tools verify ## Tests + smoke runs + improvement verification
 
 demo: ## Offline demo against the built-in Echo backend
-	PYTHONPATH=$(SRC) $(PYTHON) examples/01_hello_magent.py
+	PYTHONPATH=$(SRC) $(PYTHON) examples/01_hello_agent.py
+
+examples: ## Run every example offline
+	@for file in examples/0*.py; do echo "== $$file"; PYTHONPATH=$(SRC) $(PYTHON) $$file >/dev/null || exit 1; done; echo "all examples ran"
+
+eval: ## Run the sample evaluation dataset
+	PYTHONPATH=$(SRC) $(PYTHON) -m magent eval --offline --report-format text
 
 doctor: ## Diagnose the local Cortex LLMHoster connection
 	PYTHONPATH=$(SRC) $(PYTHON) -m magent doctor

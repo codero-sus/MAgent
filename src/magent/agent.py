@@ -520,24 +520,32 @@ class Agent:
         memory_block = options.memory_block
         if not memory_block and self.memory is not None:
             memory_block = self._memory_block()
-        return build_system_prompt(
-            agent_name=self.name,
-            tagline=DEFAULT_TAGLINE,
-            persona=persona,
-            backend_name=getattr(self.backend, "name", "local"),
-            model=options.model or self.model,
-            workspace=self.workspace,
-            registry=registry if registry is not None else self.registry,
-            context_block=options.context_block,
-            memory_block=memory_block,
-            task_block=options.task_block,
-            examples_block=options.examples_block,
-            extra_instructions=self.config.extra_instructions,
-            system_prompt_override=options.system or self.config.system_prompt,
-            include_files=options.include_files,
-            max_tokens=int(getattr(self.settings.model, "system_prompt_tokens", 0) or 0),
-            **self.prompt_defaults,
-        )
+        # Agent-level prompt defaults are the base; per-run options override
+        # them, except that an empty option keeps a non-empty default (that is
+        # what lets a preset supply examples without every call repeating them).
+        kwargs: dict[str, Any] = dict(self.prompt_defaults)
+        options_kwargs: dict[str, Any] = {
+            "agent_name": self.name,
+            "tagline": DEFAULT_TAGLINE,
+            "persona": persona,
+            "backend_name": getattr(self.backend, "name", "local"),
+            "model": options.model or self.model,
+            "workspace": self.workspace,
+            "registry": registry if registry is not None else self.registry,
+            "context_block": options.context_block,
+            "memory_block": memory_block,
+            "task_block": options.task_block,
+            "examples_block": options.examples_block,
+            "extra_instructions": self.config.extra_instructions,
+            "system_prompt_override": options.system or self.config.system_prompt,
+            "include_files": options.include_files,
+            "max_tokens": int(getattr(self.settings.model, "system_prompt_tokens", 0) or 0),
+        }
+        for key, value in options_kwargs.items():
+            if value == "" and isinstance(kwargs.get(key), str) and kwargs[key]:
+                continue
+            kwargs[key] = value
+        return build_system_prompt(**kwargs)
 
     def _memory_block(self, query: str = "") -> str:
         """Recall memories and render them as a prompt block."""
@@ -892,6 +900,8 @@ class Agent:
         result.metadata = {
             "mode": mode,
             "agent": self.name,
+            "prompt": prompt,
+            "session_id": options.session_id,
             "workspace": str(self.workspace),
             "plan": plan.to_dict() if plan else None,
             "tracker": tracker.snapshot(),

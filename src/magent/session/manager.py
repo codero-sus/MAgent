@@ -194,17 +194,32 @@ class SessionManager:
         """Add several messages."""
         return sum(1 for _ in (self.record_message(message) for message in messages))
 
-    def record_run(self, prompt: str, result: RunResult) -> Turn:
+    def record_run(self, result: RunResult, *, session_id: str = "", prompt: str = "") -> Turn:
         """Fold a completed run into the session.
 
+        The agent calls this as ``record_run(result, session_id=...)``, so the
+        result comes first and the prompt is recovered from the run when the
+        caller does not supply one.
+
         Args:
-            prompt: the user's text
-            result: the run outcome
+            result: the finished run
+            session_id: session to record into; the current one when empty
+            prompt: the user's text, derived from the run when omitted
         """
+        if session_id and self.current is not None and self.current.id != session_id                 and session_id != "default":
+            stored = self.store.load(session_id)
+            if stored is not None:
+                self.current = stored
         record = self.ensure()
+        question = prompt or str((result.metadata or {}).get("prompt", "") or "")
+        if not question:
+            for message in reversed(result.messages or []):
+                if str(getattr(message.role, "value", message.role)) == "user":
+                    question = message.text()
+                    break
         tools = sorted({call.name for step in result.steps for call in step.tool_calls})
         turn = record.add_turn(
-            prompt, result.output,
+            question, result.output,
             started_at=result.started_at,
             seconds=round(result.duration_ms / 1000, 4),
             tools=tools,
@@ -216,14 +231,15 @@ class SessionManager:
         )
         record.add_messages(result.messages or [])
         if not record.messages:
-            record.add_message(Message.user(prompt))
+            if question:
+                record.add_message(Message.user(question))
             if result.output:
                 record.add_message(Message.assistant(result.output))
         record.add_usage(result.usage, cost=getattr(result.cost, "total", 0.0) or 0.0)
         if result.model:
             record.model = result.model
         if not record.title:
-            record.title = derive_title(prompt)
+            record.title = derive_title(question)
         if self.short_term is not None:
             self._sync_short_term()
         if self.autosave:

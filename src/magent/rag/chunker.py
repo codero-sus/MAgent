@@ -27,7 +27,8 @@ import ast
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 from ..utils.files import read_text_safe
 from ..utils.hashing import content_hash
@@ -126,6 +127,21 @@ class Chunk:
             strategy=str(raw.get("strategy", "paragraph")),
             metadata=dict(raw.get("metadata") or {}),
         )
+
+
+def _strip_leading_heading(body: str, headings: Sequence[str]) -> str:
+    """Drop the section's own heading line when the heading trail is prepended.
+
+    Without this the title appears twice in one chunk, which inflates its term
+    frequency and makes short documents dominate BM25 rankings.
+    """
+    if not headings:
+        return body
+    first, _, rest = body.partition("\n")
+    match = HEADING.match(first)
+    if match and match.group(2).strip() == headings[-1]:
+        return rest.strip()
+    return body
 
 
 def _line_of(text: str, offset: int) -> int:
@@ -266,7 +282,8 @@ def chunk_markdown(text: str, *, source: str = "", max_chars: int = DEFAULT_MAX_
         if not body.strip():
             continue
         trail = " > ".join(headings)
-        rendered = f"{trail}\n\n{body}" if (keep_headings and trail) else body
+        body_text = _strip_leading_heading(body, headings)
+        rendered = f"{trail}\n\n{body_text}" if (keep_headings and trail) else body
         for piece_index, piece in enumerate(chunk_text(rendered, max_chars=max_chars, overlap=0)):
             chunks.append(Chunk(
                 text=piece.strip(),
@@ -281,6 +298,14 @@ def chunk_markdown(text: str, *, source: str = "", max_chars: int = DEFAULT_MAX_
                 metadata=dict(metadata or {}),
             ))
     return [chunk for chunk in chunks if chunk.text]
+
+
+def _safe_docstring(node: ast.AST) -> str:
+    """Return a node's docstring, tolerating nodes that cannot carry one."""
+    try:
+        return ast.get_docstring(node) or ""
+    except (TypeError, ValueError):  # ast.Expr / non-docstring first statement
+        return ""
 
 
 def chunk_python(source_code: str, *, source: str = "", max_chars: int = DEFAULT_MAX_CHARS,
@@ -306,7 +331,7 @@ def chunk_python(source_code: str, *, source: str = "", max_chars: int = DEFAULT
         if not body.strip():
             continue
         name = getattr(node, "name", "") or type(node).__name__
-        docstring = ast.get_docstring(node) or ""
+        docstring = _safe_docstring(node)
         for piece_index, piece in enumerate(chunk_text(body, max_chars=max_chars, overlap=0)):
             chunks.append(Chunk(
                 text=piece.strip(),

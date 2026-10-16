@@ -34,6 +34,30 @@ INDEX_VERSION = 1
 """Schema version written into a saved index."""
 
 
+def augmented_text(chunk: Chunk) -> str:
+    """Return the text BM25 scores for a chunk.
+
+    Tiny corpora give rare tokens (a project name, a lone heading word) a huge
+    IDF, so a short document containing one can outrank the document that
+    actually answers the query.  Repeating the heading, the file stem and the
+    symbol name in the scored text spreads those tokens across every chunk of
+    the same file and gives queries that mention a filename or function a fair
+    chance to match.  The stored ``chunk.text`` is left untouched: augmentation
+    affects ranking only, never the context handed to the model.
+    """
+    parts: list[str] = []
+    if chunk.heading:
+        parts.extend([chunk.heading, chunk.heading])
+    stem = Path(chunk.source).stem
+    if stem:
+        parts.append(stem)
+    symbol = str(chunk.metadata.get("symbol") or "")
+    if symbol:
+        parts.append(symbol)
+    parts.append(chunk.text)
+    return "\n".join(part for part in parts if part)
+
+
 class ChunkIndex:
     """Hybrid lexical and vector index over document chunks."""
 
@@ -150,11 +174,11 @@ class ChunkIndex:
         """Return normalized BM25 scores, rebuilding the scorer when needed."""
         with self._lock:
             if self._dirty_scorer or self._scorer is None:
-                self._scorer = BM25Scorer(self._chunks)
+                self._scorer = BM25Scorer([augmented_text(c) for c in self._chunks])
                 self._dirty_scorer = False
             scorer = self._scorer
         if scorer.total != len(self._chunks):
-            scorer = BM25Scorer(self._chunks)
+            scorer = BM25Scorer([augmented_text(c) for c in self._chunks])
             with self._lock:
                 self._scorer = scorer
                 self._dirty_scorer = False
@@ -188,7 +212,7 @@ class ChunkIndex:
         active = mode if mode in {"hybrid", "bm25", "vector", "none"} else "hybrid"
         lexical: dict[str, float] = {}
         if active in {"hybrid", "bm25"} and query.strip():
-            scorer = BM25Scorer(candidates)
+            scorer = BM25Scorer([augmented_text(c) for c in candidates])
             for chunk, score in zip(candidates, scorer.scores(query), strict=True):
                 lexical[chunk.id] = score
         semantic: dict[str, float] = {}
@@ -317,4 +341,4 @@ class ChunkIndex:
         return f"<ChunkIndex chunks={len(self._chunks)} sources={len(self.sources())}>"
 
 
-__all__ = ["INDEX_VERSION", "ChunkIndex"]
+__all__ = ["INDEX_VERSION", "ChunkIndex", "augmented_text"]

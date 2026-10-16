@@ -142,13 +142,18 @@ class Repl:
         return True
 
     def cmd_tools(self, argument: str = "") -> bool:
-        """List tools, optionally filtered by a search term."""
+        """List tools, optionally filtered by a search term.
+
+        ``registry.search`` returns specifications (the discovery path used by the
+        ``list_tools`` meta tool), so the rows are read from those rather than
+        from ``Tool`` objects.
+        """
         registry = self.ctx.registry
-        tools = registry.search(text=argument) if argument else registry.tools()
-        rows = [(tool.spec.name, tool.spec.category, tool.spec.risk,
-                 ellipsize(tool.spec.description.split("\n")[0], 60)) for tool in tools[:40]]
+        specs = registry.search(text=argument) if argument else [tool.spec for tool in registry.tools()]
+        rows = [(spec.name, spec.category, spec.risk,
+                 ellipsize(spec.description.split("\n")[0], 60)) for spec in specs[:40]]
         self.ctx.table(rows, ["name", "category", "risk", "description"],
-                       title=f"{len(tools)} tools" + (f" matching {argument!r}" if argument else ""))
+                       title=f"{len(specs)} tools" + (f" matching {argument!r}" if argument else ""))
         return True
 
     def cmd_memory(self, argument: str = "") -> bool:

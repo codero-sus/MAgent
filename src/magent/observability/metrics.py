@@ -46,6 +46,16 @@ class Metric:
         """Metric type name."""
         return "metric"
 
+    @property
+    def prometheus_name(self) -> str:
+        """Sample family name, including the unit suffix.
+
+        Prometheus treats ``# TYPE`` and the samples as one family, so a metric
+        recorded with ``unit="ms"`` must be announced as ``name_ms`` - otherwise
+        a scraper rejects the exposition as malformed.
+        """
+        return f"{self.name}_{self.unit}" if self.unit else self.name
+
     def value(self) -> Any:
         """Current value."""
         return None
@@ -57,8 +67,7 @@ class Metric:
 
     def prometheus_lines(self) -> list[str]:
         """Lines in the Prometheus text exposition format."""
-        suffix = f"_{self.unit}" if self.unit else ""
-        return [f"{self.name}{suffix}{_label_text(self.labels)} {self._prometheus_value()}"]
+        return [f"{self.prometheus_name}{_label_text(self.labels)} {self._prometheus_value()}"]
 
     def _prometheus_value(self) -> str:
         """Value formatted for Prometheus."""
@@ -257,8 +266,7 @@ class Histogram(Metric):
 
     def prometheus_lines(self) -> list[str]:
         """Emit ``_bucket``, ``_sum`` and ``_count`` lines."""
-        suffix = f"_{self.unit}" if self.unit else ""
-        base = f"{self.name}{suffix}"
+        base = self.prometheus_name
         plain = _label_text(self.labels)
         lines: list[str] = []
         cumulative = 0
@@ -398,11 +406,12 @@ class MetricsRegistry:
         lines: list[str] = []
         seen_help: set[str] = set()
         for metric in self.metrics():
-            if metric.name not in seen_help:
+            family = metric.prometheus_name
+            if family not in seen_help:
                 if metric.help:
-                    lines.append(f"# HELP {metric.name} {metric.help}")
-                lines.append(f"# TYPE {metric.name} {metric.kind}")
-                seen_help.add(metric.name)
+                    lines.append(f"# HELP {family} {metric.help}")
+                lines.append(f"# TYPE {family} {metric.kind}")
+                seen_help.add(family)
             lines.extend(metric.prometheus_lines())
         lines.append(f"{self.prefix}_uptime_seconds {time.time() - self.started_at:.3f}")
         return "\n".join(lines) + "\n"

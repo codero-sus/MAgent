@@ -26,6 +26,17 @@ from .dataset import EvalCase
 MIN_PASS_SCORE = 0.6
 """A case passes when its weighted score reaches this."""
 
+HARD_METRICS: frozenset[str] = frozenset({
+    "exact_match", "contains", "not_contains", "regex", "json_valid", "tools", "max_steps",
+    "max_tokens", "max_seconds", "no_error",
+})
+"""Metrics that fail a case outright when they fail.
+
+Averaging hid real failures: a missing required substring scored 0.86 and the
+case passed because the other six metrics were satisfied. An explicit assertion
+is not a vote.
+"""
+
 
 @dataclass(slots=True)
 class MetricOutcome:
@@ -64,8 +75,10 @@ class CaseScore:
 
     @property
     def passed(self) -> bool:
-        """True when the run produced no error and scored at or above the bar."""
+        """True when no hard assertion failed and the score reaches the bar."""
         if self.error:
+            return False
+        if any(not item.passed and item.name in HARD_METRICS for item in self.outcomes):
             return False
         return self.score >= MIN_PASS_SCORE
 
@@ -391,6 +404,7 @@ def weighted_pass_rate(scores: Sequence[CaseScore]) -> float:
 
 __all__ = [
     "DEFAULT_METRIC_NAMES",
+    "HARD_METRICS",
     "METRICS",
     "MIN_PASS_SCORE",
     "CaseScore",

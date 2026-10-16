@@ -117,19 +117,28 @@ class TokenBucket:
                 return float("inf")
             return (tokens - balance) / self.rate
 
-    def try_acquire(self, tokens: float = 1.0) -> bool:
-        """Take tokens when available, without waiting."""
+    def try_acquire(self, tokens: float = 1.0, *, count: bool = True) -> bool:
+        """Take tokens when available, without waiting.
+
+        Args:
+            tokens: how many to take
+            count: record the decision; :meth:`acquire` passes ``False`` while it
+                polls, so one logical denial is not counted once per attempt
+        """
         with self._lock:
             now = time.monotonic()
             balance = self._refill(now)
-            self.stats.last_decision_at = time.time()
+            if count:
+                self.stats.last_decision_at = time.time()
             if balance >= tokens:
                 self.tokens = balance - tokens
-                self.stats.allowed += 1
-                self.stats.last_reason = ""
+                if count:
+                    self.stats.allowed += 1
+                    self.stats.last_reason = ""
                 return True
-            self.stats.denied += 1
-            self.stats.last_reason = f"need {tokens}, have {balance:.3f}"
+            if count:
+                self.stats.denied += 1
+                self.stats.last_reason = f"need {tokens}, have {balance:.3f}"
             return False
 
     def acquire(self, tokens: float = 1.0, *, timeout: float | None = None) -> bool:
@@ -145,18 +154,28 @@ class TokenBucket:
         deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
         started = time.monotonic()
         while True:
-            if self.try_acquire(tokens):
+            if self.try_acquire(tokens, count=False):
                 waited = time.monotonic() - started
+                with self._lock:
+                    self.stats.allowed += 1
+                    self.stats.last_reason = ""
+                    self.stats.last_decision_at = time.time()
                 if waited > 0.001:
                     self.stats.waited += waited
                     self.stats.waits += 1
                 return True
             delay = self.wait_time(tokens)
             if delay == float("inf"):
+                self.stats.denied += 1
+                self.stats.last_reason = f"need {tokens}, rate is 0"
+                self.stats.last_decision_at = time.time()
                 return False
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    self.stats.denied += 1
+                    self.stats.last_reason = f"timed out waiting for {tokens} tokens"
+                    self.stats.last_decision_at = time.time()
                     return False
                 delay = min(delay, remaining)
             time.sleep(min(max(delay, 0.001), 0.25))

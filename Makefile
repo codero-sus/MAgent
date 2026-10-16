@@ -66,8 +66,8 @@ demo: ## Offline demo against the built-in Echo backend
 examples: ## Run every example offline
 	@for file in examples/0*.py; do echo "== $$file"; PYTHONPATH=$(SRC) $(PYTHON) $$file >/dev/null || exit 1; done; echo "all examples ran"
 
-eval: ## Run the sample evaluation dataset
-	PYTHONPATH=$(SRC) $(PYTHON) -m magent eval --offline --report-format text
+eval: ## Run the sample evaluation dataset and gate on the pass rate
+	PYTHONPATH=$(SRC) $(PYTHON) -m magent eval --offline --threshold 0.5 --report-format text
 
 doctor: ## Diagnose the local Cortex LLMHoster connection
 	PYTHONPATH=$(SRC) $(PYTHON) -m magent doctor
@@ -80,9 +80,6 @@ serve: ## Start the local MAgent HTTP server + chat UI
 
 bench: ## Benchmark the agent loop offline
 	PYTHONPATH=$(SRC) $(PYTHON) -m magent bench
-
-eval: ## Run the offline evaluation harness
-	PYTHONPATH=$(SRC) $(PYTHON) -m magent eval run
 
 dist: ## Build wheel + sdist (needs hatchling)
 	$(PYTHON) -m pip install --quiet build && $(PYTHON) -m build

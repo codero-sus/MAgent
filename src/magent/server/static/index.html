@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAgent · Mr. Agent, Powerful.</title>
+<style>
+  :root {
+    --bg: #0d1017; --panel: #151a23; --panel-2: #1b2230; --line: #242c3b;
+    --fg: #e8ecf4; --muted: #8b93a7; --brand: #6ec7ff; --accent: #b98cff;
+    --ok: #6ee7a8; --warn: #ffd166; --err: #ff7a85; --code: #9fe8ff;
+    --radius: 12px; --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 14px 20px;
+           border-bottom: 1px solid var(--line); background: #111722; position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+  header .tagline { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  .pill { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line);
+          color: var(--muted); background: var(--panel); }
+  .pill.ok { color: var(--ok); border-color: #1f4a37; }
+  .pill.err { color: var(--err); border-color: #4a2328; }
+  nav { display: flex; gap: 6px; padding: 10px 20px 0; flex-wrap: wrap; }
+  nav button { background: transparent; border: 1px solid transparent; color: var(--muted);
+               padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 13px; }
+  nav button:hover { color: var(--fg); background: var(--panel); }
+  nav button.active { color: var(--fg); background: var(--panel-2); border-color: var(--line); }
+  main { padding: 16px 20px 40px; max-width: 1180px; margin: 0 auto; }
+  section { display: none; }
+  section.active { display: block; }
+  .grid { display: grid; gap: 14px; }
+  .grid.two { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  @media (max-width: 880px) { .grid.two { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+          padding: 14px 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+             color: var(--muted); margin: 0 0 10px; }
+  textarea, input, select { width: 100%; background: var(--panel-2); color: var(--fg);
+      border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; }
+  textarea { min-height: 84px; resize: vertical; font-family: var(--mono); font-size: 13px; }
+  button.primary { background: var(--brand); color: #06131c; border: none; border-radius: 10px;
+      padding: 9px 18px; font-weight: 600; cursor: pointer; }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: var(--panel-2); color: var(--fg); border: 1px solid var(--line);
+      border-radius: 10px; padding: 8px 14px; cursor: pointer; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .messages { display: flex; flex-direction: column; gap: 10px; min-height: 120px; max-height: 58vh;
+              overflow-y: auto; padding-right: 4px; }
+  .msg { border-radius: 10px; padding: 10px 14px; background: var(--panel-2);
+         border: 1px solid var(--line); white-space: pre-wrap; word-break: break-word; }
+  .msg .role { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--brand);
+               margin-bottom: 4px; }
+  .msg.user { background: #17202c; }
+  .msg.assistant .role { color: var(--ok); }
+  .msg.error { border-color: #4a2328; color: var(--err); }
+  .msg pre { background: #0b0f16; border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+             overflow-x: auto; font-family: var(--mono); font-size: 12.5px; margin: 8px 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase;
+       letter-spacing: .05em; }
+  code, .mono { font-family: var(--mono); color: var(--code); font-size: 12.5px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .scroll { max-height: 48vh; overflow: auto; }
+  .stat { display: flex; justify-content: space-between; padding: 5px 0;
+          border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .stat:last-child { border-bottom: none; }
+  .toast { position: fixed; bottom: 18px; right: 18px; background: var(--panel-2);
+           border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font-size: 13px;
+           opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 10px 0 30px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MAgent</h1>
+  <span class="tagline">Mr. Agent, Powerful. · local models via Cortex LLMHoster</span>
+  <span class="spacer"></span>
+  <span class="pill" id="health">connecting…</span>
+  <span class="pill" id="version"></span>
+</header>
+
+<nav id="tabs">
+  <button data-tab="chat" class="active">Chat</button>
+  <button data-tab="tools">Tools</button>
+  <button data-tab="models">Models</button>
+  <button data-tab="sessions">Sessions</button>
+  <button data-tab="skills">Skills</button>
+  <button data-tab="metrics">Metrics</button>
+  <button data-tab="about">About</button>
+</nav>
+
+<main>
+  <section id="tab-chat" class="active">
+    <div class="grid two">
+      <div class="card">
+        <h2>Conversation</h2>
+        <div class="messages" id="messages"></div>
+        <div class="row" style="margin-top:12px">
+          <textarea id="prompt" placeholder="Ask MAgent to do something… (Ctrl/Cmd + Enter)"></textarea>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="primary" id="send">Send</button>
+          <label class="small muted"><input type="checkbox" id="stream" checked style="width:auto"> stream</label>
+          <span class="spacer"></span>
+          <button class="ghost" id="clear">Clear</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Run settings</h2>
+        <div class="row" style="margin-bottom:8px">
+          <select id="preset"><option value="">(config default)</option></select>
+        </div>
+        <div class="row" style="margin-bottom:8px">
+          <select id="loop">
+            <option value="">loop: default</option>
+            <option value="react">react</option>
+            <option value="plan">plan</option>
+            <option value="reflect">reflect</option>
+            <option value="single">single</option>
+          </select>
+        </div>
+        <div class="row">
+          <input id="session" placeholder="session id (optional)">
+        </div>
+        <div class="small muted" id="settings-note" style="margin-top:10px">
+          Presets pick a persona and a tool subset; leave them empty to use the configuration.
+        </div>
+        <h2 style="margin-top:18px">Live events</h2>
+        <div class="scroll small mono muted" id="events" style="min-height:60px"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-tools">
+    <div class="card">
+      <h2>Registered tools <span class="muted small" id="tool-count"></span></h2>
+      <div class="row" style="margin-bottom:10px">
+        <input id="tool-filter" placeholder="filter by name or description…">
+        <select id="tool-category"><option value="">all categories</option></select>
+      </div>
+      <div class="scroll"><table id="tools-table">
+        <thead><tr><th>name</th><th>category</th><th>risk</th><th>description</th></tr></thead>
+        <tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-models">
+    <div class="grid two">
+      <div class="card">
+        <h2>Models</h2>
+        <div class="scroll"><table id="models-table">
+          <thead><tr><th>id</th><th>runtime</th><th>capabilities</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="card">
+        <h2>Backend</h2>
+        <dl class="kv" id="backend-info"></dl>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-sessions">
+    <div class="card">
+      <h2>Stored sessions</h2>
+      <div class="row" style="margin-bottom:10px">
+        <input id="session-query" placeholder="search prompts and answers…">
+        <button class="ghost" id="session-refresh">Refresh</button>
+      </div>
+      <div class="scroll"><table id="sessions-table">
+        <thead><tr><th>age</th><th>title</th><th>messages</th><th>tokens</th><th></th></tr></thead>
+        <tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-skills">
+    <div class="card">
+      <h2>Skill library</h2>
+      <div class="row" style="margin-bottom:10px">
+        <input id="skill-task" placeholder="describe a task to see which skills apply…">
+      </div>
+      <div id="skill-matches" class="small muted" style="margin-bottom:10px"></div>
+      <div class="scroll"><table id="skills-table">
+        <thead><tr><th>name</th><th>tags</th><th>description</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-metrics">
+    <div class="card">
+      <h2>Metrics</h2>
+      <div id="metrics-body"></div>
+    </div>
+  </section>
+
+  <section id="tab-about">
+    <div class="grid two">
+      <div class="card"><h2>Server</h2><dl class="kv" id="about-info"></dl></div>
+      <div class="card"><h2>API</h2><div class="scroll small mono" id="routes"></div></div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+<footer>MAgent · zero-dependency agent framework · this UI talks to the same REST API you do</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = async (path, options = {}) => {
+  const response = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+  const text = await response.text();
+  let body;
+  try { body = text ? JSON.parse(text) : {}; } catch (err) { body = { raw: text }; }
+  if (!response.ok) {
+    const message = body.error || body.message || response.statusText;
+    throw Object.assign(new Error(message), { status: response.status, body });
+  }
+  return body;
+};
+const toast = (message, ms = 2600) => {
+  const el = $('toast'); el.textContent = message; el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), ms);
+};
+const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g,
+  (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+const renderMarkdown = (text) => {
+  let html = escapeHtml(text);
+  html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre>${code.trim()}</pre>`);
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/^### (.*)$/gm, '<strong>$1</strong>');
+  html = html.replace(/^## (.*)$/gm, '<strong>$1</strong>');
+  html = html.replace(/^# (.*)$/gm, '<strong>$1</strong>');
+  return html;
+};
+
+document.querySelectorAll('nav button').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('section').forEach((s) => s.classList.remove('active'));
+    button.classList.add('active');
+    $('tab-' + button.dataset.tab).classList.add('active');
+    if (button.dataset.tab === 'tools') loadTools();
+    if (button.dataset.tab === 'models') loadModels();
+    if (button.dataset.tab === 'sessions') loadSessions();
+    if (button.dataset.tab === 'skills') loadSkills();
+    if (button.dataset.tab === 'metrics') loadMetrics();
+    if (button.dataset.tab === 'about') loadAbout();
+  });
+});
+
+function addMessage(role, text, extra = '') {
+  const node = document.createElement('div');
+  node.className = 'msg ' + role;
+  node.innerHTML = `<div class="role">${escapeHtml(role)}</div><div class="body">${renderMarkdown(text)}</div>${extra}`;
+  $('messages').appendChild(node);
+  $('messages').scrollTop = $('messages').scrollHeight;
+  return node;
+}
+
+const toolEvents = (kind, data) => {
+  if (kind === 'tool.call') return `→ ${data.name || 'tool'}`;
+  if (kind === 'tool.result') return `← ${data.name || 'tool'} ${data.ok === false ? 'failed' : 'ok'}`;
+  if (kind === 'plan.created') return `plan: ${(data.steps || []).length || data.steps || '?'} steps`;
+  if (kind === 'guard.blocked' || kind === 'guardrail.blocked') return `guardrail: ${data.reason || 'blocked'}`;
+  if (kind === 'router.model_switched') return `model → ${data.model || '?'}`;
+  if (kind === 'llm.retry') return `retry #${data.attempt || '?'}`;
+  return '';
+};
+
+async function sendPrompt() {
+  const prompt = $('prompt').value.trim();
+  if (!prompt) { toast('Type a prompt first'); return; }
+  const payload = {
+    prompt,
+    session_id: $('session').value.trim(),
+    loop_mode: $('loop').value || undefined,
+    persona: $('preset').value || undefined,
+  };
+  addMessage('user', prompt);
+  $('prompt').value = '';
+  $('send').disabled = true;
+  $('events').textContent = '';
+  const wantsStream = $('stream').checked;
+  try {
+    if (wantsStream && window.EventSource) {
+      const node = addMessage('assistant', '');
+      const url = `/api/chat/stream?prompt=${encodeURIComponent(prompt)}` +
+                  `&session_id=${encodeURIComponent(payload.session_id || '')}`;
+      const source = new EventSource(url);
+      let text = '';
+      const finish = () => { source.close(); $('send').disabled = false; };
+      const handler = (event) => {
+        const data = JSON.parse(event.data || '{}');
+        if (event.type === 'agent.text_delta' || event.type === 'text.delta') {
+          text += data.text || '';
+          node.querySelector('.body').textContent = text;
+          $('messages').scrollTop = $('messages').scrollHeight;
+        } else if (event.type === 'error') {
+          node.classList.add('error');
+          node.querySelector('.body').textContent = data.message || 'stream error';
+        } else {
+          const line = toolEvents(event.type, data);
+          if (line) $('events').textContent += line + '\n';
+        }
+        if (event.type === 'done') finish();
+      };
+      source.onmessage = handler;
+      ['agent.text_delta', 'tool.call', 'tool.result', 'plan.created', 'guard.blocked',
+       'router.model_switched', 'llm.retry', 'error', 'done', 'run.finished'].forEach((name) => {
+        source.addEventListener(name, handler);
+      });
+      source.onerror = () => { finish(); if (!text) toast('stream failed, retrying without streaming'); };
+    } else {
+      const body = await api('/api/chat', { method: 'POST', body: JSON.stringify(payload) });
+      const meta = `<div class="small muted" style="margin-top:8px">${escapeHtml(
+        `${body.model || 'model'} · ${body.stop_reason} · ${body.usage?.total_tokens || 0} tokens · ${body.seconds}s`)}</div>`;
+      addMessage('assistant', body.output || '(no output)', meta);
+      $('send').disabled = false;
+    }
+  } catch (err) {
+    addMessage('error', err.message || String(err));
+    $('send').disabled = false;
+  }
+}
+
+$('send').addEventListener('click', sendPrompt);
+$('clear').addEventListener('click', () => { $('messages').innerHTML = ''; $('events').textContent = ''; });
+$('prompt').addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') sendPrompt();
+});
+
+async function loadTools() {
+  try {
+    const data = await api('/api/tools');
+    const rows = data.tools || [];
+    $('tool-count').textContent = `${data.count ?? rows.length} tools`;
+    const categories = data.categories || [];
+    const select = $('tool-category');
+    if (select.options.length <= 1) {
+      categories.forEach((category) => {
+        const option = document.createElement('option');
+        option.value = category; option.textContent = category;
+        select.appendChild(option);
+      });
+    }
+    renderTools(rows);
+    window.__tools = rows;
+  } catch (err) { toast('tools: ' + err.message); }
+}
+function renderTools(rows) {
+  const filter = $('tool-filter').value.toLowerCase();
+  const category = $('tool-category').value;
+  const body = $('tools-table').querySelector('tbody');
+  body.innerHTML = '';
+  rows.filter((tool) => {
+    const name = tool.function?.name || tool.name || '';
+    const description = tool.function?.description || tool.description || '';
+    const cat = tool.category || tool.metadata?.category || '';
+    if (category && cat !== category) return false;
+    if (!filter) return true;
+    return (name + ' ' + description + ' ' + cat).toLowerCase().includes(filter);
+  }).forEach((tool) => {
+    const fn = tool.function || tool;
+    const row = document.createElement('tr');
+    row.innerHTML = `<td><code>${escapeHtml(fn.name || '')}</code></td>` +
+                    `<td class="muted">${escapeHtml(tool.category || tool.metadata?.category || '')}</td>` +
+                    `<td class="muted">${escapeHtml(tool.risk || '')}</td>` +
+                    `<td class="muted small">${escapeHtml((fn.description || '').slice(0, 160))}</td>`;
+    body.appendChild(row);
+  });
+}
+$('tool-filter').addEventListener('input', () => renderTools(window.__tools || []));
+$('tool-category').addEventListener('change', () => renderTools(window.__tools || []));
+
+async function loadModels() {
+  try {
+    const data = await api('/api/models');
+    const body = $('models-table').querySelector('tbody');
+    body.innerHTML = '';
+    (data.models || []).forEach((model) => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td><code>${escapeHtml(model.id)}</code></td>` +
+                      `<td class="muted">${escapeHtml(model.runtime || '')}</td>` +
+                      `<td class="muted small">${escapeHtml((model.capabilities || []).join(', '))}</td>`;
+      body.appendChild(row);
+    });
+    const info = $('backend-info');
+    info.innerHTML = '';
+    const pairs = Object.entries({ backend: data.backend, ...(data.health || {}) });
+    pairs.forEach(([key, value]) => {
+      const dt = document.createElement('dt'); dt.textContent = key;
+      const dd = document.createElement('dd'); dd.textContent = typeof value === 'object'
+        ? JSON.stringify(value) : String(value);
+      info.append(dt, dd);
+    });
+  } catch (err) { toast('models: ' + err.message); }
+}
+
+async function loadSessions() {
+  try {
+    const query = $('session-query').value.trim();
+    const data = await api('/api/sessions?limit=50' + (query ? `&q=${encodeURIComponent(query)}` : ''));
+    const body = $('sessions-table').querySelector('tbody');
+    body.innerHTML = '';
+    (data.sessions || []).forEach((session) => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td class="muted small">${escapeHtml(session.age)}</td>` +
+                      `<td>${escapeHtml(session.title || '(untitled)')}<div class="small muted">${escapeHtml(session.preview || '')}</div></td>` +
+                      `<td>${session.messages}</td><td>${session.tokens}</td>` +
+                      `<td><button class="ghost small" data-open="${escapeHtml(session.id)}">open</button></td>`;
+      body.appendChild(row);
+    });
+    body.querySelectorAll('[data-open]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const record = await api('/api/sessions/' + encodeURIComponent(button.dataset.open));
+        $('messages').innerHTML = '';
+        (record.session.messages || []).forEach((message) => {
+          const text = typeof message.content === 'string' ? message.content
+            : (message.content || []).map((part) => part.text || '').join('');
+          addMessage(message.role, text);
+        });
+        toast('loaded session ' + button.dataset.open.slice(0, 12));
+      });
+    });
+  } catch (err) { toast('sessions: ' + err.message); }
+}
+$('session-refresh').addEventListener('click', loadSessions);
+$('session-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') loadSessions(); });
+
+async function loadSkills() {
+  try {
+    const task = $('skill-task').value.trim();
+    const data = task ? await api('/api/skills?task=' + encodeURIComponent(task)) : await api('/api/skills');
+    const body = $('skills-table').querySelector('tbody');
+    body.innerHTML = '';
+    const rows = task ? (data.matches || []).map((match) => match.skill) : (data.skills || []);
+    if (task) {
+      $('skill-matches').textContent = (data.matches || []).map(
+        (match) => `${match.skill.name} ${match.score.toFixed(2)}`).join('  ·  ') || 'no skill matched';
+    } else {
+      $('skill-matches').textContent = '';
+    }
+    rows.forEach((skill) => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td><code>${escapeHtml(skill.name)}</code></td>` +
+                      `<td class="muted small">${escapeHtml((skill.tags || []).join(', '))}</td>` +
+                      `<td class="muted small">${escapeHtml(skill.description || '')}</td>`;
+      body.appendChild(row);
+    });
+  } catch (err) { toast('skills: ' + err.message); }
+}
+$('skill-task').addEventListener('keydown', (event) => { if (event.key === 'Enter') loadSkills(); });
+
+async function loadMetrics() {
+  try {
+    const data = await api('/api/metrics');
+    const values = data.values || data.metrics || {};
+    const lines = Object.entries(values).map(([key, value]) =>
+      `<div class="stat"><span class="mono">${escapeHtml(key)}</span><span>${escapeHtml(
+        typeof value === 'object' ? JSON.stringify(value) : value)}</span></div>`);
+    $('metrics-body').innerHTML = lines.join('') || '<p class="muted">no metrics yet</p>';
+  } catch (err) { toast('metrics: ' + err.message); }
+}
+
+async function loadAbout() {
+  try {
+    const [info, index] = await Promise.all([api('/api/info'), api('/api')]);
+    const dl = $('about-info'); dl.innerHTML = '';
+    Object.entries(info).forEach(([key, value]) => {
+      if (key === 'stats') return;
+      const dt = document.createElement('dt'); dt.textContent = key;
+      const dd = document.createElement('dd'); dd.textContent = String(value);
+      dl.append(dt, dd);
+    });
+    $('routes').innerHTML = (index.routes || []).map((route) =>
+      `<div>${escapeHtml(route.method)} ${escapeHtml(route.path)} <span class="muted">${escapeHtml(route.description || '')}</span></div>`
+    ).join('');
+  } catch (err) { toast('about: ' + err.message); }
+}
+
+async function loadPresets() {
+  try {
+    const data = await api('/api/presets');
+    const select = $('preset');
+    (data.presets || []).forEach((preset) => {
+      const option = document.createElement('option');
+      option.value = preset.persona;
+      option.textContent = preset.name;
+      select.appendChild(option);
+    });
+  } catch (err) { /* presets are optional */ }
+}
+
+async function boot() {
+  try {
+    const health = await api('/api/health');
+    $('health').textContent = 'online';
+    $('health').className = 'pill ok';
+    $('version').textContent = 'v' + health.version;
+    addMessage('assistant', 'Ready. Tools, memory, retrieval and guardrails are all wired to this ' +
+      'same API — try “what tools do you have?” or open the Tools tab.');
+  } catch (err) {
+    $('health').textContent = 'offline';
+    $('health').className = 'pill err';
+  }
+  loadTools();
+  loadPresets();
+}
+boot();
+</script>
+</body>
+</html>

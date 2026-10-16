@@ -52,27 +52,36 @@ class BackendRequest:
 
     @classmethod
     def from_config(cls, config: Any) -> BackendRequest:
-        """Build a request from a loaded :class:`~magent.config.Config`."""
+        """Build a request from a loaded :class:`~magent.config.Config`.
+
+        The request is assembled from MAgent's real configuration sections -
+        ``[model]``, ``[server]`` and ``[cache]`` - because a request derived from
+        anywhere else would silently ignore the file the user actually edited.
+        """
         llm = getattr(config, "llm", None)
-        if llm is None:
+        model = getattr(config, "model", llm)
+        server = getattr(config, "server", llm)
+        cache = getattr(config, "cache", llm)
+        if model is None and server is None and cache is None:
             return cls()
+        base_url = str(getattr(server, "base_url", "") or getattr(llm, "base_url", "") or "")
         return cls(
-            kind=str(getattr(llm, "backend", "auto")),
-            model=str(getattr(llm, "model", "") or ""),
-            embedding_model=str(getattr(llm, "embedding_model", "") or ""),
-            base_url=str(getattr(llm, "base_url", "") or ""),
-            api_key=str(getattr(llm, "api_key", "") or ""),
-            timeout=float(getattr(llm, "timeout", 120.0)),
-            api_prefix=str(getattr(llm, "api_prefix", "/v1")),
-            verify_ssl=bool(getattr(llm, "verify_ssl", True)),
-            max_retries=int(getattr(llm, "max_retries", 3)),
-            fallback_to_echo=bool(getattr(llm, "fallback_to_echo", True)),
-            probe_timeout=float(getattr(llm, "probe_timeout", 3.0)),
-            cache_dir=str(getattr(llm, "cache_dir", "") or ""),
-            cache_ttl=float(getattr(llm, "cache_ttl", 3600.0)),
-            cache_enabled=bool(getattr(llm, "cache_enabled", True)),
-            routes=list(getattr(llm, "routes", []) or []),
-            router_strategy=str(getattr(llm, "router_strategy", "priority")),
+            kind=str(getattr(model, "backend", "auto") or "auto"),
+            model=str(getattr(model, "model", "") or ""),
+            embedding_model=str(getattr(model, "embedding_model", "") or ""),
+            base_url=base_url,
+            api_key=str(getattr(server, "api_key", "") or ""),
+            timeout=float(getattr(server, "timeout", 120.0) or 120.0),
+            api_prefix=str(getattr(server, "api_prefix", "/v1") or "/v1"),
+            verify_ssl=bool(getattr(server, "verify_ssl", True)),
+            max_retries=int(getattr(server, "max_retries", 3) or 3),
+            fallback_to_echo=bool(getattr(model, "fallback_to_echo", True)),
+            probe_timeout=float(getattr(server, "probe_timeout", 3.0) or 3.0),
+            cache_dir=str(getattr(cache, "directory", "") or ""),
+            cache_ttl=float(getattr(cache, "ttl", 3600.0) or 3600.0),
+            cache_enabled=bool(getattr(cache, "enabled", True)),
+            routes=list(getattr(model, "routes", []) or []),
+            router_strategy=str(getattr(model, "router_strategy", "priority") or "priority"),
         )
 
     @classmethod
@@ -294,9 +303,23 @@ def _probe_cortex(url: str, *, timeout: float = 3.0) -> bool:
         client.close()
 
 
-def build_backend(**kwargs: Any) -> BaseBackend:
-    """Module level shortcut: build a backend from keyword overrides."""
-    return BackendFactory().build(BackendRequest.from_env(), **kwargs)
+def build_backend(config: Any = None, *, offline: bool | None = None, **kwargs: Any) -> BaseBackend:
+    """Build a backend from configuration plus keyword overrides.
+
+    Precedence: an explicit ``config`` wins over the environment, because a user
+    who edited ``magent.toml`` means it.  ``offline=True`` forces the echo
+    backend, which is what ``--offline`` and the test suite use.
+
+    Args:
+        config: a loaded :class:`~magent.config.Config`
+        offline: force the dependency-free echo backend
+        **kwargs: :class:`BackendRequest` fields, e.g. ``kind`` or ``model``
+    """
+    if offline:
+        return build_offline_backend(kwargs.get("model") or "echo-small")
+    request = (BackendRequest.from_config(config) if config is not None
+               else BackendRequest.from_env())
+    return BackendFactory().build(request, **kwargs)
 
 
 def build_offline_backend(model: str = "echo-small") -> EchoBackend:

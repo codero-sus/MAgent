@@ -467,6 +467,53 @@ class PluginSecurityError(PluginError):
     retryable = False
 
 
+class SkillError(MAgentError):
+    """Base class for skill loading and selection failures."""
+
+    code = "skill_error"
+
+
+class SkillNotFoundError(SkillError):
+    """Raised when a requested skill is not in the library."""
+
+    code = "skill_not_found"
+    retryable = False
+
+
+class SkillFormatError(SkillError):
+    """Raised when a skill file cannot be parsed."""
+
+    code = "skill_format_invalid"
+    retryable = False
+
+
+class EvalError(MAgentError):
+    """Base class for evaluation failures."""
+
+    code = "eval_error"
+
+
+class DatasetError(EvalError):
+    """Raised when an evaluation dataset cannot be loaded."""
+
+    code = "eval_dataset_invalid"
+    retryable = False
+
+
+class MetricError(EvalError):
+    """Raised when a metric is unknown or misconfigured."""
+
+    code = "eval_metric_invalid"
+    retryable = False
+
+
+class EvalThresholdError(EvalError):
+    """Raised when an evaluation run scores below the required threshold."""
+
+    code = "eval_threshold_not_met"
+    retryable = False
+
+
 class ServerError_(MAgentError):
     """Base class for the embedded MAgent HTTP server."""
 
@@ -542,6 +589,13 @@ ERROR_REGISTRY: dict[str, type[MAgentError]] = {
         PluginNotFoundError,
         PluginManifestError,
         PluginSecurityError,
+        SkillError,
+        SkillNotFoundError,
+        SkillFormatError,
+        EvalError,
+        DatasetError,
+        MetricError,
+        EvalThresholdError,
         ServerError_,
         CancelledError,
         UserAbortError,
@@ -613,7 +667,14 @@ __all__ = [
     "PluginError",
     "PluginManifestError",
     "PluginNotFoundError",
+    "DatasetError",
+    "EvalError",
+    "EvalThresholdError",
+    "MetricError",
     "PluginSecurityError",
+    "SkillError",
+    "SkillFormatError",
+    "SkillNotFoundError",
     "PolicyViolationError",
     "PromptInjectionError",
     "RateLimitedError",

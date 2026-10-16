@@ -6000,7 +6000,7 @@
    "ref": "README.md",
    "description": "Page shipped at README.md",
    "metadata": {
-    "bytes": 8412
+    "bytes": 8441
    }
   },
   {
@@ -6066,7 +6066,7 @@
    "ref": "docs/index.md",
    "description": "Page shipped at docs/index.md",
    "metadata": {
-    "bytes": 3106
+    "bytes": 3107
    }
   },
   {
@@ -6132,7 +6132,7 @@
    "ref": "docs/testing.md",
    "description": "Page shipped at docs/testing.md",
    "metadata": {
-    "bytes": 4189
+    "bytes": 4190
    }
   },
   {
@@ -34933,7 +34933,7 @@
    "kind": "make-target",
    "title": "``make eval``",
    "ref": "Makefile#eval:",
-   "description": "Make target eval (dependencies: ## Run the sample evaluation dataset)",
+   "description": "Make target eval (dependencies: ## Run the sample evaluation dataset and gate on the pass rate)",
    "symbol": "eval:"
   },
   {
@@ -35088,7 +35088,7 @@
    "ref": "Makefile",
    "description": "Makefile shipped at Makefile",
    "metadata": {
-    "bytes": 3703
+    "bytes": 3652
    }
   },
   {

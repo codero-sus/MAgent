@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..types import Message, Usage, messages_from_dicts
 from ..utils.ids import session_id as new_session_id
@@ -124,8 +125,13 @@ class SessionRecord:
 
     def add_turn(self, prompt: str, answer: str, **kwargs: Any) -> Turn:
         """Record one exchange."""
-        turn = Turn(index=len(self.turns), prompt=prompt, answer=answer,
-                    started_at=kwargs.pop("started_at", time.time()), **kwargs)
+        turn = Turn(
+            index=len(self.turns),
+            prompt=prompt,
+            answer=answer,
+            started_at=kwargs.pop("started_at", time.time()),
+            **kwargs,
+        )
         self.turns.append(turn)
         self.touch()
         return turn
@@ -248,14 +254,19 @@ class SessionRecord:
         if isinstance(usage, dict):
             record.usage = Usage.from_dict(usage)
         record.messages = messages_from_dicts(list(raw.get("messages", []) or []))
-        record.turns = [Turn.from_dict(item) for item in raw.get("turns", []) or []
-                        if isinstance(item, dict)]
+        record.turns = [
+            Turn.from_dict(item) for item in raw.get("turns", []) or [] if isinstance(item, dict)
+        ]
         return record
 
     def to_json(self, *, indent: int = 2, include_messages: bool = True) -> str:
         """Serialise the record as a JSON document."""
-        return json.dumps(self.to_dict(include_messages=include_messages), indent=indent,
-                          default=str, ensure_ascii=False)
+        return json.dumps(
+            self.to_dict(include_messages=include_messages),
+            indent=indent,
+            default=str,
+            ensure_ascii=False,
+        )
 
     @classmethod
     def from_json(cls, text: str) -> SessionRecord:
@@ -277,8 +288,10 @@ class SessionRecord:
 
     def __repr__(self) -> str:
         """Compact developer representation."""
-        return (f"SessionRecord(id={self.id!r}, title={self.title!r}, "
-                f"messages={len(self.messages)}, turns={len(self.turns)})")
+        return (
+            f"SessionRecord(id={self.id!r}, title={self.title!r}, "
+            f"messages={len(self.messages)}, turns={len(self.turns)})"
+        )
 
 
 def derive_title(text: str, *, max_words: int = TITLE_MAX_WORDS) -> str:

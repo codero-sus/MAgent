@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 from ..errors import MetricError
 from ..utils.json_utils import extract_json
@@ -26,10 +27,20 @@ from .dataset import EvalCase
 MIN_PASS_SCORE = 0.6
 """A case passes when its weighted score reaches this."""
 
-HARD_METRICS: frozenset[str] = frozenset({
-    "exact_match", "contains", "not_contains", "regex", "json_valid", "tools", "max_steps",
-    "max_tokens", "max_seconds", "no_error",
-})
+HARD_METRICS: frozenset[str] = frozenset(
+    {
+        "exact_match",
+        "contains",
+        "not_contains",
+        "regex",
+        "json_valid",
+        "tools",
+        "max_steps",
+        "max_tokens",
+        "max_seconds",
+        "no_error",
+    }
+)
 """Metrics that fail a case outright when they fail.
 
 Averaging hid real failures: a missing required substring scored 0.86 and the
@@ -50,8 +61,13 @@ class MetricOutcome:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the outcome."""
-        return {"name": self.name, "score": round(self.score, 4), "passed": self.passed,
-                "reason": self.reason, "detail": dict(self.detail)}
+        return {
+            "name": self.name,
+            "score": round(self.score, 4),
+            "passed": self.passed,
+            "reason": self.reason,
+            "detail": dict(self.detail),
+        }
 
 
 @dataclass(slots=True)
@@ -121,8 +137,13 @@ def exact_match(case: EvalCase, result: Any) -> MetricOutcome:
     right = _normalise(expected)
     score = 1.0 if left == right else 0.0
     reason = "identical" if score else "differs from the expected answer"
-    return MetricOutcome("exact_match", score, score >= MIN_PASS_SCORE, reason,
-                         {"expected": expected[:200], "got": output[:200]})
+    return MetricOutcome(
+        "exact_match",
+        score,
+        score >= MIN_PASS_SCORE,
+        reason,
+        {"expected": expected[:200], "got": output[:200]},
+    )
 
 
 def contains_all(case: EvalCase, result: Any) -> MetricOutcome:
@@ -132,9 +153,13 @@ def contains_all(case: EvalCase, result: Any) -> MetricOutcome:
     haystack = _text(result).lower()
     missing = [needle for needle in case.contains if needle.lower() not in haystack]
     score = round(1.0 - len(missing) / len(case.contains), 4)
-    return MetricOutcome("contains", score, not missing,
-                         "all present" if not missing else f"missing: {', '.join(missing[:4])}",
-                         {"missing": missing})
+    return MetricOutcome(
+        "contains",
+        score,
+        not missing,
+        "all present" if not missing else f"missing: {', '.join(missing[:4])}",
+        {"missing": missing},
+    )
 
 
 def forbids_text(case: EvalCase, result: Any) -> MetricOutcome:
@@ -143,9 +168,13 @@ def forbids_text(case: EvalCase, result: Any) -> MetricOutcome:
         return MetricOutcome("not_contains", 1.0, True, "nothing forbidden")
     haystack = _text(result).lower()
     hits = [needle for needle in case.not_contains if needle.lower() in haystack]
-    return MetricOutcome("not_contains", 0.0 if hits else 1.0, not hits,
-                         "clean" if not hits else f"found: {', '.join(hits[:4])}",
-                         {"hits": hits})
+    return MetricOutcome(
+        "not_contains",
+        0.0 if hits else 1.0,
+        not hits,
+        "clean" if not hits else f"found: {', '.join(hits[:4])}",
+        {"hits": hits},
+    )
 
 
 def regex_match(case: EvalCase, result: Any) -> MetricOutcome:
@@ -153,9 +182,13 @@ def regex_match(case: EvalCase, result: Any) -> MetricOutcome:
     if not case.regex:
         return MetricOutcome("regex", 1.0, True, "no pattern")
     match = re.search(case.regex, _text(result), re.IGNORECASE | re.MULTILINE)
-    return MetricOutcome("regex", 1.0 if match else 0.0, bool(match),
-                         "pattern matched" if match else f"no match for {case.regex!r}",
-                         {"match": match.group(0)[:200] if match else ""})
+    return MetricOutcome(
+        "regex",
+        1.0 if match else 0.0,
+        bool(match),
+        "pattern matched" if match else f"no match for {case.regex!r}",
+        {"match": match.group(0)[:200] if match else ""},
+    )
 
 
 def similarity_score(case: EvalCase, result: Any) -> MetricOutcome:
@@ -163,8 +196,13 @@ def similarity_score(case: EvalCase, result: Any) -> MetricOutcome:
     if not case.expected:
         return MetricOutcome("similarity", 1.0, True, "no expectation")
     score = round(similarity(_text(result), case.expected), 4)
-    return MetricOutcome("similarity", score, score >= 0.6, f"similarity {score:.2f}",
-                         {"distance": levenshtein(_text(result), case.expected)})
+    return MetricOutcome(
+        "similarity",
+        score,
+        score >= 0.6,
+        f"similarity {score:.2f}",
+        {"distance": levenshtein(_text(result), case.expected)},
+    )
 
 
 def json_valid(case: EvalCase, result: Any) -> MetricOutcome:
@@ -182,9 +220,13 @@ def json_valid(case: EvalCase, result: Any) -> MetricOutcome:
     elif candidate is not None:
         parsed = candidate
     ok = parsed is not None
-    return MetricOutcome("json_valid", 1.0 if ok else 0.0, ok,
-                         "parsed JSON" if ok else "no JSON object in the answer",
-                         {"keys": sorted(parsed)[:10] if isinstance(parsed, dict) else []})
+    return MetricOutcome(
+        "json_valid",
+        1.0 if ok else 0.0,
+        ok,
+        "parsed JSON" if ok else "no JSON object in the answer",
+        {"keys": sorted(parsed)[:10] if isinstance(parsed, dict) else []},
+    )
 
 
 def tool_usage(case: EvalCase, result: Any) -> MetricOutcome:
@@ -205,8 +247,13 @@ def tool_usage(case: EvalCase, result: Any) -> MetricOutcome:
         reason = f"called forbidden tools: {', '.join(banned[:3])}"
     else:
         reason = "tool usage correct"
-    return MetricOutcome("tools", score, not bad, reason,
-                         {"used": sorted(used)[:12], "missing": missing, "banned": banned})
+    return MetricOutcome(
+        "tools",
+        score,
+        not bad,
+        reason,
+        {"used": sorted(used)[:12], "missing": missing, "banned": banned},
+    )
 
 
 def step_budget(case: EvalCase, result: Any) -> MetricOutcome:
@@ -215,9 +262,13 @@ def step_budget(case: EvalCase, result: Any) -> MetricOutcome:
         return MetricOutcome("max_steps", 1.0, True, "no step budget")
     steps = len(getattr(result, "steps", []) or [])
     ok = steps <= case.max_steps
-    return MetricOutcome("max_steps", 1.0 if ok else 0.0, ok,
-                         f"{steps} steps (limit {case.max_steps})",
-                         {"steps": steps, "limit": case.max_steps})
+    return MetricOutcome(
+        "max_steps",
+        1.0 if ok else 0.0,
+        ok,
+        f"{steps} steps (limit {case.max_steps})",
+        {"steps": steps, "limit": case.max_steps},
+    )
 
 
 def token_budget(case: EvalCase, result: Any) -> MetricOutcome:
@@ -227,9 +278,13 @@ def token_budget(case: EvalCase, result: Any) -> MetricOutcome:
     usage = getattr(result, "usage", None)
     used = getattr(usage, "total_tokens", 0) or 0
     ok = used <= case.max_tokens
-    return MetricOutcome("max_tokens", 1.0 if ok else 0.0, ok,
-                         f"{used} tokens (limit {case.max_tokens})",
-                         {"tokens": used, "limit": case.max_tokens})
+    return MetricOutcome(
+        "max_tokens",
+        1.0 if ok else 0.0,
+        ok,
+        f"{used} tokens (limit {case.max_tokens})",
+        {"tokens": used, "limit": case.max_tokens},
+    )
 
 
 def time_budget(case: EvalCase, result: Any) -> MetricOutcome:
@@ -238,9 +293,13 @@ def time_budget(case: EvalCase, result: Any) -> MetricOutcome:
         return MetricOutcome("max_seconds", 1.0, True, "no time budget")
     seconds = getattr(result, "duration_ms", 0.0) / 1000.0
     ok = seconds <= case.max_seconds
-    return MetricOutcome("max_seconds", 1.0 if ok else 0.0, ok,
-                         f"{seconds:.2f}s (limit {case.max_seconds:.2f}s)",
-                         {"seconds": seconds, "limit": case.max_seconds})
+    return MetricOutcome(
+        "max_seconds",
+        1.0 if ok else 0.0,
+        ok,
+        f"{seconds:.2f}s (limit {case.max_seconds:.2f}s)",
+        {"seconds": seconds, "limit": case.max_seconds},
+    )
 
 
 def no_error(case: EvalCase, result: Any) -> MetricOutcome:
@@ -248,12 +307,24 @@ def no_error(case: EvalCase, result: Any) -> MetricOutcome:
     del case
     error = getattr(result, "error", "") or ""
     ok = not error
-    return MetricOutcome("no_error", 1.0 if ok else 0.0, ok,
-                         "clean run" if ok else error[:160], {"error": error[:400]})
+    return MetricOutcome(
+        "no_error",
+        1.0 if ok else 0.0,
+        ok,
+        "clean run" if ok else error[:160],
+        {"error": error[:400]},
+    )
 
 
-DEFAULT_METRIC_NAMES: tuple[str, ...] = ("no_error", "contains", "not_contains", "regex", "tools",
-                                         "json_valid", "max_steps")
+DEFAULT_METRIC_NAMES: tuple[str, ...] = (
+    "no_error",
+    "contains",
+    "not_contains",
+    "regex",
+    "tools",
+    "json_valid",
+    "max_steps",
+)
 """Metrics applied to every case unless the caller narrows the list."""
 
 METRICS: dict[str, Callable[[EvalCase, Any], MetricOutcome]] = {
@@ -285,13 +356,13 @@ def get_metric(name: str) -> Callable[[EvalCase, Any], MetricOutcome]:
     """
     key = str(name).strip().lower()
     if key not in METRICS:
-        raise MetricError(f"unknown metric {name!r}",
-                          details={"known": metric_names()})
+        raise MetricError(f"unknown metric {name!r}", details={"known": metric_names()})
     return METRICS[key]
 
 
-def register_metric(name: str, fn: Callable[[EvalCase, Any], MetricOutcome],
-                    *, replace: bool = False) -> Callable[[EvalCase, Any], MetricOutcome]:
+def register_metric(
+    name: str, fn: Callable[[EvalCase, Any], MetricOutcome], *, replace: bool = False
+) -> Callable[[EvalCase, Any], MetricOutcome]:
     """Register a custom metric.
 
     Raises:
@@ -303,8 +374,13 @@ def register_metric(name: str, fn: Callable[[EvalCase, Any], MetricOutcome],
     return fn
 
 
-def score_case(case: EvalCase, result: Any, *, metrics: Sequence[str] = (),
-               weights: Mapping[str, float] | None = None) -> CaseScore:
+def score_case(
+    case: EvalCase,
+    result: Any,
+    *,
+    metrics: Sequence[str] = (),
+    weights: Mapping[str, float] | None = None,
+) -> CaseScore:
     """Score one run against one case.
 
     Args:
@@ -326,20 +402,22 @@ def score_case(case: EvalCase, result: Any, *, metrics: Sequence[str] = (),
     if case.max_seconds and "max_seconds" not in names:
         names.append("max_seconds")
     started = time.perf_counter()
-    score = CaseScore(case_id=case.id, output=_text(result)[:2_000], tags=case.tags,
-                      weight=case.weight)
+    score = CaseScore(
+        case_id=case.id, output=_text(result)[:2_000], tags=case.tags, weight=case.weight
+    )
     for name in names:
         try:
             outcome = get_metric(name)(case, result)
-        except Exception as exc:  # noqa: BLE001 - a broken metric is a failed metric
+        except Exception as exc:
             outcome = MetricOutcome(name, 0.0, False, f"metric error: {type(exc).__name__}: {exc}")
         weight = float((weights or {}).get(name, 1.0))
         if weight != 1.0:
             outcome.detail["weight"] = weight
             outcome.score = round(min(1.0, outcome.score * weight), 4)
         score.outcomes.append(outcome)
-    stopped = getattr(getattr(result, "stop_reason", ""), "value",
-                      getattr(result, "stop_reason", ""))
+    stopped = getattr(
+        getattr(result, "stop_reason", ""), "value", getattr(result, "stop_reason", "")
+    )
     if stopped and stopped in {"error", "guardrail"}:
         score.error = f"stop reason: {stopped}"
     score.seconds = time.perf_counter() - started
@@ -388,8 +466,9 @@ def aggregate(scores: Iterable[CaseScore]) -> dict[str, Any]:
         "pass_rate": round(passed / len(items), 4),
         "score": round(sum(item.score for item in items) / len(items), 4),
         "seconds": round(sum(item.seconds for item in items), 4),
-        "metrics": {name: round(sum(values) / len(values), 4)
-                    for name, values in sorted(per_metric.items())},
+        "metrics": {
+            name: round(sum(values) / len(values), 4) for name, values in sorted(per_metric.items())
+        },
     }
 
 

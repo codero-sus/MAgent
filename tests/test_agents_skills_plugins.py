@@ -6,26 +6,63 @@ import json
 import unittest
 from pathlib import Path
 
-from magent.agents import (AgentPreset, Handoff, Team, TeamMember, build_handoff, build_preset_agent,
-                           get_preset, handoff_block, list_presets, parse_handoff, preset_for_task,
-                           preset_names, presets_from_config, register_preset, run_team)
-from magent.plugins import (HookRegistry, PluginLoader, PluginManifest, load_plugins, manifest_for,
-                            write_manifest)
-from magent.skills import (BUILTIN_SKILLS, Skill, SkillLibrary, build_library, dump_skill,
-                           get_library, load_skill, merge_skills, parse_skill)
+from magent.agents import (
+    AgentPreset,
+    Handoff,
+    Team,
+    TeamMember,
+    build_handoff,
+    build_preset_agent,
+    get_preset,
+    handoff_block,
+    list_presets,
+    parse_handoff,
+    preset_for_task,
+    preset_names,
+    presets_from_config,
+    register_preset,
+    run_team,
+)
+from magent.plugins import (
+    HookRegistry,
+    PluginLoader,
+    PluginManifest,
+    load_plugins,
+    manifest_for,
+    write_manifest,
+)
+from magent.skills import (
+    BUILTIN_SKILLS,
+    Skill,
+    build_library,
+    dump_skill,
+    get_library,
+    load_skill,
+    merge_skills,
+    parse_skill,
+)
 from magent.testing import EchoBackend, ScriptedBackend
 from magent.tools import default_registry
+from tests.support import MAgentTestCase
 
-from tests.support import MagentTestCase
 
-
-class PresetTest(MagentTestCase):
+class PresetTest(MAgentTestCase):
     """Presets are data and produce working agents."""
 
     def test_presets_are_registered(self) -> None:
         names = preset_names()
-        for expected in ("coder", "reviewer", "researcher", "writer", "devops", "planner",
-                         "tutor", "analyst", "librarian", "minimal"):
+        for expected in (
+            "coder",
+            "reviewer",
+            "researcher",
+            "writer",
+            "devops",
+            "planner",
+            "tutor",
+            "analyst",
+            "librarian",
+            "minimal",
+        ):
             self.assertIn(expected, names)
 
     def test_every_preset_declares_a_known_persona(self) -> None:
@@ -39,9 +76,13 @@ class PresetTest(MagentTestCase):
         coder = get_preset("coder").build_registry(default_registry())
         self.assertGreater(coder.count(), 0)
         self.assertLess(coder.count(), default_registry().count())
-        self.assertTrue(all(item.spec.category in
-                            {"files", "text", "search", "git", "python", "shell", "system"}
-                            for item in coder.tools()))
+        self.assertTrue(
+            all(
+                item.spec.category
+                in {"files", "text", "search", "git", "python", "shell", "system"}
+                for item in coder.tools()
+            )
+        )
 
     def test_minimal_preset_has_no_tools(self) -> None:
         self.assertEqual(get_preset("minimal").build_registry(default_registry()).count(), 0)
@@ -82,13 +123,14 @@ class PresetTest(MagentTestCase):
             register_preset(AgentPreset(name="coder", description="duplicate"))
 
 
-class TeamTest(MagentTestCase):
+class TeamTest(MAgentTestCase):
     """The five orchestration modes run and report."""
 
     def _members(self, count: int = 2) -> list[TeamMember]:
-        return [TeamMember(name=f"m{index}", agent=build_preset_agent("minimal",
-                                                                     backend=EchoBackend()))
-                for index in range(count)]
+        return [
+            TeamMember(name=f"m{index}", agent=build_preset_agent("minimal", backend=EchoBackend()))
+            for index in range(count)
+        ]
 
     def test_sequential_mode_runs_every_member(self) -> None:
         team = Team(self._members(3), mode="sequential")
@@ -99,8 +141,9 @@ class TeamTest(MagentTestCase):
 
     def test_vote_mode_uses_a_judge(self) -> None:
         members = self._members(2)
-        judge = TeamMember(name="judge", agent=build_preset_agent("minimal", backend=EchoBackend()),
-                           weight=2)
+        judge = TeamMember(
+            name="judge", agent=build_preset_agent("minimal", backend=EchoBackend()), weight=2
+        )
         team = Team([*members, judge], mode="vote", judge="judge")
         result = team.run("what is MAgent?")
         self.assertTrue(result.succeeded)
@@ -115,10 +158,15 @@ class TeamTest(MagentTestCase):
         self.assertTrue(result.succeeded)
 
     def test_supervisor_mode_routes_by_name(self) -> None:
-        supervisor = TeamMember(name="sup", agent=build_preset_agent(
-            "minimal", backend=ScriptedBackend(script=["next: worker", "DONE"])))
-        worker = TeamMember(name="worker", agent=build_preset_agent("minimal",
-                                                                   backend=EchoBackend()))
+        supervisor = TeamMember(
+            name="sup",
+            agent=build_preset_agent(
+                "minimal", backend=ScriptedBackend(script=["next: worker", "DONE"])
+            ),
+        )
+        worker = TeamMember(
+            name="worker", agent=build_preset_agent("minimal", backend=EchoBackend())
+        )
         team = Team([supervisor, worker], mode="supervisor", judge="sup", max_turns=6)
         result = team.run("do the thing")
         self.assertTrue(result.succeeded)
@@ -153,8 +201,11 @@ class HandoffTest(unittest.TestCase):
     """Handoffs parse, render and survive a bad model reply."""
 
     def test_parse_json_handoff(self) -> None:
-        handoff = parse_handoff('{"task": "t", "summary": "s", "next_steps": ["a", "b"],'
-                               ' "confidence": 0.6}', from_agent="a", to_agent="b")
+        handoff = parse_handoff(
+            '{"task": "t", "summary": "s", "next_steps": ["a", "b"], "confidence": 0.6}',
+            from_agent="a",
+            to_agent="b",
+        )
         self.assertEqual(handoff.task, "t")
         self.assertEqual(handoff.next_steps, ["a", "b"])
         self.assertAlmostEqual(handoff.confidence, 0.6)
@@ -174,17 +225,21 @@ class HandoffTest(unittest.TestCase):
         from magent.agent import make_agent
         from magent.testing import ToolScriptBackend
 
-        agent = make_agent(backend=ToolScriptBackend(script=[
-            {"tool_calls": [{"name": "calculate", "arguments": {"expression": "1+1"}}]},
-            {"text": "done"},
-        ]))
+        agent = make_agent(
+            backend=ToolScriptBackend(
+                script=[
+                    {"tool_calls": [{"name": "calculate", "arguments": {"expression": "1+1"}}]},
+                    {"text": "done"},
+                ]
+            )
+        )
         result = agent.run("add one and one")
         handoff = build_handoff(result, from_agent="dev", to_agent="reviewer")
         self.assertTrue(handoff.summary)
         self.assertEqual(handoff.from_agent, "dev")
 
 
-class SkillTest(MagentTestCase):
+class SkillTest(MAgentTestCase):
     """Skills parse, match and merge."""
 
     def test_builtin_skills_are_shipped(self) -> None:
@@ -194,8 +249,10 @@ class SkillTest(MagentTestCase):
         self.assertIn("debug-loop", names)
 
     def test_parse_front_matter_and_body(self) -> None:
-        text = ("---\nname: demo\ndescription: A demo\ntags: [a, b]\ntriggers:\n  - demo\n"
-                "priority: 80\n---\nDo the demo thing.\n")
+        text = (
+            "---\nname: demo\ndescription: A demo\ntags: [a, b]\ntriggers:\n  - demo\n"
+            "priority: 80\n---\nDo the demo thing.\n"
+        )
         skill = parse_skill(text, source="demo.md")
         self.assertEqual(skill.name, "demo")
         self.assertEqual(skill.tags, ("a", "b"))
@@ -219,7 +276,9 @@ class SkillTest(MagentTestCase):
         skill_dir.mkdir(parents=True)
         (skill_dir / "house-style.md").write_text(
             "---\nname: house-style\ndescription: Our conventions\ntriggers: [house style]\n---\n"
-            "Match the existing style.\n", encoding="utf-8")
+            "Match the existing style.\n",
+            encoding="utf-8",
+        )
         library = build_library(self.config(), workspace=self.workspace)
         self.assertIn("house-style", library.names())
         self.assertIn("Match the existing style", library.get("house-style").body)
@@ -240,22 +299,31 @@ class SkillTest(MagentTestCase):
         self.assertIn("Do it.", reloaded.body)
 
     def test_merge_combines_bodies(self) -> None:
-        merged = merge_skills([Skill(name="a", body="first"), Skill(name="b", body="second")],
-                              name="both")
+        merged = merge_skills(
+            [Skill(name="a", body="first"), Skill(name="b", body="second")], name="both"
+        )
         self.assertIn("first", merged.body)
         self.assertIn("second", merged.body)
 
 
-class PluginTest(MagentTestCase):
+class PluginTest(MAgentTestCase):
     """Plugins load, contribute and fail loudly but safely."""
 
     def _plugin_dir(self) -> Path:
         root = self.workspace / "plugins" / "acme"
         root.mkdir(parents=True)
-        (root / "plugin.json").write_text(json.dumps({
-            "name": "acme", "version": "1.0.0", "entry": "acme.py",
-            "description": "Test plugin", "provides": ["tools", "hooks", "skills"],
-        }), encoding="utf-8")
+        (root / "plugin.json").write_text(
+            json.dumps(
+                {
+                    "name": "acme",
+                    "version": "1.0.0",
+                    "entry": "acme.py",
+                    "description": "Test plugin",
+                    "provides": ["tools", "hooks", "skills"],
+                }
+            ),
+            encoding="utf-8",
+        )
         (root / "acme.py").write_text(
             '"""Test plugin."""\n'
             "from magent.skills import Skill\n"
@@ -264,12 +332,13 @@ class PluginTest(MagentTestCase):
             'def acme_ping(message: str = "ping") -> str:\n'
             '    """Return the message unchanged."""\n'
             "    return message\n\n\n"
-            'def after_run(payload, **context):\n'
+            "def after_run(payload, **context):\n"
             '    """Note that a run finished."""\n'
             "    return None\n\n\n"
             'HOOKS = {"after_run": after_run}\n'
             'SKILLS = [Skill(name="acme-style", description="Acme style", body="Be brief.")]\n',
-            encoding="utf-8")
+            encoding="utf-8",
+        )
         return root
 
     def test_manifest_is_inferred_when_absent(self) -> None:
@@ -281,8 +350,9 @@ class PluginTest(MagentTestCase):
         self.assertTrue(manifest.metadata.get("inferred"))
 
     def test_manifest_validation_reports_unknown_capabilities(self) -> None:
-        manifest = PluginManifest.from_dict({"name": "x", "entry": "x.py",
-                                            "provides": ["tools", "nope"]})
+        manifest = PluginManifest.from_dict(
+            {"name": "x", "entry": "x.py", "provides": ["tools", "nope"]}
+        )
         self.assertIn("unknown capabilities", " ".join(manifest.validate()))
 
     def test_loader_registers_tools_hooks_and_skills(self) -> None:
@@ -301,8 +371,9 @@ class PluginTest(MagentTestCase):
     def test_missing_entry_is_reported_not_raised(self) -> None:
         root = self.workspace / "plugins" / "broken"
         root.mkdir(parents=True)
-        (root / "plugin.json").write_text(json.dumps({"name": "broken", "entry": "gone.py"}),
-                                          encoding="utf-8")
+        (root / "plugin.json").write_text(
+            json.dumps({"name": "broken", "entry": "gone.py"}), encoding="utf-8"
+        )
         loader = PluginLoader()
         record = loader.load_directory(root)
         self.assertFalse(record.ok)
@@ -311,9 +382,9 @@ class PluginTest(MagentTestCase):
     def test_entry_escaping_the_plugin_directory_is_refused(self) -> None:
         root = self.workspace / "plugins" / "escaping"
         root.mkdir(parents=True)
-        (root / "plugin.json").write_text(json.dumps({"name": "escaping",
-                                                      "entry": "../../evil.py"}),
-                                          encoding="utf-8")
+        (root / "plugin.json").write_text(
+            json.dumps({"name": "escaping", "entry": "../../evil.py"}), encoding="utf-8"
+        )
         loader = PluginLoader()
         record = loader.load_directory(root)
         self.assertFalse(record.ok)
@@ -322,8 +393,9 @@ class PluginTest(MagentTestCase):
     def test_strict_mode_raises(self) -> None:
         root = self.workspace / "plugins" / "broken"
         root.mkdir(parents=True)
-        (root / "plugin.json").write_text(json.dumps({"name": "broken", "entry": "gone.py"}),
-                                          encoding="utf-8")
+        (root / "plugin.json").write_text(
+            json.dumps({"name": "broken", "entry": "gone.py"}), encoding="utf-8"
+        )
         from magent.errors import PluginError
 
         with self.assertRaises(PluginError):
@@ -346,8 +418,11 @@ class PluginTest(MagentTestCase):
     def test_hooks_isolate_failures(self) -> None:
         hooks = HookRegistry()
         seen: list[str] = []
-        hooks.register("before_run", lambda payload, **kw: (_ for _ in ()).throw(RuntimeError("x")),
-                       name="broken")
+        hooks.register(
+            "before_run",
+            lambda payload, **kw: (_ for _ in ()).throw(RuntimeError("x")),
+            name="broken",
+        )
         hooks.register("before_run", lambda payload, **kw: seen.append("ok"), name="good")
         hooks.apply("before_run", {})
         self.assertEqual(seen, ["ok"])

@@ -31,32 +31,113 @@ from ..logging_ import get_logger
 
 LOGGER = get_logger("sandbox")
 
-ALWAYS_DENIED_COMMANDS: frozenset[str] = frozenset({
-    "mkfs", "mkfs.ext4", "dd", "shutdown", "reboot", "halt", "poweroff", "init",
-    "rm", "rmdir", "del", "format", "fdisk", "parted", "wipefs",
-    "chmod", "chown", "chgrp", "chroot",
-    "sudo", "su", "doas", "pkexec",
-    "passwd", "useradd", "userdel", "usermod", "groupadd",
-    "mount", "umount", "insmod", "modprobe", "rmmod",
-    "iptables", "nft", "ufw", "firewall-cmd",
-    "systemctl", "service", "launchctl",
-    "kill", "killall", "pkill", "taskkill",
-    "curl", "wget",
-})
+ALWAYS_DENIED_COMMANDS: frozenset[str] = frozenset(
+    {
+        "mkfs",
+        "mkfs.ext4",
+        "dd",
+        "shutdown",
+        "reboot",
+        "halt",
+        "poweroff",
+        "init",
+        "rm",
+        "rmdir",
+        "del",
+        "format",
+        "fdisk",
+        "parted",
+        "wipefs",
+        "chmod",
+        "chown",
+        "chgrp",
+        "chroot",
+        "sudo",
+        "su",
+        "doas",
+        "pkexec",
+        "passwd",
+        "useradd",
+        "userdel",
+        "usermod",
+        "groupadd",
+        "mount",
+        "umount",
+        "insmod",
+        "modprobe",
+        "rmmod",
+        "iptables",
+        "nft",
+        "ufw",
+        "firewall-cmd",
+        "systemctl",
+        "service",
+        "launchctl",
+        "kill",
+        "killall",
+        "pkill",
+        "taskkill",
+        "curl",
+        "wget",
+    }
+)
 """Commands never permitted through the sandbox, whatever the policy says."""
 
 SAFE_DEFAULT_ALLOWLIST: tuple[str, ...] = (
-    "ls", "dir", "pwd", "echo", "cat", "type", "head", "tail", "wc", "sort", "uniq",
-    "grep", "rg", "find", "tree", "stat", "file", "du", "df", "date", "whoami",
-    "python", "python3", "node", "git status", "git log", "git diff", "git show",
-    "git branch", "git remote", "pytest", "make help", "cargo check", "go vet",
+    "ls",
+    "dir",
+    "pwd",
+    "echo",
+    "cat",
+    "type",
+    "head",
+    "tail",
+    "wc",
+    "sort",
+    "uniq",
+    "grep",
+    "rg",
+    "find",
+    "tree",
+    "stat",
+    "file",
+    "du",
+    "df",
+    "date",
+    "whoami",
+    "python",
+    "python3",
+    "node",
+    "git status",
+    "git log",
+    "git diff",
+    "git show",
+    "git branch",
+    "git remote",
+    "pytest",
+    "make help",
+    "cargo check",
+    "go vet",
 )
 """Commands allowed when the policy is ``allowlist`` and no list is configured."""
 
 DANGEROUS_PATH_PATTERNS: tuple[str, ...] = (
-    "/etc/shadow", "/etc/passwd", "/etc/sudoers", "/root/.ssh", "/proc", "/sys", "/dev",
-    "~/.ssh", "~/.aws", "~/.gnupg", "~/.config/gcloud", "id_rsa", "id_ed25519",
-    ".env", "credentials", "secrets",
+    "/etc/shadow",
+    "/etc/passwd",
+    "/etc/sudoers",
+    "/root/.ssh",
+    "/proc",
+    "/sys",
+    "/dev",
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.config/gcloud",
+    "id_rsa",
+    "id_ed25519",
+    ".env",
+    "credentials",
+    "secrets",
 )
 """Substrings that make a path sensitive even inside the workspace."""
 
@@ -116,9 +197,7 @@ class SandboxPolicy:
     def validate(self) -> None:
         """Reject policies that cannot be enforced."""
         if self.command_policy not in {"allowlist", "denylist", "open", "disabled"}:
-            raise ValueError(
-                "command_policy must be allowlist, denylist, open, or disabled"
-            )
+            raise ValueError("command_policy must be allowlist, denylist, open, or disabled")
         if self.max_read_bytes < 0 or self.max_write_bytes < 0:
             raise ValueError("byte limits cannot be negative")
 
@@ -132,10 +211,14 @@ class SandboxPolicy:
 class Sandbox:
     """Enforces a :class:`SandboxPolicy` on paths, commands, and domains."""
 
-    def __init__(self, policy: SandboxPolicy | None = None, *, workspace: str | Path | None = None) -> None:
+    def __init__(
+        self, policy: SandboxPolicy | None = None, *, workspace: str | Path | None = None
+    ) -> None:
         self.policy = policy or SandboxPolicy()
         self.policy.validate()
-        self.workspace = Path(workspace or (self.policy.roots[0] if self.policy.roots else Path.cwd())).expanduser()
+        self.workspace = Path(
+            workspace or (self.policy.roots[0] if self.policy.roots else Path.cwd())
+        ).expanduser()
         if not self.policy.roots:
             self.policy.roots = [str(self.workspace)]
         self._lock = threading.RLock()
@@ -187,19 +270,25 @@ class Sandbox:
 
         for pattern in self.policy.deny_paths:
             if self._path_matches(resolved, pattern):
-                return self._deny(action, text, f"matches deny_paths rule {pattern!r}", "deny_paths")
+                return self._deny(
+                    action, text, f"matches deny_paths rule {pattern!r}", "deny_paths"
+                )
 
         if self.policy.block_sensitive:
             for pattern in self.policy.sensitive_patterns:
                 needle = str(Path(pattern).expanduser()).lower()
                 if needle in lowered or pattern.lower() in lowered:
-                    return self._deny(action, text, f"path looks sensitive ({pattern})", "sensitive")
+                    return self._deny(
+                        action, text, f"path looks sensitive ({pattern})", "sensitive"
+                    )
 
         allowed_roots = self.roots()
         inside = any(resolved == root or root in resolved.parents for root in allowed_roots)
         if not inside:
             if action == "read" and self.policy.allow_read_outside:
-                return self._allow(action, text, "read outside the jail is permitted", "allow_read_outside")
+                return self._allow(
+                    action, text, "read outside the jail is permitted", "allow_read_outside"
+                )
             return self._deny(
                 action,
                 text,
@@ -264,7 +353,9 @@ class Sandbox:
     def check_command(self, command: str) -> SandboxDecision:
         """Authorize a shell command against the configured policy."""
         if not self.policy.allow_exec:
-            return self._deny("exec", command, "command execution is disabled by policy", "allow_exec")
+            return self._deny(
+                "exec", command, "command execution is disabled by policy", "allow_exec"
+            )
         if self.policy.command_policy == "disabled":
             return self._deny("exec", command, "command_policy is 'disabled'", "policy")
         try:
@@ -279,13 +370,17 @@ class Sandbox:
             return self._deny("exec", command, f"{program!r} is always denied", "always_deny")
         for denied in self.policy.deny_commands:
             if self._command_matches(tokens, denied):
-                return self._deny("exec", command, f"matches deny_commands rule {denied!r}", "deny_commands")
+                return self._deny(
+                    "exec", command, f"matches deny_commands rule {denied!r}", "deny_commands"
+                )
         if self.policy.command_policy == "open":
             return self._allow("exec", command, "command_policy is open", "open")
         allowlist = list(self.policy.allow_commands) or list(SAFE_DEFAULT_ALLOWLIST)
         for allowed in allowlist:
             if self._command_matches(tokens, allowed):
-                return self._allow("exec", command, f"matches allow_commands rule {allowed!r}", "allow_commands")
+                return self._allow(
+                    "exec", command, f"matches allow_commands rule {allowed!r}", "allow_commands"
+                )
         if self.policy.command_policy == "denylist":
             return self._allow("exec", command, "denylist policy and no rule matched", "denylist")
         return self._deny(
@@ -318,7 +413,9 @@ class Sandbox:
         from ..utils.urls import is_local_url, url_origin
 
         if not self.policy.allow_network:
-            return self._deny("network", url, "network access is disabled by policy", "allow_network")
+            return self._deny(
+                "network", url, "network access is disabled by policy", "allow_network"
+            )
         origin = url_origin(url)
         for denied in self.policy.deny_domains:
             if self._domain_matches(origin, denied):
@@ -326,8 +423,12 @@ class Sandbox:
         if self.policy.allow_domains:
             for allowed in self.policy.allow_domains:
                 if self._domain_matches(origin, allowed):
-                    return self._allow("network", url, f"origin {origin} is allowlisted", "allow_domains")
-            return self._deny("network", url, f"origin {origin} is not allowlisted", "allow_domains")
+                    return self._allow(
+                        "network", url, f"origin {origin} is allowlisted", "allow_domains"
+                    )
+            return self._deny(
+                "network", url, f"origin {origin} is not allowlisted", "allow_domains"
+            )
         if is_local_url(url):
             return self._allow("network", url, "loopback/private address", "local")
         return self._allow("network", url, "network access permitted", "open")
@@ -348,13 +449,17 @@ class Sandbox:
 
     def _allow(self, action: str, target: str, reason: str, rule: str) -> SandboxDecision:
         """Record and return an allow decision."""
-        decision = SandboxDecision(allowed=True, action=action, target=target, reason=reason, rule=rule)
+        decision = SandboxDecision(
+            allowed=True, action=action, target=target, reason=reason, rule=rule
+        )
         self._record(decision)
         return decision
 
     def _deny(self, action: str, target: str, reason: str, rule: str) -> SandboxDecision:
         """Record a denial and raise unless the policy only warns."""
-        decision = SandboxDecision(allowed=False, action=action, target=target, reason=reason, rule=rule)
+        decision = SandboxDecision(
+            allowed=False, action=action, target=target, reason=reason, rule=rule
+        )
         self._record(decision)
         self.denials[rule] += 1
         if self.policy.deny_action == "warn":
@@ -406,13 +511,14 @@ class Sandbox:
         base = dict(os.environ)
         for key in list(base):
             upper = key.upper()
-            if any(token in upper for token in ("SECRET", "TOKEN", "PASSWORD", "API_KEY", "CREDENTIAL")):
+            if any(
+                token in upper for token in ("SECRET", "TOKEN", "PASSWORD", "API_KEY", "CREDENTIAL")
+            ):
                 if not upper.startswith("MAGENT_KEEP_"):
                     base.pop(key, None)
         if extra:
             base.update({str(k): str(v) for k, v in extra.items()})
         return base
-
 
 
 def build_sandbox(config: Any, *, workspace: str | Path | None = None) -> Sandbox:
@@ -422,7 +528,9 @@ def build_sandbox(config: Any, *, workspace: str | Path | None = None) -> Sandbo
     root = workspace or (getattr(tools, "workspace", "") if tools else "") or str(Path.cwd())
     policy = SandboxPolicy(
         roots=[str(Path(root).expanduser())],
-        allow_paths=[str(Path(item).expanduser()) for item in (getattr(tools, "allow_paths", []) or [])],
+        allow_paths=[
+            str(Path(item).expanduser()) for item in (getattr(tools, "allow_paths", []) or [])
+        ],
         deny_paths=list(getattr(tools, "deny_paths", []) or []),
         allow_commands=list(getattr(tools, "allow_commands", []) or []),
         deny_commands=list(getattr(tools, "deny_commands", []) or []),

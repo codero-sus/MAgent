@@ -95,14 +95,32 @@ PROGRESS_BLOCKS = (" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█")
 """Eighth-block characters for smooth progress bars."""
 
 BOX_DRAWING = {
-    "tl": "╭", "tr": "╮", "bl": "╰", "br": "╯",
-    "h": "─", "v": "│", "lt": "├", "rt": "┤", "tt": "┬", "bt": "┴", "cross": "┼",
+    "tl": "╭",
+    "tr": "╮",
+    "bl": "╰",
+    "br": "╯",
+    "h": "─",
+    "v": "│",
+    "lt": "├",
+    "rt": "┤",
+    "tt": "┬",
+    "bt": "┴",
+    "cross": "┼",
 }
 """Unicode box drawing characters."""
 
 ASCII_BOX = {
-    "tl": "+", "tr": "+", "bl": "+", "br": "+",
-    "h": "-", "v": "|", "lt": "+", "rt": "+", "tt": "+", "bt": "+", "cross": "+",
+    "tl": "+",
+    "tr": "+",
+    "bl": "+",
+    "br": "+",
+    "h": "-",
+    "v": "|",
+    "lt": "+",
+    "rt": "+",
+    "tt": "+",
+    "bt": "+",
+    "cross": "+",
 }
 """ASCII fallback box drawing characters."""
 
@@ -134,8 +152,15 @@ def supports_color(stream: object | None = None) -> bool:
         target = stream if stream is not None else sys.stdout
         isatty = bool(getattr(target, "isatty", lambda: False)())
         term = os.environ.get("TERM", "")
-        result = isatty and term != "dumb" and (
-            os.name != "nt" or term or _env_flag("WT_SESSION") or os.environ.get("ANSICON") is not None
+        result = (
+            isatty
+            and term != "dumb"
+            and (
+                os.name != "nt"
+                or term
+                or _env_flag("WT_SESSION")
+                or os.environ.get("ANSICON") is not None
+            )
         )
     _cache[key] = result
     return result

@@ -47,7 +47,9 @@ def atomic_write_text(path: str | Path, text: str, *, encoding: str = "utf-8") -
     """
     target = Path(path).expanduser()
     ensure_dir(target.parent)
-    handle, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+    )
     try:
         with os.fdopen(handle, "w", encoding=encoding, newline="\n") as stream:
             stream.write(text)
@@ -67,7 +69,9 @@ def atomic_write_bytes(path: str | Path, data: bytes) -> Path:
     """Write raw ``data`` to ``path`` atomically."""
     target = Path(path).expanduser()
     ensure_dir(target.parent)
-    handle, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+    )
     try:
         with os.fdopen(handle, "wb") as stream:
             stream.write(data)
@@ -102,7 +106,9 @@ def read_json(path: str | Path, default: Any = None) -> Any:
         return default
 
 
-def write_json(path: str | Path, data: Any, *, indent: int | None = 2, sort_keys: bool = False) -> Path:
+def write_json(
+    path: str | Path, data: Any, *, indent: int | None = 2, sort_keys: bool = False
+) -> Path:
     """Atomically write ``data`` as JSON."""
     text = json.dumps(data, indent=indent, sort_keys=sort_keys, default=str, ensure_ascii=False)
     return atomic_write_text(path, text + "\n")

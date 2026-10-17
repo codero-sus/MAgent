@@ -50,8 +50,10 @@ def _run(
         duration = (time.perf_counter() - started) * 1000.0
         raise ToolExecutionError(
             f"Command timed out after {timeout}s: {_as_text(command)}",
-            details={"stdout": (exc.stdout or "")[:max_output] if isinstance(exc.stdout, str) else "",
-                     "duration_ms": duration},
+            details={
+                "stdout": (exc.stdout or "")[:max_output] if isinstance(exc.stdout, str) else "",
+                "duration_ms": duration,
+            },
         ) from exc
     except OSError as exc:
         raise ToolExecutionError(f"Could not run {_as_text(command)}: {exc}") from exc
@@ -79,9 +81,16 @@ def _as_text(command: list[str] | str) -> str:
 
 
 @tool(category="shell", risk="execute", executes_code=True, timeout=120.0, tags=["exec", "core"])
-def run_command(command: str, cwd: str = ".", timeout: float = 60.0, shell: bool = False,
-                stdin: str = "", env: str = "", max_output: int = 200000,
-                context: ToolContext | None = None) -> dict[str, Any]:
+def run_command(
+    command: str,
+    cwd: str = ".",
+    timeout: float = 60.0,
+    shell: bool = False,
+    stdin: str = "",
+    env: str = "",
+    max_output: int = 200000,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Run a shell command inside the workspace and return its output.
 
     Args:
@@ -108,13 +117,26 @@ def run_command(command: str, cwd: str = ".", timeout: float = 60.0, shell: bool
     argv: list[str] | str = command if shell else shlex.split(command, posix=os.name != "nt")
     if not shell and not argv:
         raise ToolExecutionError("Empty command")
-    return _run(argv, cwd=workdir, timeout=min(timeout, ctx.timeout or timeout), env=base_env,
-                shell=shell, max_output=max_output, stdin_text=stdin)
+    return _run(
+        argv,
+        cwd=workdir,
+        timeout=min(timeout, ctx.timeout or timeout),
+        env=base_env,
+        shell=shell,
+        max_output=max_output,
+        stdin_text=stdin,
+    )
 
 
 @tool(category="shell", risk="execute", executes_code=True, timeout=300.0, tags=["script"])
-def run_script(script: str, interpreter: str = "", cwd: str = ".", timeout: float = 120.0,
-               args: str = "", context: ToolContext | None = None) -> dict[str, Any]:
+def run_script(
+    script: str,
+    interpreter: str = "",
+    cwd: str = ".",
+    timeout: float = 120.0,
+    args: str = "",
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Run a multi-line script through an interpreter without writing a file.
 
     Args:
@@ -137,8 +159,9 @@ def run_script(script: str, interpreter: str = "", cwd: str = ".", timeout: floa
 
 
 @tool(category="shell", risk="read", executes_code=False, timeout=30.0, tags=["env", "system"])
-def show_environment(include: str = "", redact: bool = True,
-                     context: ToolContext | None = None) -> dict[str, Any]:
+def show_environment(
+    include: str = "", redact: bool = True, context: ToolContext | None = None
+) -> dict[str, Any]:
     """List environment variables visible to tools, with secrets redacted.
 
     Args:
@@ -170,11 +193,10 @@ def find_executable(name: str, context: ToolContext | None = None) -> dict[str, 
         "name": name,
         "found": bool(resolved),
         "path": resolved or "",
-        "allowed": bool(
-            context and context.sandbox and context.sandbox.check_command(name).allowed
-        ) if resolved else False,
+        "allowed": bool(context and context.sandbox and context.sandbox.check_command(name).allowed)
+        if resolved
+        else False,
     }
-
 
 
 @tool(category="shell", risk="read", executes_code=False, tags=["processes"])
@@ -186,21 +208,34 @@ def list_processes(limit: int = 40, context: ToolContext | None = None) -> dict[
     """
     try:
         if sys.platform == "win32":
-            completed = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=10, check=False)
+            completed = subprocess.run(
+                ["tasklist"], capture_output=True, text=True, timeout=10, check=False
+            )
             lines = (completed.stdout or "").splitlines()[3:]
             rows = [{"raw": line.strip()} for line in lines[:limit] if line.strip()]
         else:
             completed = subprocess.run(
                 ["ps", "-eo", "pid,ppid,pcpu,pmem,etime,comm"],
-                capture_output=True, text=True, timeout=10, check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
             )
             lines = (completed.stdout or "").splitlines()
             rows = []
             for line in lines[1 : limit + 1]:
                 parts = line.split(None, 5)
                 if len(parts) == 6:
-                    rows.append({"pid": int(parts[0]), "ppid": int(parts[1]), "cpu": float(parts[2]),
-                                 "mem": float(parts[3]), "elapsed": parts[4], "command": parts[5]})
+                    rows.append(
+                        {
+                            "pid": int(parts[0]),
+                            "ppid": int(parts[1]),
+                            "cpu": float(parts[2]),
+                            "mem": float(parts[3]),
+                            "elapsed": parts[4],
+                            "command": parts[5],
+                        }
+                    )
     except (OSError, subprocess.SubprocessError) as exc:
         raise ToolExecutionError(f"Could not list processes: {exc}") from exc
     return {"count": len(rows), "processes": rows}
@@ -216,5 +251,12 @@ def load(registry: Any) -> int:
     return len(TOOLS)
 
 
-__all__ = ["TOOLS", "find_executable", "list_processes", "load", "run_command", "run_script",
-           "show_environment"]
+__all__ = [
+    "TOOLS",
+    "find_executable",
+    "list_processes",
+    "load",
+    "run_command",
+    "run_script",
+    "show_environment",
+]

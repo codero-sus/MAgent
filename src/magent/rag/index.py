@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..errors import IndexError_
 from ..logging_ import get_logger
@@ -24,7 +25,6 @@ from ..memory.embeddings import DEFAULT_DIM, Embedder, build_embedder
 from ..memory.ranking import BM25Scorer, tokenize
 from ..memory.vector import VectorIndex
 from ..utils.files import atomic_write_text, ensure_dir, human_size
-from ..utils.numbers import cosine_similarity
 from .chunker import Chunk
 
 LOGGER = get_logger("rag.index")
@@ -61,9 +61,16 @@ def augmented_text(chunk: Chunk) -> str:
 class ChunkIndex:
     """Hybrid lexical and vector index over document chunks."""
 
-    def __init__(self, *, embedder: Embedder | None = None, backend: Any = None,
-                 dim: int = DEFAULT_DIM, buckets: int = 0, embed_on_add: bool = True,
-                 embedding_batch_size: int = 16) -> None:
+    def __init__(
+        self,
+        *,
+        embedder: Embedder | None = None,
+        backend: Any = None,
+        dim: int = DEFAULT_DIM,
+        buckets: int = 0,
+        embed_on_add: bool = True,
+        embedding_batch_size: int = 16,
+    ) -> None:
         """Create an empty index.
 
         Args:
@@ -74,7 +81,9 @@ class ChunkIndex:
             embed_on_add: embed each chunk as it is added
             embedding_batch_size: texts per embedding request
         """
-        self.embedder = embedder or build_embedder(backend, dim=dim, batch_size=embedding_batch_size)
+        self.embedder = embedder or build_embedder(
+            backend, dim=dim, batch_size=embedding_batch_size
+        )
         self.embed_on_add = bool(embed_on_add)
         self.batch_size = max(1, int(embedding_batch_size))
         self._chunks: list[Chunk] = []
@@ -126,7 +135,7 @@ class ChunkIndex:
             batch = pending[start : start + self.batch_size]
             try:
                 vectors = self.embedder.embed([chunk.text for chunk in batch])
-            except Exception as exc:  # noqa: BLE001 - lexical search must still work
+            except Exception as exc:
                 LOGGER.warning("embedding failed for %d chunk(s): %s", len(batch), exc)
                 return embedded
             for chunk, vector in zip(batch, vectors, strict=False):
@@ -184,9 +193,18 @@ class ChunkIndex:
                 self._dirty_scorer = False
         return scorer.scores(query)
 
-    def search(self, query: str, *, limit: int = 5, mode: str = "hybrid", min_score: float = 0.0,
-               sources: Sequence[str] | None = None, lexical_weight: float = 0.5,
-               heading_boost: float = 0.1, embed_query: bool = True) -> list[Chunk]:
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        mode: str = "hybrid",
+        min_score: float = 0.0,
+        sources: Sequence[str] | None = None,
+        lexical_weight: float = 0.5,
+        heading_boost: float = 0.1,
+        embed_query: bool = True,
+    ) -> list[Chunk]:
         """Find the chunks most relevant to a query.
 
         Args:
@@ -219,7 +237,7 @@ class ChunkIndex:
         if active in {"hybrid", "vector"} and query.strip() and embed_query:
             try:
                 query_vector = self.embedder.embed([query])[0]
-            except Exception as exc:  # noqa: BLE001 - fall back to lexical
+            except Exception as exc:
                 LOGGER.debug("query embedding failed: %s", exc)
                 query_vector = []
             if query_vector:
@@ -229,8 +247,9 @@ class ChunkIndex:
         semantic_weight = max(0.0, 1.0 - lexical_weight)
         scored: list[tuple[float, Chunk]] = []
         for chunk in candidates:
-            base = (lexical_weight * lexical.get(chunk.id, 0.0)
-                    + semantic_weight * max(0.0, semantic.get(chunk.id, 0.0)))
+            base = lexical_weight * lexical.get(chunk.id, 0.0) + semantic_weight * max(
+                0.0, semantic.get(chunk.id, 0.0)
+            )
             if active == "none":
                 base = 0.0
             bonus = 0.0
@@ -320,8 +339,9 @@ class ChunkIndex:
         return target
 
     @classmethod
-    def load(cls, path: str | Path, *, embedder: Embedder | None = None,
-             backend: Any = None) -> ChunkIndex:
+    def load(
+        cls, path: str | Path, *, embedder: Embedder | None = None, backend: Any = None
+    ) -> ChunkIndex:
         """Rebuild an index from a file written by :meth:`save`."""
         source = Path(path).expanduser()
         if not source.is_file():

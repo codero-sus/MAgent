@@ -16,9 +16,10 @@ import os
 import shutil
 import tempfile
 import unittest
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 CORTEX_URL_ENV = "MAGENT_TEST_CORTEX_URL"
 """Set this to run the Cortex integration tests against a live host."""
@@ -38,8 +39,16 @@ class IsolatedHome:
     def create(cls, *, with_layout: bool = True) -> IsolatedHome:
         """Create the temporary home and point the environment at it."""
         path = Path(tempfile.mkdtemp(prefix="magent-test-home-"))
-        keys = ("MAGENT_HOME", "MAGENT_DATA_DIR", "MAGENT_CACHE_DIR", "MAGENT_CONFIG_DIR",
-                "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME")
+        keys = (
+            "MAGENT_HOME",
+            "MAGENT_DATA_DIR",
+            "MAGENT_CACHE_DIR",
+            "MAGENT_CONFIG_DIR",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_STATE_HOME",
+        )
         previous = {key: os.environ.get(key) for key in keys}
         os.environ["MAGENT_HOME"] = str(path)
         for key in keys[1:]:
@@ -67,7 +76,7 @@ class IsolatedHome:
         return target
 
 
-class MagentTestCase(unittest.TestCase):
+class MAgentTestCase(unittest.TestCase):
     """Base class that isolates the environment for every test."""
 
     home: IsolatedHome
@@ -80,7 +89,11 @@ class MagentTestCase(unittest.TestCase):
         self.workspace = Path(tempfile.mkdtemp(prefix="magent-test-ws-"))
 
     def tearDown(self) -> None:
-        """Remove both temporary directories."""
+        """Remove temporary paths and process-global plugin import state."""
+        import sys
+
+        for name in [item for item in sys.modules if item.startswith("magent_plugin_")]:
+            sys.modules.pop(name, None)
         shutil.rmtree(self.workspace, ignore_errors=True)
         self.home.teardown()
         super().tearDown()
@@ -130,8 +143,12 @@ class MagentTestCase(unittest.TestCase):
 
         config = kwargs.pop("config", None) or self.config()
         workspace = kwargs.pop("workspace", None) or self.workspace
-        return Agent(backend=kwargs.pop("backend", None) or self.backend(), settings=config,
-                     workspace=workspace, **kwargs)
+        return Agent(
+            backend=kwargs.pop("backend", None) or self.backend(),
+            settings=config,
+            workspace=workspace,
+            **kwargs,
+        )
 
     def registry(self) -> Any:
         """The default tool registry."""
@@ -191,7 +208,7 @@ __all__ = [
     "CORTEX_URL_ENV",
     "WORKSPACE_ENV",
     "IsolatedHome",
-    "MagentTestCase",
+    "MAgentTestCase",
     "assert_no_secrets",
     "cortex_url",
     "skip_without_cortex",

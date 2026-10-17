@@ -10,11 +10,11 @@ code fence open.
 
 from __future__ import annotations
 
-import sys
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 from ..errors import MAgentError
 from ..output.render import RenderOptions, ResultRenderer
@@ -38,7 +38,7 @@ class SlashCommand:
 
     name: str
     help: str
-    handler: Callable[["Repl", str], bool]
+    handler: Callable[[Repl, str], bool]
     aliases: tuple[str, ...] = ()
 
     def __repr__(self) -> str:
@@ -49,8 +49,15 @@ class SlashCommand:
 class Repl:
     """Interactive session over one agent."""
 
-    def __init__(self, ctx: Any, *, session_id: str = "", preset: str = "",
-                 stream: bool = True, agent: Any = None) -> None:
+    def __init__(
+        self,
+        ctx: Any,
+        *,
+        session_id: str = "",
+        preset: str = "",
+        stream: bool = True,
+        agent: Any = None,
+    ) -> None:
         """Create the REPL.
 
         Args:
@@ -78,8 +85,7 @@ class Repl:
     def _build_agent(self) -> Any:
         """Create the agent this session will use."""
         if self.preset:
-            return self.ctx.build_preset_agent(self.preset,
-                                               name=f"MAgent[{self.preset}]")
+            return self.ctx.build_preset_agent(self.preset, name=f"MAgent[{self.preset}]")
         return self.ctx.build_agent()
 
     # -- slash commands ------------------------------------------------------
@@ -90,23 +96,35 @@ class Repl:
         return [
             SlashCommand("help", "list commands", lambda repl, arg: repl.cmd_help(arg), ("?", "h")),
             SlashCommand("tools", "list or search tools", lambda repl, arg: repl.cmd_tools(arg)),
-            SlashCommand("memory", "search long-term memory", lambda repl, arg: repl.cmd_memory(arg)),
-            SlashCommand("recall", "inject memories into the next prompt",
-                         lambda repl, arg: repl.cmd_recall(arg)),
+            SlashCommand(
+                "memory", "search long-term memory", lambda repl, arg: repl.cmd_memory(arg)
+            ),
+            SlashCommand(
+                "recall",
+                "inject memories into the next prompt",
+                lambda repl, arg: repl.cmd_recall(arg),
+            ),
             SlashCommand("preset", "switch agent preset", lambda repl, arg: repl.cmd_preset(arg)),
             SlashCommand("persona", "switch persona", lambda repl, arg: repl.cmd_persona(arg)),
-            SlashCommand("files", "attach files to the next message",
-                         lambda repl, arg: repl.cmd_files(arg)),
-            SlashCommand("save", "save the session transcript", lambda repl, arg: repl.cmd_save(arg)),
-            SlashCommand("sessions", "list stored sessions",
-                         lambda repl, arg: repl.cmd_sessions(arg)),
+            SlashCommand(
+                "files", "attach files to the next message", lambda repl, arg: repl.cmd_files(arg)
+            ),
+            SlashCommand(
+                "save", "save the session transcript", lambda repl, arg: repl.cmd_save(arg)
+            ),
+            SlashCommand(
+                "sessions", "list stored sessions", lambda repl, arg: repl.cmd_sessions(arg)
+            ),
             SlashCommand("stats", "show session statistics", lambda repl, arg: repl.cmd_stats(arg)),
-            SlashCommand("skills", "show which skills apply to text",
-                         lambda repl, arg: repl.cmd_skills(arg)),
-            SlashCommand("clear", "forget the conversation so far",
-                         lambda repl, arg: repl.cmd_clear(arg)),
-            SlashCommand("quit", "leave the session", lambda repl, arg: repl.cmd_quit(arg),
-                         ("exit", "q")),
+            SlashCommand(
+                "skills", "show which skills apply to text", lambda repl, arg: repl.cmd_skills(arg)
+            ),
+            SlashCommand(
+                "clear", "forget the conversation so far", lambda repl, arg: repl.cmd_clear(arg)
+            ),
+            SlashCommand(
+                "quit", "leave the session", lambda repl, arg: repl.cmd_quit(arg), ("exit", "q")
+            ),
         ]
 
     def register(self, command: SlashCommand) -> SlashCommand:
@@ -149,11 +167,18 @@ class Repl:
         from ``Tool`` objects.
         """
         registry = self.ctx.registry
-        specs = registry.search(text=argument) if argument else [tool.spec for tool in registry.tools()]
-        rows = [(spec.name, spec.category, spec.risk,
-                 ellipsize(spec.description.split("\n")[0], 60)) for spec in specs[:40]]
-        self.ctx.table(rows, ["name", "category", "risk", "description"],
-                       title=f"{len(specs)} tools" + (f" matching {argument!r}" if argument else ""))
+        specs = (
+            registry.search(text=argument) if argument else [tool.spec for tool in registry.tools()]
+        )
+        rows = [
+            (spec.name, spec.category, spec.risk, ellipsize(spec.description.split("\n")[0], 60))
+            for spec in specs[:40]
+        ]
+        self.ctx.table(
+            rows,
+            ["name", "category", "risk", "description"],
+            title=f"{len(specs)} tools" + (f" matching {argument!r}" if argument else ""),
+        )
         return True
 
     def cmd_memory(self, argument: str = "") -> bool:
@@ -166,8 +191,10 @@ class Repl:
         if not entries:
             self.ctx.notice("nothing found")
             return True
-        rows = [(entry.id[:10], entry.kind, f"{entry.score:.2f}", ellipsize(entry.content, 60))
-                for entry in entries]
+        rows = [
+            (entry.id[:10], entry.kind, f"{entry.score:.2f}", ellipsize(entry.content, 60))
+            for entry in entries
+        ]
         self.ctx.table(rows, ["id", "kind", "score", "content"])
         return True
 
@@ -228,7 +255,7 @@ class Repl:
         for path in paths:
             try:
                 text = read_text_safe(Path(path).expanduser(), limit=100_000)
-            except Exception as exc:  # noqa: BLE001 - reported to the user
+            except Exception as exc:
                 self.ctx.notice(f"{path}: {exc}", level="warning")
                 continue
             blocks.append(f"## File: {path}\n\n{text.strip()}")
@@ -257,22 +284,27 @@ class Repl:
         if not infos:
             self.ctx.notice("no stored sessions")
             return True
-        rows = [(info.age, info.id[:16], str(info.messages),
-                 ellipsize(info.title, 44)) for info in infos]
+        rows = [
+            (info.age, info.id[:16], str(info.messages), ellipsize(info.title, 44))
+            for info in infos
+        ]
         self.ctx.table(rows, ["age", "id", "msgs", "title"])
         return True
 
     def cmd_stats(self, argument: str = "") -> bool:
         """Show session counters."""
         del argument
-        self.ctx.key_values([
-            ("turns", self.turns),
-            ("minutes", round((time.time() - self.started_at) / 60, 2)),
-            ("preset", self.preset or "(default)"),
-            ("session", self.session_id or "(none)"),
-            ("model", getattr(self.agent, "model", "") or "unknown"),
-            ("tools", self.ctx.registry.count()),
-        ], title="session")
+        self.ctx.key_values(
+            [
+                ("turns", self.turns),
+                ("minutes", round((time.time() - self.started_at) / 60, 2)),
+                ("preset", self.preset or "(default)"),
+                ("session", self.session_id or "(none)"),
+                ("model", getattr(self.agent, "model", "") or "unknown"),
+                ("tools", self.ctx.registry.count()),
+            ],
+            title="session",
+        )
         return True
 
     def cmd_skills(self, argument: str = "") -> bool:
@@ -285,8 +317,10 @@ class Repl:
         if not matches:
             self.ctx.notice("no skill matched")
             return True
-        rows = [(match.skill.name, f"{match.score:.2f}", ", ".join(match.reasons[:3]))
-                for match in matches[:8]]
+        rows = [
+            (match.skill.name, f"{match.score:.2f}", ", ".join(match.reasons[:3]))
+            for match in matches[:8]
+        ]
         self.ctx.table(rows, ["skill", "score", "why"])
         return True
 
@@ -382,10 +416,12 @@ class Repl:
             return
         preset = self.preset or "default"
         model = getattr(self.agent, "model", "") or "auto"
-        self.ctx.print(self.renderer.options.style(f"MAgent chat · preset {preset} · model {model}",
-                                                  "heading"))
-        self.ctx.print(self.renderer.options.style(
-            "type /help for commands, Ctrl-D to leave", "muted"))
+        self.ctx.print(
+            self.renderer.options.style(f"MAgent chat · preset {preset} · model {model}", "heading")
+        )
+        self.ctx.print(
+            self.renderer.options.style("type /help for commands, Ctrl-D to leave", "muted")
+        )
 
     def run(self) -> int:
         """Run the loop until it ends."""
@@ -409,8 +445,11 @@ class Repl:
             if path and self.turns:
                 self.ctx.notice(f"session saved to {path}", level="muted")
         if self.turns and not self.ctx.quiet:
-            self.ctx.print(self.renderer.options.style(
-                f"{self.turns} turns in {time.time() - self.started_at:.0f}s", "muted"))
+            self.ctx.print(
+                self.renderer.options.style(
+                    f"{self.turns} turns in {time.time() - self.started_at:.0f}s", "muted"
+                )
+            )
 
     def __repr__(self) -> str:
         """Compact developer representation."""

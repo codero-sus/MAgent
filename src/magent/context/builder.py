@@ -16,15 +16,25 @@ whatever objects were injected, so a run stays reproducible and testable.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 from ..llm.tokens import TokenEstimator, estimate_tokens
 from ..logging_ import get_logger
 from ..prompts.builder import describe_environment
-from .block import (ContextBlock, custom_block, environment_block, memory_block, rag_block,
-                    render_blocks, session_block, task_block, total_tokens)
+from .block import (
+    ContextBlock,
+    custom_block,
+    environment_block,
+    memory_block,
+    rag_block,
+    render_blocks,
+    session_block,
+    task_block,
+    total_tokens,
+)
 from .compression import CompressionReport, ContextCompressor
 from .files import describe_workspace, file_context_blocks
 
@@ -100,13 +110,25 @@ class ContextAssembly:
 class ContextBuilder:
     """Collect, prioritise and compress context blocks."""
 
-    def __init__(self, *, budget: int = DEFAULT_BUDGET, workspace: str | Path | None = None,
-                 sandbox: Any = None, retriever: Any = None, memory: Any = None,
-                 short_term: Any = None, summarizer: Callable[[str], str] | None = None,
-                 estimator: TokenEstimator | None = None, style: str = "heading",
-                 include_files: bool = False, include_environment: bool = True,
-                 top_k: int = 4, memory_top_k: int = 4, reserve: int = RESERVE_FOR_PROMPT,
-                 strip_boilerplate: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        budget: int = DEFAULT_BUDGET,
+        workspace: str | Path | None = None,
+        sandbox: Any = None,
+        retriever: Any = None,
+        memory: Any = None,
+        short_term: Any = None,
+        summarizer: Callable[[str], str] | None = None,
+        estimator: TokenEstimator | None = None,
+        style: str = "heading",
+        include_files: bool = False,
+        include_environment: bool = True,
+        top_k: int = 4,
+        memory_top_k: int = 4,
+        reserve: int = RESERVE_FOR_PROMPT,
+        strip_boilerplate: bool = True,
+    ) -> None:
         """Configure a builder.
 
         Args:
@@ -141,16 +163,29 @@ class ContextBuilder:
         self.memory_top_k = max(1, int(memory_top_k))
         self.reserve = max(0, int(reserve))
         self.stats_files: dict[str, Any] = {}
-        self.compressor = ContextCompressor(budget=self.budget, summarizer=summarizer,
-                                            estimator=estimator, style=style,
-                                            strip_boilerplate=strip_boilerplate)
+        self.compressor = ContextCompressor(
+            budget=self.budget,
+            summarizer=summarizer,
+            estimator=estimator,
+            style=style,
+            strip_boilerplate=strip_boilerplate,
+        )
         self._blocks: list[ContextBlock] = []
 
     @classmethod
-    def from_config(cls, config: Any = None, *, backend: Any = None, workspace: str | Path | None = None,
-                    memory: Any = None, retriever: Any = None, short_term: Any = None,
-                    sandbox: Any = None, summarizer: Callable[[str], str] | None = None,
-                    include_files: bool = False) -> ContextBuilder:
+    def from_config(
+        cls,
+        config: Any = None,
+        *,
+        backend: Any = None,
+        workspace: str | Path | None = None,
+        memory: Any = None,
+        retriever: Any = None,
+        short_term: Any = None,
+        sandbox: Any = None,
+        summarizer: Callable[[str], str] | None = None,
+        include_files: bool = False,
+    ) -> ContextBuilder:
         """Build a context builder from a :class:`~magent.config.Config`.
 
         Args:
@@ -169,15 +204,26 @@ class ContextBuilder:
         model_config = getattr(config, "model", None)
         budget = DEFAULT_BUDGET
         if memory_config is not None:
-            budget = int(getattr(memory_config, "max_context_tokens", 0) or 0) // 2 or DEFAULT_BUDGET
+            budget = (
+                int(getattr(memory_config, "max_context_tokens", 0) or 0) // 2 or DEFAULT_BUDGET
+            )
         context_size = int(getattr(model_config, "context_size", 0) or 0)
         if context_size:
             budget = min(budget, max(1_000, context_size // 3))
         top_k = int(getattr(memory_config, "retrieval_top_k", 4) or 4)
         root = workspace or getattr(tools_config, "workspace", None) or Path.cwd()
-        return cls(budget=budget, workspace=root, sandbox=sandbox, retriever=retriever,
-                   memory=memory, short_term=short_term, summarizer=summarizer,
-                   include_files=include_files, top_k=top_k, memory_top_k=top_k)
+        return cls(
+            budget=budget,
+            workspace=root,
+            sandbox=sandbox,
+            retriever=retriever,
+            memory=memory,
+            short_term=short_term,
+            summarizer=summarizer,
+            include_files=include_files,
+            top_k=top_k,
+            memory_top_k=top_k,
+        )
 
     # -- collecting ----------------------------------------------------------
 
@@ -221,7 +267,7 @@ class ContextBuilder:
         parts = [describe_environment(self.workspace, include_files=False, include_git=True)]
         try:
             parts.append(describe_workspace(self.workspace, limit=12, sandbox=self.sandbox))
-        except Exception as exc:  # noqa: BLE001 - workspace scanning is best effort
+        except Exception as exc:
             LOGGER.debug("workspace description failed: %s", exc)
         if extra.strip():
             parts.append(extra.strip())
@@ -234,7 +280,7 @@ class ContextBuilder:
             return None
         try:
             result = self.retriever.retrieve(query, limit=limit or self.top_k)
-        except Exception as exc:  # noqa: BLE001 - retrieval failure must not abort a run
+        except Exception as exc:
             LOGGER.warning("retrieval failed: %s", exc)
             return None
         chunks = list(getattr(result, "chunks", []) or [])
@@ -251,7 +297,7 @@ class ContextBuilder:
             return None
         try:
             entries = self.memory.search(query, limit=limit or self.memory_top_k)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             LOGGER.warning("memory recall failed: %s", exc)
             return None
         entries = [entry for entry in entries or [] if getattr(entry, "content", "")]
@@ -269,7 +315,7 @@ class ContextBuilder:
         if callable(window):
             try:
                 window = window()
-            except Exception as exc:  # noqa: BLE001 - a broken window must not break the run
+            except Exception as exc:
                 LOGGER.debug("short-term window lookup failed: %s", exc)
                 window = None
         summary = str(getattr(window, "summary", "") or "")
@@ -277,7 +323,7 @@ class ContextBuilder:
         if callable(getattr(self.short_term, "transcript", None)):
             try:
                 transcript = self.short_term.transcript(limit=1_600)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 LOGGER.debug("transcript failed: %s", exc)
         if not summary.strip() and not transcript.strip():
             return None
@@ -286,8 +332,12 @@ class ContextBuilder:
     def gather_files(self, query: str, *, named: Sequence[str] = ()) -> list[ContextBlock]:
         """Add workspace files that are named by the user or match the query."""
         blocks, stats = file_context_blocks(
-            self.workspace, query=query, named=named, include_conventions=True,
-            limit=max(2, self.top_k), sandbox=self.sandbox,
+            self.workspace,
+            query=query,
+            named=named,
+            include_conventions=True,
+            limit=max(2, self.top_k),
+            sandbox=self.sandbox,
         )
         self.stats_files = stats
         added = [block for block in blocks if not block.empty]
@@ -302,10 +352,19 @@ class ContextBuilder:
 
     # -- assembling ----------------------------------------------------------
 
-    def build(self, query: str = "", *, task: str = "", named_files: Sequence[str] = (),
-              budget: int | None = None, extra_blocks: Iterable[ContextBlock] = (),
-              include_rag: bool = True, include_memory: bool = True,
-              include_session: bool = True, include_files: bool | None = None) -> ContextAssembly:
+    def build(
+        self,
+        query: str = "",
+        *,
+        task: str = "",
+        named_files: Sequence[str] = (),
+        budget: int | None = None,
+        extra_blocks: Iterable[ContextBlock] = (),
+        include_rag: bool = True,
+        include_memory: bool = True,
+        include_session: bool = True,
+        include_files: bool | None = None,
+    ) -> ContextAssembly:
         """Assemble and compress every context source.
 
         Args:
@@ -347,8 +406,11 @@ class ContextBuilder:
         kept, report = self.compressor.fit(candidates, budget=limit)
         text = render_blocks(kept, style=self.style)
         assembly = ContextAssembly(
-            blocks=kept, text=text, tokens=estimate_tokens(text) if text else 0,
-            budget=limit, report=report,
+            blocks=kept,
+            text=text,
+            tokens=estimate_tokens(text) if text else 0,
+            budget=limit,
+            report=report,
             stats={"files": self.stats_files, "sources": {item.kind for item in kept}},
             seconds=time.perf_counter() - started,
         )
@@ -383,15 +445,29 @@ class ContextBuilder:
         return f"ContextBuilder(budget={self.budget}, blocks={len(self._blocks)})"
 
 
-def build_context(query: str = "", *, budget: int = DEFAULT_BUDGET,
-                  workspace: str | Path | None = None, retriever: Any = None,
-                  memory: Any = None, short_term: Any = None, sandbox: Any = None,
-                  summarizer: Callable[[str], str] | None = None,
-                  blocks: Iterable[ContextBlock] = (), **kwargs: Any) -> ContextAssembly:
+def build_context(
+    query: str = "",
+    *,
+    budget: int = DEFAULT_BUDGET,
+    workspace: str | Path | None = None,
+    retriever: Any = None,
+    memory: Any = None,
+    short_term: Any = None,
+    sandbox: Any = None,
+    summarizer: Callable[[str], str] | None = None,
+    blocks: Iterable[ContextBlock] = (),
+    **kwargs: Any,
+) -> ContextAssembly:
     """One-shot helper that builds a :class:`ContextBuilder` and assembles it."""
-    builder = ContextBuilder(budget=budget, workspace=workspace, retriever=retriever,
-                             memory=memory, short_term=short_term, sandbox=sandbox,
-                             summarizer=summarizer)
+    builder = ContextBuilder(
+        budget=budget,
+        workspace=workspace,
+        retriever=retriever,
+        memory=memory,
+        short_term=short_term,
+        sandbox=sandbox,
+        summarizer=summarizer,
+    )
     builder.add_blocks(blocks)
     return builder.build(query, **kwargs)
 

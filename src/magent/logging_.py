@@ -61,14 +61,14 @@ class RedactingFilter(logging.Filter):
         """Rewrite the record message and args in place, then allow it."""
         try:
             message = record.getMessage()
-        except Exception:  # noqa: BLE001 - never let logging break the program
+        except Exception:
             return True
         cleaned = redact_text(message, extra_secrets=self.extra_secrets)
         if cleaned != message:
             self.redactions += 1
         record.msg = cleaned
         record.args = ()
-        for key, value in list(getattr(record, "__dict__").items()):
+        for key, value in list(record.__dict__.items()):
             if key in {"msg", "args"} or not isinstance(value, str):
                 continue
             scrubbed = redact_text(value, extra_secrets=self.extra_secrets)
@@ -80,7 +80,9 @@ class RedactingFilter(logging.Filter):
 class JsonFormatter(logging.Formatter):
     """Format records as single-line JSON objects."""
 
-    def __init__(self, *, include_stack: bool = True, static_fields: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, *, include_stack: bool = True, static_fields: dict[str, Any] | None = None
+    ) -> None:
         super().__init__()
         self.include_stack = include_stack
         self.static_fields = dict(static_fields or {})
@@ -105,8 +107,9 @@ class JsonFormatter(logging.Formatter):
 class TextFormatter(logging.Formatter):
     """Human readable formatter with optional colour and relative timestamps."""
 
-    def __init__(self, *, color: bool | None = None, show_logger: bool = True,
-                 relative_time: bool = False) -> None:
+    def __init__(
+        self, *, color: bool | None = None, show_logger: bool = True, relative_time: bool = False
+    ) -> None:
         super().__init__()
         self.color = supports_color(sys.stderr) if color is None else color
         self.show_logger = show_logger
@@ -124,7 +127,9 @@ class TextFormatter(logging.Formatter):
             level = colorize(level, LEVEL_COLORS.get(record.levelname, ""), enabled=True)
         parts = [stamp, level]
         if self.show_logger and record.name != LOGGER_NAME:
-            parts.append(colorize(record.name.replace("magent.", ""), ANSI.GRAY, enabled=self.color))
+            parts.append(
+                colorize(record.name.replace("magent.", ""), ANSI.GRAY, enabled=self.color)
+            )
         parts.append(record.getMessage())
         line = " ".join(part for part in parts if part)
         if record.exc_info:
@@ -267,7 +272,7 @@ class LogCapture:
                 continue
             try:
                 out.append(record.getMessage())
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
         return out
 
@@ -329,13 +334,13 @@ def env_log_level(default: str = "INFO") -> str:
 
 
 __all__ = [
-    "JsonFormatter",
     "LEVEL_COLORS",
     "LOGGER_NAME",
+    "VALID_LEVELS",
+    "JsonFormatter",
     "LogCapture",
     "RedactingFilter",
     "TextFormatter",
-    "VALID_LEVELS",
     "debug",
     "env_log_level",
     "error",

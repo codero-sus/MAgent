@@ -10,7 +10,9 @@ from .hashing import random_hex, random_token, snowflake, ulid_like, uuid_hex
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
 
 
-def slugify(value: str, *, separator: str = "-", max_length: int = 64, lowercase: bool = True) -> str:
+def slugify(
+    value: str, *, separator: str = "-", max_length: int = 64, lowercase: bool = True
+) -> str:
     """Convert arbitrary text into a URL/filename safe slug.
 
     Accented characters are transliterated to ASCII first so ``"Café"``

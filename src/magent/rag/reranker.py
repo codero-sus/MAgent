@@ -18,7 +18,8 @@ Each returns a new list; none of them mutate the caller's ordering in place.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from ..logging_ import get_logger
 from ..memory.embeddings import Embedder
@@ -49,9 +50,15 @@ def _relevance(chunk: Chunk, query_vector: list[float], lookup: dict[str, list[f
     return 0.0
 
 
-def mmr_select(chunks: Sequence[Chunk], query: str, *, embedder: Embedder | None = None,
-               limit: int = 5, lambda_: float = DEFAULT_LAMBDA,
-               vectors: dict[str, list[float]] | None = None) -> list[Chunk]:
+def mmr_select(
+    chunks: Sequence[Chunk],
+    query: str,
+    *,
+    embedder: Embedder | None = None,
+    limit: int = 5,
+    lambda_: float = DEFAULT_LAMBDA,
+    vectors: dict[str, list[float]] | None = None,
+) -> list[Chunk]:
     """Select chunks by Maximal Marginal Relevance.
 
     Args:
@@ -77,11 +84,11 @@ def mmr_select(chunks: Sequence[Chunk], query: str, *, embedder: Embedder | None
                 for chunk, vector in zip(missing, computed, strict=False):
                     if vector:
                         lookup[chunk.id] = vector
-            except Exception as exc:  # noqa: BLE001 - fall back to score ordering
+            except Exception as exc:
                 LOGGER.debug("mmr embedding failed: %s", exc)
         try:
             query_vector = embedder.embed([query])[0]
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             LOGGER.debug("mmr query embedding failed: %s", exc)
     if not query_vector:
         return sorted(items, key=lambda chunk: chunk.score, reverse=True)[: max(1, limit)]
@@ -95,7 +102,10 @@ def mmr_select(chunks: Sequence[Chunk], query: str, *, embedder: Embedder | None
             novelty = 1.0
             for chosen in selected:
                 if chunk.id in lookup and chosen.id in lookup:
-                    novelty = min(novelty, 1.0 - max(0.0, cosine_similarity(lookup[chunk.id], lookup[chosen.id])))
+                    novelty = min(
+                        novelty,
+                        1.0 - max(0.0, cosine_similarity(lookup[chunk.id], lookup[chosen.id])),
+                    )
             value = lambda_ * relevance.get(chunk.id, 0.0) + (1.0 - lambda_) * novelty
             if value > best_value:
                 best_value, best = value, chunk
@@ -106,8 +116,15 @@ def mmr_select(chunks: Sequence[Chunk], query: str, *, embedder: Embedder | None
     return selected
 
 
-def cross_encoder_rerank(chunks: Sequence[Chunk], query: str, backend: Any, *, limit: int = 5,
-                         model: str = "", top_n: int | None = None) -> list[Chunk]:
+def cross_encoder_rerank(
+    chunks: Sequence[Chunk],
+    query: str,
+    backend: Any,
+    *,
+    limit: int = 5,
+    model: str = "",
+    top_n: int | None = None,
+) -> list[Chunk]:
     """Rerank with a cross-encoder model when the backend offers one.
 
     Falls back to the incoming order when the backend has no reranking route or
@@ -118,15 +135,16 @@ def cross_encoder_rerank(chunks: Sequence[Chunk], query: str, backend: Any, *, l
         return items[: max(1, limit)]
     documents = [chunk.text for chunk in items]
     try:
-        payload = backend.rerank(query=query, documents=documents, model=model,
-                                 top_n=top_n or max(1, limit))
+        payload = backend.rerank(
+            query=query, documents=documents, model=model, top_n=top_n or max(1, limit)
+        )
     except TypeError:
         try:
             payload = backend.rerank(query, documents)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             LOGGER.debug("rerank call failed: %s", exc)
             return items[: max(1, limit)]
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         LOGGER.debug("rerank call failed: %s", exc)
         return items[: max(1, limit)]
     results = payload.get("results") if isinstance(payload, dict) else None
@@ -146,8 +164,13 @@ def cross_encoder_rerank(chunks: Sequence[Chunk], query: str, backend: Any, *, l
     return ordered[: max(1, limit)] or items[: max(1, limit)]
 
 
-def recency_boost(chunks: Sequence[Chunk], *, half_life_days: float = 30.0,
-                  weight: float = 0.1, now: float | None = None) -> list[Chunk]:
+def recency_boost(
+    chunks: Sequence[Chunk],
+    *,
+    half_life_days: float = 30.0,
+    weight: float = 0.1,
+    now: float | None = None,
+) -> list[Chunk]:
     """Add a small bonus for recently modified sources and re-sort."""
     moment = now if now is not None else time.time()
     scored: list[Chunk] = []
@@ -176,10 +199,19 @@ def dedupe_chunks(chunks: Sequence[Chunk], *, threshold: float = 0.97) -> list[C
     return kept
 
 
-def rerank(chunks: Sequence[Chunk], query: str, *, limit: int = 5, embedder: Embedder | None = None,
-           backend: Any = None, use_cross_encoder: bool = False, use_mmr: bool = True,
-           recency: bool = False, dedupe: bool = True,
-           score_fn: Callable[[Chunk], float] | None = None) -> list[Chunk]:
+def rerank(
+    chunks: Sequence[Chunk],
+    query: str,
+    *,
+    limit: int = 5,
+    embedder: Embedder | None = None,
+    backend: Any = None,
+    use_cross_encoder: bool = False,
+    use_mmr: bool = True,
+    recency: bool = False,
+    dedupe: bool = True,
+    score_fn: Callable[[Chunk], float] | None = None,
+) -> list[Chunk]:
     """Apply the configured reranking pipeline in one call.
 
     Args:

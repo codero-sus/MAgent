@@ -28,7 +28,7 @@ def blake2b_hex(data: str | bytes, *, digest_size: int = 16) -> str:
     return hashlib.blake2b(payload, digest_size=digest_size).hexdigest()
 
 
-def file_sha256(path: "str | Path", *, chunk_size: int = 1048576) -> str:
+def file_sha256(path: str | Path, *, chunk_size: int = 1048576) -> str:
     """Return the SHA-256 hex digest of a file, read in chunks.
 
     Re-exported from :mod:`magent.utils.files` so hashing callers do not have to
@@ -146,10 +146,10 @@ def random_hex(nbytes: int = 8) -> str:
 
 
 __all__ = [
-    "file_sha256",
     "blake2b_hex",
     "constant_time_equals",
     "content_hash",
+    "file_sha256",
     "hmac_sign",
     "hmac_verify",
     "random_hex",

@@ -113,7 +113,9 @@ class FakeModel:
         }
 
 
-def fake_embedding(text: str, model: str = EMBEDDING_MODEL, dim: int = EMBEDDING_DIM) -> list[float]:
+def fake_embedding(
+    text: str, model: str = EMBEDDING_MODEL, dim: int = EMBEDDING_DIM
+) -> list[float]:
     """Return a deterministic pseudo-embedding derived from token hashes.
 
     Similar strings get genuinely similar vectors (shared token hashes
@@ -125,7 +127,7 @@ def fake_embedding(text: str, model: str = EMBEDDING_MODEL, dim: int = EMBEDDING
     if not tokens:
         tokens = [text.lower() or "empty"]
     for token in tokens:
-        digest = hashlib.blake2b(f"{model}:{token}".encode("utf-8"), digest_size=dim).digest()
+        digest = hashlib.blake2b(f"{model}:{token}".encode(), digest_size=dim).digest()
         for index, byte in enumerate(digest):
             vector[index] += (byte / 255.0) - 0.5
     norm = math.sqrt(sum(value * value for value in vector)) or 1.0
@@ -241,7 +243,9 @@ def _default_models() -> list[FakeModel]:
     ]
 
 
-def _canned_reply(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> dict[str, Any]:
+def _canned_reply(
+    messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None
+) -> dict[str, Any]:
     """Produce a deterministic reply, including a tool call when appropriate."""
     last_user = ""
     for message in reversed(messages):
@@ -291,15 +295,16 @@ def _canned_reply(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | 
                     {
                         "id": "call_fake_0",
                         "type": "function",
-                        "function": {"name": chosen, "arguments": json.dumps(_fake_arguments(chosen, last_user))},
+                        "function": {
+                            "name": chosen,
+                            "arguments": json.dumps(_fake_arguments(chosen, last_user)),
+                        },
                     }
                 ],
                 "finish_reason": "tool_calls",
                 "text": "",
             }
-    tool_results = [
-        message for message in messages if message.get("role") == "tool"
-    ]
+    tool_results = [message for message in messages if message.get("role") == "tool"]
     if tool_results:
         payload = tool_results[-1].get("content", "")
         return {
@@ -357,9 +362,13 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_error(self, message: str, status: int = 400, *, code: str = "invalid_request") -> None:
+    def _send_error(
+        self, message: str, status: int = 400, *, code: str = "invalid_request"
+    ) -> None:
         """Send a Cortex-shaped error envelope."""
-        self._send_json({"error": {"message": message, "type": "invalid_request_error", "code": code}}, status)
+        self._send_json(
+            {"error": {"message": message, "type": "invalid_request_error", "code": code}}, status
+        )
 
     def _read_body(self) -> bytes:
         """Read the request body honoring Content-Length."""
@@ -401,7 +410,7 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
 
     # -- routing -------------------------------------------------------------
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+    def do_GET(self) -> None:
         """Dispatch GET requests."""
         started = time.perf_counter()
         path = self.path.split("?")[0]
@@ -435,7 +444,9 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
                 )
                 return
             if path == "/admin/api/models/files":
-                self._send_json({"files": [{"name": "fake.gguf", "size": 1024, "path": "/models/fake.gguf"}]})
+                self._send_json(
+                    {"files": [{"name": "fake.gguf", "size": 1024, "path": "/models/fake.gguf"}]}
+                )
                 return
             if path == "/admin/api/config/export":
                 self._send_json(self.cortex.public_settings())
@@ -460,9 +471,11 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
         finally:
             with self.cortex.lock:
                 self.cortex.in_flight = max(0, self.cortex.in_flight - 1)
-            self._track("GET " + path, self._status_sent, started, getattr(self, "_request_model", ""))
+            self._track(
+                "GET " + path, self._status_sent, started, getattr(self, "_request_model", "")
+            )
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         """Dispatch POST requests."""
         started = time.perf_counter()
         path = self.path.split("?")[0]
@@ -491,7 +504,9 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
                 self._handle_rerank()
                 return
             if path == "/v1/moderations":
-                self._send_json({"id": "mod_fake", "results": [{"flagged": False, "categories": {}}]})
+                self._send_json(
+                    {"id": "mod_fake", "results": [{"flagged": False, "categories": {}}]}
+                )
                 return
             if path.startswith("/admin/api/models/"):
                 self._handle_admin_model_action(path)
@@ -512,9 +527,11 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
         finally:
             with self.cortex.lock:
                 self.cortex.in_flight = max(0, self.cortex.in_flight - 1)
-            self._track("POST " + path, self._status_sent, started, getattr(self, "_request_model", ""))
+            self._track(
+                "POST " + path, self._status_sent, started, getattr(self, "_request_model", "")
+            )
 
-    def do_PUT(self) -> None:  # noqa: N802
+    def do_PUT(self) -> None:
         """Dispatch PUT requests (admin config updates)."""
         started = time.perf_counter()
         path = self.path.split("?")[0]
@@ -530,11 +547,11 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
         finally:
             self._track("PUT " + path, self._status_sent, started)
 
-    def do_DELETE(self) -> None:  # noqa: N802
+    def do_DELETE(self) -> None:
         """Dispatch DELETE requests."""
         self._send_error("Method not supported by the fake hoster", 405, code="method_not_allowed")
 
-    def do_HEAD(self) -> None:  # noqa: N802
+    def do_HEAD(self) -> None:
         """Answer HEAD with headers only."""
         self.send_response(200)
         self.send_header("Content-Length", "0")
@@ -608,7 +625,9 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
         reply = _canned_reply([m for m in messages if isinstance(m, dict)], payload.get("tools"))
         usage = {
             "prompt_tokens": max(1, sum(len(json.dumps(m)) for m in messages) // 4),
-            "completion_tokens": max(1, len(reply.get("text", "")) // 4 + 4 * len(reply.get("tool_calls") or [])),
+            "completion_tokens": max(
+                1, len(reply.get("text", "")) // 4 + 4 * len(reply.get("tool_calls") or [])
+            ),
         }
         usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
         if payload.get("stream"):
@@ -646,7 +665,7 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
 
         def write(event: dict[str, Any]) -> None:
             """Write one SSE data frame using chunked transfer encoding."""
-            frame = f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8")
+            frame = f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode()
             self.wfile.write(b"%X\r\n" % len(frame))
             self.wfile.write(frame)
             self.wfile.write(b"\r\n")
@@ -658,16 +677,35 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
             "created": int(time.time()),
             "model": model_id,
         }
-        write({**base, "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]})
+        write(
+            {
+                **base,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": ""},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
         text = reply.get("text", "")
         size = 12
         for start in range(0, len(text), size):
             if self.cortex.chunk_delay:
                 time.sleep(self.cortex.chunk_delay)
-            write({
-                **base,
-                "choices": [{"index": 0, "delta": {"content": text[start : start + size]}, "finish_reason": None}],
-            })
+            write(
+                {
+                    **base,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": text[start : start + size]},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
         for index, call in enumerate(reply.get("tool_calls") or []):
             function = call.get("function") or {}
             arguments = str(function.get("arguments") or "")
@@ -677,15 +715,33 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
                 "type": "function",
                 "function": {"name": function.get("name", ""), "arguments": arguments[:8]},
             }
-            write({**base, "choices": [{"index": 0, "delta": {"tool_calls": [first]}, "finish_reason": None}]})
+            write(
+                {
+                    **base,
+                    "choices": [
+                        {"index": 0, "delta": {"tool_calls": [first]}, "finish_reason": None}
+                    ],
+                }
+            )
             if len(arguments) > 8:
                 rest = {"index": index, "function": {"arguments": arguments[8:]}}
-                write({**base, "choices": [{"index": 0, "delta": {"tool_calls": [rest]}, "finish_reason": None}]})
-        write({
-            **base,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": reply.get("finish_reason", "stop")}],
-            "usage": usage,
-        })
+                write(
+                    {
+                        **base,
+                        "choices": [
+                            {"index": 0, "delta": {"tool_calls": [rest]}, "finish_reason": None}
+                        ],
+                    }
+                )
+        write(
+            {
+                **base,
+                "choices": [
+                    {"index": 0, "delta": {}, "finish_reason": reply.get("finish_reason", "stop")}
+                ],
+                "usage": usage,
+            }
+        )
         done = b"data: [DONE]\n\n"
         self.wfile.write(b"%X\r\n" % len(done))
         self.wfile.write(done)
@@ -720,8 +776,17 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
         model_id = str(payload.get("model") or EMBEDDING_MODEL)
         raw_input = payload.get("input")
         texts = raw_input if isinstance(raw_input, list) else [str(raw_input or "")]
+        try:
+            dimensions = int(payload.get("dimensions") or EMBEDDING_DIM)
+        except (TypeError, ValueError):
+            dimensions = EMBEDDING_DIM
+        dimensions = max(1, min(dimensions, 64))
         data = [
-            {"object": "embedding", "index": index, "embedding": fake_embedding(str(text), model_id)}
+            {
+                "object": "embedding",
+                "index": index,
+                "embedding": fake_embedding(str(text), model_id, dim=dimensions),
+            }
             for index, text in enumerate(texts)
         ]
         self._send_json(
@@ -729,7 +794,10 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
                 "object": "list",
                 "data": data,
                 "model": model_id,
-                "usage": {"prompt_tokens": sum(len(str(t)) // 4 + 1 for t in texts), "total_tokens": 0},
+                "usage": {
+                    "prompt_tokens": sum(len(str(t)) // 4 + 1 for t in texts),
+                    "total_tokens": 0,
+                },
             }
         )
 
@@ -743,7 +811,13 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
                 "object": "response",
                 "status": "completed",
                 "model": payload.get("model") or self.cortex.default_model,
-                "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}],
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                ],
                 "output_text": text,
                 "usage": {"input_tokens": 8, "output_tokens": max(1, len(text) // 4)},
             }
@@ -755,7 +829,12 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(min(length, 32 * 1024 * 1024)) if length else b""
         digest = hashlib.sha256(raw).hexdigest()[:12]
         self._send_json(
-            {"task": "transcribe", "language": "english", "duration": 1.5, "text": f"fake transcript {digest}"}
+            {
+                "task": "transcribe",
+                "language": "english",
+                "duration": 1.5,
+                "text": f"fake transcript {digest}",
+            }
         )
 
     def _handle_rerank(self) -> None:
@@ -767,10 +846,14 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
         for index, document in enumerate(documents):
             words = str(document).lower().split()
             overlap = len(set(query) & set(words))
-            scored.append({"index": index, "relevance_score": round(overlap / max(1, len(query)), 4)})
+            scored.append(
+                {"index": index, "relevance_score": round(overlap / max(1, len(query)), 4)}
+            )
         scored.sort(key=lambda item: item["relevance_score"], reverse=True)
         top_n = int(payload.get("top_n") or len(scored))
-        self._send_json({"id": "rerank_fake", "model": payload.get("model"), "results": scored[:top_n]})
+        self._send_json(
+            {"id": "rerank_fake", "model": payload.get("model"), "results": scored[:top_n]}
+        )
 
     def _handle_admin_model_action(self, path: str) -> None:
         """Serve model start/stop/restart/test admin actions."""
@@ -796,7 +879,11 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
                 model.running = True
             elif path.endswith("/test"):
                 self._send_json(
-                    {"ok": model.running, "model": model_id, "reply": "pong" if model.running else ""}
+                    {
+                        "ok": model.running,
+                        "model": model_id,
+                        "reply": "pong" if model.running else "",
+                    }
                 )
                 return
             elif path.endswith("/detect-capabilities"):

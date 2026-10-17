@@ -11,10 +11,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _bootstrap import backend, heading, main_guard  # noqa: E402
-
-from magent.agents import (Team, TeamMember, build_handoff, build_preset_agent,  # noqa: E402
-                           handoff_block, run_team)
+from _bootstrap import backend, heading, main_guard
+from magent.agents import (
+    Team,
+    TeamMember,
+    build_handoff,
+    build_preset_agent,
+    handoff_block,
+    run_team,
+)
 
 
 def body() -> None:
@@ -27,8 +32,9 @@ def body() -> None:
     judge = build_preset_agent("reviewer", backend=instance)
 
     heading("debate")
-    roster = [TeamMember(name=f"member{index}", agent=member)
-              for index, member in enumerate(members)]
+    roster = [
+        TeamMember(name=f"member{index}", agent=member) for index, member in enumerate(members)
+    ]
     roster.append(TeamMember(name="judge", agent=judge))
     team = Team(roster, mode="debate", judge="judge", max_rounds=1, max_turns=6)
     result = team.run("Is local model hosting better than a hosted API for a small team?")
@@ -40,13 +46,17 @@ def body() -> None:
         print(f"  {turn.index + 1}. {turn.member:<10} {turn.tokens:>5} tokens  {turn.seconds:.2f}s")
 
     heading("handoff to the next agent")
-    handoff = build_handoff(result, from_agent="judge", to_agent="writer",
-                            next_steps=["turn this into a short brief"])
+    handoff = build_handoff(
+        result, from_agent="judge", to_agent="writer", next_steps=["turn this into a short brief"]
+    )
     print(handoff_block(handoff))
 
     heading("pipeline")
-    pipeline = run_team([(f"step{index}", member) for index, member in enumerate(members)],
-                        "List two risks of running models locally.", mode="sequential")
+    pipeline = run_team(
+        [(f"step{index}", member) for index, member in enumerate(members)],
+        "List two risks of running models locally.",
+        mode="sequential",
+    )
     print(pipeline.summary_line())
 
 

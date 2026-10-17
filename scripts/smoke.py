@@ -21,8 +21,8 @@ import shutil
 import sys
 import tempfile
 import traceback
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Callable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "src"
@@ -53,7 +53,8 @@ def workspace() -> Path:
     (root / "README.md").write_text("# Smoke project\n\nA tiny project.\n", encoding="utf-8")
     (root / "docs").mkdir(exist_ok=True)
     (root / "docs" / "cortex.md").write_text(
-        "# Cortex\n\nCortex listens on port 8624 by default.\n", encoding="utf-8")
+        "# Cortex\n\nCortex listens on port 8624 by default.\n", encoding="utf-8"
+    )
     (root / "data.csv").write_text("name,value\nalpha,1\nbeta,2\n", encoding="utf-8")
     return root
 
@@ -85,10 +86,12 @@ def stage_agent() -> str:
     from magent.agent import Agent
     from magent.testing import ToolScriptBackend
 
-    backend = ToolScriptBackend(script=[
-        {"tool_calls": [{"name": "calculate", "arguments": {"expression": "6*7"}}]},
-        {"text": "The answer is 42."},
-    ])
+    backend = ToolScriptBackend(
+        script=[
+            {"tool_calls": [{"name": "calculate", "arguments": {"expression": "6*7"}}]},
+            {"text": "The answer is 42."},
+        ]
+    )
     config = config_for(workspace())
     config.agent.loop_mode = "react"
     agent = Agent(backend=backend, settings=config, workspace=workspace())
@@ -96,10 +99,14 @@ def stage_agent() -> str:
     assert result.succeeded, result.error
     assert result.tool_call_count >= 1, "no tool call recorded"
     assert "42" in result.output, result.output
-    assert any(event.kind == __import__("magent.types", fromlist=["EventKind"]).EventKind.RUN_FINISHED
-               for event in result.events), "terminal event missing"
-    return (f"{len(result.steps)} steps, {result.tool_call_count} tool calls, "
-            f"{result.usage.total_tokens} tokens")
+    assert any(
+        event.kind == __import__("magent.types", fromlist=["EventKind"]).EventKind.RUN_FINISHED
+        for event in result.events
+    ), "terminal event missing"
+    return (
+        f"{len(result.steps)} steps, {result.tool_call_count} tool calls, "
+        f"{result.usage.total_tokens} tokens"
+    )
 
 
 @stage("tools and sandbox")
@@ -111,12 +118,14 @@ def stage_tools() -> str:
     registry = default_registry()
     root = workspace()
     config = config_for(root)
-    context = ToolContext(config=config, registry=registry,
-                          sandbox=build_sandbox(config, workspace=root))
+    context = ToolContext(
+        config=config, registry=registry, sandbox=build_sandbox(config, workspace=root)
+    )
     result = registry.get("calculate").run({"expression": "2**10"}, context=context)
     assert result.ok and result.content["result"] == 1024, result.error
-    written = registry.get("write_file").run({"path": str(root / "notes.txt"),
-                                              "content": "smoke"}, context=context)
+    written = registry.get("write_file").run(
+        {"path": str(root / "notes.txt"), "content": "smoke"}, context=context
+    )
     assert written.ok, written.error
     try:
         context.sandbox.check_read("/etc/hostname")
@@ -201,10 +210,13 @@ def stage_teams() -> str:
     from magent.testing import EchoBackend
 
     backend = EchoBackend()
-    team = Team([
-        TeamMember(name="first", agent=build_preset_agent("minimal", backend=backend)),
-        TeamMember(name="second", agent=build_preset_agent("minimal", backend=backend)),
-    ], mode="sequential")
+    team = Team(
+        [
+            TeamMember(name="first", agent=build_preset_agent("minimal", backend=backend)),
+            TeamMember(name="second", agent=build_preset_agent("minimal", backend=backend)),
+        ],
+        mode="sequential",
+    )
     result = team.run("summarise the project")
     assert result.succeeded, result.error
     assert len(result.turns) == 2, "not every member ran"
@@ -220,10 +232,10 @@ def stage_eval() -> str:
     from magent.testing import EchoBackend
 
     config = config_for(workspace())
-    dataset = build_dataset([{"id": "hello", "prompt": "say hello",
-                              "not_contains": ["traceback"]}])
-    runner = EvalRunner(lambda: Agent(backend=EchoBackend(), settings=config,
-                                      workspace=workspace()), threshold=0.5)
+    dataset = build_dataset([{"id": "hello", "prompt": "say hello", "not_contains": ["traceback"]}])
+    runner = EvalRunner(
+        lambda: Agent(backend=EchoBackend(), settings=config, workspace=workspace()), threshold=0.5
+    )
     report = runner.run(dataset)
     report.check(0.5)
     assert report.render("junit").startswith("<?xml"), "junit report malformed"
@@ -238,8 +250,7 @@ def stage_observability() -> str:
     from magent.testing import EchoBackend
 
     observability = Observability()
-    agent = Agent(backend=EchoBackend(), settings=config_for(workspace()),
-                  workspace=workspace())
+    agent = Agent(backend=EchoBackend(), settings=config_for(workspace()), workspace=workspace())
     observability.attach(agent)
     agent.run("trace me")
     report = observability.report()
@@ -255,10 +266,10 @@ def stage_server() -> str:
     """Serve the API and call it over a real socket."""
     import urllib.request
 
-    from magent.server import MagentServer, free_port, wait_for_health
+    from magent.server import MAgentServer, free_port, wait_for_health
     from magent.testing import EchoBackend
 
-    server = MagentServer(config_for(workspace()), backend=EchoBackend())
+    server = MAgentServer(config_for(workspace()), backend=EchoBackend())
     url = server.start_background(host="127.0.0.1", port=free_port())
     try:
         assert wait_for_health(url, timeout=5.0), "the server never became healthy"
@@ -266,9 +277,11 @@ def stage_server() -> str:
             tools = json.load(response)
         assert tools["count"] > 100, tools
         request = urllib.request.Request(
-            url + "/api/chat", method="POST",
+            url + "/api/chat",
+            method="POST",
             data=json.dumps({"prompt": "hello over http"}).encode(),
-            headers={"Content-Type": "application/json"})
+            headers={"Content-Type": "application/json"},
+        )
         with urllib.request.urlopen(request, timeout=20) as response:
             chat = json.load(response)
         assert "hello over http" in chat["output"], chat
@@ -329,15 +342,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--only", default="", help="run stages whose name contains this")
     args = parser.parse_args(argv)
     VERBOSE = args.verbose
-    chosen = [fn for fn in STAGES
-              if not args.only or args.only.lower() in fn.stage_name.lower()]  # type: ignore[attr-defined]
+    chosen = [fn for fn in STAGES if not args.only or args.only.lower() in fn.stage_name.lower()]  # type: ignore[attr-defined]
     failures = 0
     print(f"MAgent smoke test ({len(chosen)} stages, offline)")
     for fn in chosen:
         name = fn.stage_name  # type: ignore[attr-defined]
         try:
             detail = fn()
-        except Exception as exc:  # noqa: BLE001 - a failed stage is the report
+        except Exception as exc:
             failures += 1
             print(f"  FAIL  {name:<16} {type(exc).__name__}: {exc}")
             if VERBOSE:

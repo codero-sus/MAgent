@@ -28,8 +28,19 @@ from .tracing import Span, Trace, Tracer, trace_from_events
 LOGGER = get_logger("observability")
 """Logger for observability itself."""
 
-TRACE_ATTRIBUTES: tuple[str, ...] = ("run_id", "model", "mode", "stop_reason", "tool", "name",
-                                     "step", "index", "attempt", "error", "tokens")
+TRACE_ATTRIBUTES: tuple[str, ...] = (
+    "run_id",
+    "model",
+    "mode",
+    "stop_reason",
+    "tool",
+    "name",
+    "step",
+    "index",
+    "attempt",
+    "error",
+    "tokens",
+)
 """Event data keys copied onto spans as attributes."""
 
 SKIP_KINDS: frozenset[str] = frozenset({EventKind.TEXT_DELTA.value, EventKind.THINKING.value})
@@ -68,15 +79,23 @@ class ObservabilityReport:
 
     def summary(self) -> str:
         """One-line summary for ``magent doctor``."""
-        return (f"{self.runs} runs, {self.spans} spans, {self.errors} errors, "
-                f"{self.metrics} metrics in {self.uptime_seconds:.1f}s")
+        return (
+            f"{self.runs} runs, {self.spans} spans, {self.errors} errors, "
+            f"{self.metrics} metrics in {self.uptime_seconds:.1f}s"
+        )
 
 
 class Observability:
     """Logging, tracing and metrics for one process."""
 
-    def __init__(self, config: Any = None, *, tracer: Tracer | None = None,
-                 metrics: MetricsRegistry | None = None, logger: Any = None) -> None:
+    def __init__(
+        self,
+        config: Any = None,
+        *,
+        tracer: Tracer | None = None,
+        metrics: MetricsRegistry | None = None,
+        logger: Any = None,
+    ) -> None:
         """Build the façade.
 
         Args:
@@ -88,9 +107,13 @@ class Observability:
         section = getattr(config, "observability", config)
         self.config = config
         self.section = section
-        self.tracer = tracer if tracer is not None else Tracer(
-            enabled=bool(getattr(section, "trace_enabled", True)),
-            export_path=getattr(section, "trace_file", "") or None,
+        self.tracer = (
+            tracer
+            if tracer is not None
+            else Tracer(
+                enabled=bool(getattr(section, "trace_enabled", True)),
+                export_path=getattr(section, "trace_file", "") or None,
+            )
         )
         self.metrics = metrics if metrics is not None else MetricsRegistry()
         self.logger = logger or LOGGER
@@ -154,7 +177,7 @@ class Observability:
                 if hasattr(bus, "unsubscribe"):
                     bus.unsubscribe(subscription)
                 removed += 1
-            except Exception as exc:  # noqa: BLE001 - detaching must not raise
+            except Exception as exc:
                 self.logger.debug("detach failed: %s", exc)
         self.subscriptions.clear()
         return removed
@@ -190,8 +213,9 @@ class Observability:
             elif event.kind == EventKind.LLM_CACHE_HIT:
                 self.metrics.inc("llm_cache_hits_total")
             elif event.kind == EventKind.GUARDRAIL_BLOCKED:
-                self.metrics.inc("guardrail_blocks_total",
-                                 labels={"stage": str(data.get("stage", "unknown"))})
+                self.metrics.inc(
+                    "guardrail_blocks_total", labels={"stage": str(data.get("stage", "unknown"))}
+                )
             elif event.kind == EventKind.APPROVAL_REQUESTED:
                 self.metrics.inc("approvals_requested_total")
             elif event.kind == EventKind.APPROVAL_DECIDED:
@@ -200,12 +224,13 @@ class Observability:
             elif event.kind == EventKind.BUDGET_WARNING:
                 self.metrics.inc("budget_warnings_total")
             elif event.kind == EventKind.MODEL_SWITCHED:
-                self.metrics.inc("model_switches_total",
-                                 labels={"model": str(data.get("model", "unknown"))})
+                self.metrics.inc(
+                    "model_switches_total", labels={"model": str(data.get("model", "unknown"))}
+                )
             elif event.kind == EventKind.MEMORY_WRITE:
                 self.metrics.inc("memory_writes_total", labels={"kind": str(data.get("kind", ""))})
             self.metrics.inc("events_total", labels={"kind": kind_value})
-        except Exception as exc:  # noqa: BLE001 - observability must never break a run
+        except Exception as exc:
             self.logger.debug("observability handler failed for %s: %s", kind_value, exc)
 
     def _trace_for(self, run_id: str) -> Trace:
@@ -301,7 +326,8 @@ class Observability:
         if span is None and call_id:
             for key, candidate in list(self._spans.items()):
                 if key.startswith(f"{run_id}:tool:") and candidate.name.endswith(
-                        str(data.get("name", ""))):
+                    str(data.get("name", ""))
+                ):
                     span = self._spans.pop(key)
                     break
         if span is not None:
@@ -344,8 +370,9 @@ class Observability:
         if response is not None and hasattr(response, "usage"):
             record_llm(self.metrics, response)
         else:
-            self.metrics.inc("llm_requests_total",
-                             labels={"model": str(data.get("model", "unknown"))})
+            self.metrics.inc(
+                "llm_requests_total", labels={"model": str(data.get("model", "unknown"))}
+            )
             latency = data.get("latency_ms")
             if isinstance(latency, (int, float)):
                 self.metrics.observe("llm_latency", float(latency))
@@ -362,8 +389,13 @@ class Observability:
         slowest: list[dict[str, Any]] = []
         for trace in traces[-3:]:
             for span in trace.slowest(3):
-                slowest.append({"trace": trace.name, "span": span.name,
-                                "duration_ms": round(span.duration_ms, 2)})
+                slowest.append(
+                    {
+                        "trace": trace.name,
+                        "span": span.name,
+                        "duration_ms": round(span.duration_ms, 2),
+                    }
+                )
         slowest.sort(key=lambda item: -item["duration_ms"])
         return ObservabilityReport(
             uptime_seconds=time.time() - self.started_at,
@@ -421,8 +453,10 @@ class Observability:
 
     def __repr__(self) -> str:
         """Compact developer representation."""
-        return (f"Observability(runs={self.runs}, metrics={len(self.metrics)}, "
-                f"subscriptions={len(self.subscriptions)})")
+        return (
+            f"Observability(runs={self.runs}, metrics={len(self.metrics)}, "
+            f"subscriptions={len(self.subscriptions)})"
+        )
 
 
 def build_observability(config: Any = None, *, attach_to: Any = None) -> Observability:

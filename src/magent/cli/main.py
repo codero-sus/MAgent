@@ -24,7 +24,8 @@ from __future__ import annotations
 import os
 import sys
 import traceback
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from .._version import __version__
 from ..errors import MAgentError
@@ -116,8 +117,11 @@ def main(argv: Sequence[str] | None = None, *, commands: Sequence[Command] | Non
     args = parser.parse_args(list(argv) if argv is not None else None)
     if getattr(args, "log_level", ""):
         os.environ["MAGENT_LOG_LEVEL"] = str(args.log_level)
-    setup_logging(level=os.environ.get("MAGENT_LOG_LEVEL", "WARNING"),
-                  force=False, quiet=bool(getattr(args, "quiet", False)))
+    setup_logging(
+        level=os.environ.get("MAGENT_LOG_LEVEL", "WARNING"),
+        force=False,
+        quiet=bool(getattr(args, "quiet", False)),
+    )
     if not getattr(args, "command", ""):
         parser.print_help()
         return EXIT_USAGE
@@ -138,7 +142,7 @@ def main(argv: Sequence[str] | None = None, *, commands: Sequence[Command] | Non
         if getattr(args, "verbose", False):
             traceback.print_exc()
         return exit_code_for(exc)
-    except Exception as exc:  # noqa: BLE001 - never traceback at the user by default
+    except Exception as exc:
         print(f"error: could not load configuration: {exc}", file=sys.stderr)
         if getattr(args, "verbose", False):
             traceback.print_exc()
@@ -161,7 +165,7 @@ def main(argv: Sequence[str] | None = None, *, commands: Sequence[Command] | Non
         return exit_code_for(exc)
     except BrokenPipeError:
         return EXIT_OK
-    except Exception as exc:  # noqa: BLE001 - a crash is a bug report, not a traceback dump
+    except Exception as exc:
         context.error(f"unexpected {type(exc).__name__}: {exc}")
         print("this is a bug; re-run with --verbose for the traceback", file=sys.stderr)
         if getattr(args, "verbose", False):
@@ -178,7 +182,7 @@ def _close_quietly(context: CliContext | None) -> None:
         return
     try:
         context.close()
-    except Exception as exc:  # noqa: BLE001 - closing must not raise
+    except Exception as exc:
         LOGGER.debug("context close failed: %s", exc)
 
 

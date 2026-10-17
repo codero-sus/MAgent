@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import importlib
 import traceback
+from collections.abc import Iterable
 from types import ModuleType
-from typing import Any, Iterable
+from typing import Any
 
 MODULES: tuple[str, ...] = (
     "fs",
@@ -41,8 +42,22 @@ MODULES: tuple[str, ...] = (
 """Built-in tool modules, in registration order."""
 
 CATEGORY_ORDER: tuple[str, ...] = (
-    "files", "shell", "text", "math", "datetime", "data", "search", "web",
-    "python", "system", "media", "git", "output", "memory", "meta", "cortex",
+    "files",
+    "shell",
+    "text",
+    "math",
+    "datetime",
+    "data",
+    "search",
+    "web",
+    "python",
+    "system",
+    "media",
+    "git",
+    "output",
+    "memory",
+    "meta",
+    "cortex",
 )
 """Canonical tool category order, used for stable prompt rendering."""
 
@@ -63,7 +78,7 @@ def load_module(registry: Any, name: str, *, strict: bool = False) -> int:
     try:
         module: ModuleType = importlib.import_module(f"{__name__}.{name}")
         count = int(module.load(registry))
-    except Exception as exc:  # noqa: BLE001 - one bad module must not kill the agent
+    except Exception as exc:
         if strict:
             raise
         _ERRORS[name] = f"{type(exc).__name__}: {exc}\n{traceback.format_exc(limit=3)}"
@@ -72,8 +87,13 @@ def load_module(registry: Any, name: str, *, strict: bool = False) -> int:
     return count
 
 
-def load_all(registry: Any, *, include: Iterable[str] | None = None,
-             exclude: Iterable[str] | None = None, strict: bool = False) -> int:
+def load_all(
+    registry: Any,
+    *,
+    include: Iterable[str] | None = None,
+    exclude: Iterable[str] | None = None,
+    strict: bool = False,
+) -> int:
     """Register every built-in tool module; return the number of tools added.
 
     Args:
@@ -114,7 +134,7 @@ def builtin_tool_names() -> list[str]:
     for name in MODULES:
         try:
             names.extend(item.tool.name for item in module_tools(name))
-        except Exception:  # noqa: BLE001 - discovery is best effort
+        except Exception:
             continue
     return sorted(names)
 
@@ -130,7 +150,7 @@ def tools_by_category() -> dict[str, list[str]]:
     for name in MODULES:
         try:
             items = module_tools(name)
-        except Exception:  # noqa: BLE001 - discovery is best effort
+        except Exception:
             continue
         for item in items:
             grouped.setdefault(item.tool.category, []).append(item.tool.name)

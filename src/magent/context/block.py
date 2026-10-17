@@ -10,8 +10,9 @@ silently cutting the middle of the prompt.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..llm.tokens import estimate_tokens, truncate_to_tokens
 from ..utils.text import ellipsize, normalize_newlines, word_wrap
@@ -110,8 +111,10 @@ class ContextBlock:
 
     def __repr__(self) -> str:
         """Compact developer representation."""
-        return (f"ContextBlock(kind={self.kind!r}, title={self.title!r}, "
-                f"tokens={self.tokens}, priority={self.priority})")
+        return (
+            f"ContextBlock(kind={self.kind!r}, title={self.title!r}, "
+            f"tokens={self.tokens}, priority={self.priority})"
+        )
 
 
 def block(title: str, body: str, **kwargs: Any) -> ContextBlock:
@@ -121,20 +124,32 @@ def block(title: str, body: str, **kwargs: Any) -> ContextBlock:
 
 def environment_block(text: str, *, priority: int = 7) -> ContextBlock:
     """Build the block describing workspace, platform and tool availability."""
-    return ContextBlock(title="Environment", body=text, kind="environment",
-                        priority=priority, required=True)
+    return ContextBlock(
+        title="Environment", body=text, kind="environment", priority=priority, required=True
+    )
 
 
-def files_block(entries: Sequence[str], *, title: str = "Workspace files",
-                priority: int = 4, max_tokens: int = 900) -> ContextBlock:
+def files_block(
+    entries: Sequence[str],
+    *,
+    title: str = "Workspace files",
+    priority: int = 4,
+    max_tokens: int = 900,
+) -> ContextBlock:
     """Build a block listing files, one per line."""
     body = "\n".join(line for line in entries if line)
-    return ContextBlock(title=title, body=body, kind="files", priority=priority,
-                        max_tokens=max_tokens)
+    return ContextBlock(
+        title=title, body=body, kind="files", priority=priority, max_tokens=max_tokens
+    )
 
 
-def rag_block(chunks: Iterable[Any], *, title: str = "Retrieved context",
-              priority: int = 8, max_tokens: int = 2_500) -> ContextBlock:
+def rag_block(
+    chunks: Iterable[Any],
+    *,
+    title: str = "Retrieved context",
+    priority: int = 8,
+    max_tokens: int = 2_500,
+) -> ContextBlock:
     """Build a block from retrieved chunks, keeping their citations.
 
     Args:
@@ -154,12 +169,18 @@ def rag_block(chunks: Iterable[Any], *, title: str = "Retrieved context",
         where = f"{source}:{start}-{end}" if source and start else source
         label = f"[{index}]" + (f" {where}" if where else "")
         lines.append(f"{label} {ellipsize(text, 1_200)}")
-    return ContextBlock(title=title, body="\n\n".join(lines), kind="rag",
-                        priority=priority, max_tokens=max_tokens)
+    return ContextBlock(
+        title=title, body="\n\n".join(lines), kind="rag", priority=priority, max_tokens=max_tokens
+    )
 
 
-def memory_block(entries: Iterable[Any], *, title: str = "Relevant memories",
-                 priority: int = 6, max_tokens: int = 900) -> ContextBlock:
+def memory_block(
+    entries: Iterable[Any],
+    *,
+    title: str = "Relevant memories",
+    priority: int = 6,
+    max_tokens: int = 900,
+) -> ContextBlock:
     """Build a block from memory entries, newest facts first."""
     lines: list[str] = []
     for entry in entries:
@@ -170,26 +191,33 @@ def memory_block(entries: Iterable[Any], *, title: str = "Relevant memories",
         score = getattr(entry, "score", 0.0) or 0.0
         prefix = f"- ({kind}, {score:.2f}) " if kind and score else "- "
         lines.append(f"{prefix}{ellipsize(text, 400)}")
-    return ContextBlock(title=title, body="\n".join(lines), kind="memory",
-                        priority=priority, max_tokens=max_tokens)
+    return ContextBlock(
+        title=title, body="\n".join(lines), kind="memory", priority=priority, max_tokens=max_tokens
+    )
 
 
-def session_block(summary: str, *, transcript: str = "", priority: int = 6,
-                  max_tokens: int = 1_200) -> ContextBlock:
+def session_block(
+    summary: str, *, transcript: str = "", priority: int = 6, max_tokens: int = 1_200
+) -> ContextBlock:
     """Build a block carrying the running summary of the current session."""
     parts = [part for part in (summary.strip(), transcript.strip()) if part]
-    return ContextBlock(title="Session so far", body="\n\n".join(parts),
-                        kind="session", priority=priority, max_tokens=max_tokens)
+    return ContextBlock(
+        title="Session so far",
+        body="\n\n".join(parts),
+        kind="session",
+        priority=priority,
+        max_tokens=max_tokens,
+    )
 
 
 def task_block(text: str, *, priority: int = 9) -> ContextBlock:
     """Build the block holding the user's stated task."""
-    return ContextBlock(title="Task", body=text, kind="task", priority=priority,
-                        required=True)
+    return ContextBlock(title="Task", body=text, kind="task", priority=priority, required=True)
 
 
-def custom_block(title: str, body: str, *, priority: int = DEFAULT_PRIORITY,
-                 kind: str = "custom", **kwargs: Any) -> ContextBlock:
+def custom_block(
+    title: str, body: str, *, priority: int = DEFAULT_PRIORITY, kind: str = "custom", **kwargs: Any
+) -> ContextBlock:
     """Build a caller-defined block."""
     return ContextBlock(title=title, body=body, kind=kind, priority=priority, **kwargs)
 
@@ -199,8 +227,13 @@ def total_tokens(blocks: Sequence[ContextBlock]) -> int:
     return sum(item.tokens for item in blocks if not item.dropped)
 
 
-def render_blocks(blocks: Sequence[ContextBlock], *, style: str = "heading",
-                  separator: str = "\n\n", width: int = 0) -> str:
+def render_blocks(
+    blocks: Sequence[ContextBlock],
+    *,
+    style: str = "heading",
+    separator: str = "\n\n",
+    width: int = 0,
+) -> str:
     """Render a sequence of blocks into one prompt-ready string."""
     kept = [item for item in blocks if not item.dropped and not item.empty]
     if not kept:

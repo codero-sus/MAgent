@@ -12,15 +12,16 @@ that needs three of them still builds each once.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from ..config import Config, default_config, load_config
 from ..logging_ import get_logger
 from ..output.format import normalize_format
 from ..output.render import RenderOptions, ResultRenderer
-from ..output.sink import ConsoleSink, OutputSink, TeeSink, build_sink
+from ..output.sink import ConsoleSink, OutputSink, TeeSink
 
 LOGGER = get_logger("cli")
 """Logger for CLI commands."""
@@ -43,8 +44,9 @@ class CliContext:
     # -- construction --------------------------------------------------------
 
     @classmethod
-    def build(cls, args: Any = None, *, config: Config | None = None,
-              sink: OutputSink | None = None) -> CliContext:
+    def build(
+        cls, args: Any = None, *, config: Config | None = None, sink: OutputSink | None = None
+    ) -> CliContext:
         """Create a context from parsed arguments.
 
         Args:
@@ -63,8 +65,11 @@ class CliContext:
         context.color = getattr(args, "color", None)
         context.apply_output_overrides()
         context.sink = sink if sink is not None else context.build_sink()
-        context.renderer = ResultRenderer(RenderOptions.from_config(config), sink=context.sink,
-                                          width=int(config.output.width or 0))
+        context.renderer = ResultRenderer(
+            RenderOptions.from_config(config),
+            sink=context.sink,
+            width=int(config.output.width or 0),
+        )
         return context
 
     def apply_output_overrides(self) -> None:
@@ -155,13 +160,14 @@ class CliContext:
 
     def _build_registry(self) -> Any:
         """Build the default registry and load configured plugins into it."""
-        from ..plugins import HookRegistry, load_plugins
+        from ..plugins import load_plugins
         from ..tools import default_registry
 
         registry = default_registry()
         hooks = self.hooks
-        loader = load_plugins(self.config, registry=registry, hooks=hooks,
-                              workspace=self.workspace, strict=False)
+        loader = load_plugins(
+            self.config, registry=registry, hooks=hooks, workspace=self.workspace, strict=False
+        )
         self._cache["plugin_loader"] = loader
         return registry
 
@@ -204,7 +210,7 @@ class CliContext:
         backend = None
         try:
             backend = self.backend
-        except Exception as exc:  # noqa: BLE001 - memory must work offline
+        except Exception as exc:
             LOGGER.debug("memory embedder backend unavailable: %s", exc)
         return build_store(self.config, backend=backend, root=self.config.data_dir)
 
@@ -269,14 +275,15 @@ class CliContext:
         backend = None
         try:
             backend = self.backend
-        except Exception as exc:  # noqa: BLE001 - retrieval works offline
+        except Exception as exc:
             LOGGER.debug("retriever backend unavailable: %s", exc)
-        retriever = Retriever(backend=backend, max_chars=1_200,
-                              limit=self.config.memory.retrieval_top_k or 5)
+        retriever = Retriever(
+            backend=backend, max_chars=1_200, limit=self.config.memory.retrieval_top_k or 5
+        )
         if index_path.is_file():
             try:
                 retriever = Retriever.load(index_path, backend=backend)
-            except Exception as exc:  # noqa: BLE001 - a stale index is rebuilt
+            except Exception as exc:
                 LOGGER.debug("could not load the RAG index: %s", exc)
         self._cache["rag_index_path"] = index_path
         return retriever
@@ -334,11 +341,18 @@ class CliContext:
         """Create an agent from a preset, keeping this context's components."""
         from ..agents.presets import build_preset_agent
 
-        return build_preset_agent(preset, backend=self.backend, registry=self.registry,
-                                  config=self.config, workspace=self.workspace,
-                                  memory=self.memory, session=self.sessions,
-                                  guardrails=self.guardrails, events=self.events,
-                                  **overrides)
+        return build_preset_agent(
+            preset,
+            backend=self.backend,
+            registry=self.registry,
+            config=self.config,
+            workspace=self.workspace,
+            memory=self.memory,
+            session=self.sessions,
+            guardrails=self.guardrails,
+            events=self.events,
+            **overrides,
+        )
 
     def run_agent(self, prompt: str, *, preset: str = "", **options: Any) -> Any:
         """Run one prompt through an agent (preset or default)."""
@@ -370,15 +384,16 @@ class CliContext:
         else:
             self.write(text if text.endswith("\n") else text + "\n")
 
-    def table(self, rows: Sequence[Sequence[Any]], headers: Sequence[str], *,
-              title: str = "") -> None:
+    def table(
+        self, rows: Sequence[Sequence[Any]], headers: Sequence[str], *, title: str = ""
+    ) -> None:
         """Render a table, or the raw rows when a machine format is selected."""
         fmt = self.config.output.format
         if fmt != "text":
-            from ..output.format import render_value
-
-            self.emit([dict(zip([str(item) for item in headers], row, strict=False))
-                       for row in rows], fmt=fmt)
+            self.emit(
+                [dict(zip([str(item) for item in headers], row, strict=False)) for row in rows],
+                fmt=fmt,
+            )
             return
         if self.renderer is None:
             return
@@ -439,7 +454,7 @@ class CliContext:
         if memory is not None and hasattr(memory, "close"):
             try:
                 memory.close()
-            except Exception as exc:  # noqa: BLE001 - closing is best effort
+            except Exception as exc:
                 LOGGER.debug("memory close failed: %s", exc)
         guardrails = self._cache.get("guardrails")
         if guardrails is not None and hasattr(guardrails, "close"):

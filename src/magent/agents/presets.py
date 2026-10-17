@@ -13,8 +13,9 @@ set without touching the table.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..config import AgentConfig
 from ..errors import ConfigError
@@ -59,8 +60,10 @@ class AgentPreset:
         known = set(self.__dataclass_fields__)
         unknown = sorted(set(overrides) - known)
         if unknown:
-            raise ConfigError(f"unknown preset overrides: {', '.join(unknown)}",
-                              details={"known": sorted(known), "preset": self.name})
+            raise ConfigError(
+                f"unknown preset overrides: {', '.join(unknown)}",
+                details={"known": sorted(known), "preset": self.name},
+            )
         clean = {key: value for key, value in overrides.items() if value is not None}
         return replace(self, **clean)
 
@@ -158,190 +161,235 @@ def _register(preset: AgentPreset) -> AgentPreset:
     return preset
 
 
-_register(AgentPreset(
-    name="general",
-    description="Balanced default: reads the workspace, uses tools, explains its work",
-    persona="assistant",
-    category="general",
-    loop_mode="react",
-    max_iterations=8,
-    disabled_tools=("python_exec", "shell_exec"),
-))
+_register(
+    AgentPreset(
+        name="general",
+        description="Balanced default: reads the workspace, uses tools, explains its work",
+        persona="assistant",
+        category="general",
+        loop_mode="react",
+        max_iterations=8,
+        disabled_tools=("python_exec", "shell_exec"),
+    )
+)
 
-_register(AgentPreset(
-    name="coder",
-    description="Edits code in a repository: read first, small diffs, run the tests",
-    persona="coder",
-    category="code",
-    tool_categories=("files", "text", "search", "git", "python", "shell", "system"),
-    loop_mode="react",
-    max_iterations=14,
-    planning=True,
-    parallel_tools=False,
-    instructions=(
-        "Read the file before editing it. Prefer targeted edits over rewrites. "
-        "After a change, run the project's tests or a syntax check and report the result."
-    ),
-))
+_register(
+    AgentPreset(
+        name="coder",
+        description="Edits code in a repository: read first, small diffs, run the tests",
+        persona="coder",
+        category="code",
+        tool_categories=("files", "text", "search", "git", "python", "shell", "system"),
+        loop_mode="react",
+        max_iterations=14,
+        planning=True,
+        parallel_tools=False,
+        instructions=(
+            "Read the file before editing it. Prefer targeted edits over rewrites. "
+            "After a change, run the project's tests or a syntax check and report the result."
+        ),
+    )
+)
 
-_register(AgentPreset(
-    name="reviewer",
-    description="Reviews code or text and reports findings with severity and evidence",
-    persona="reviewer",
-    category="code",
-    tool_categories=("files", "text", "search", "git"),
-    max_risk="read",
-    loop_mode="reflect",
-    max_iterations=6,
-    temperature=0.2,
-    structured=True,
-    instructions=(
-        "Report findings as a list with severity, file, line and a concrete suggestion. "
-        "Do not modify any file."
-    ),
-))
+_register(
+    AgentPreset(
+        name="reviewer",
+        description="Reviews code or text and reports findings with severity and evidence",
+        persona="reviewer",
+        category="code",
+        tool_categories=("files", "text", "search", "git"),
+        max_risk="read",
+        loop_mode="reflect",
+        max_iterations=6,
+        temperature=0.2,
+        structured=True,
+        instructions=(
+            "Report findings as a list with severity, file, line and a concrete suggestion. "
+            "Do not modify any file."
+        ),
+    )
+)
 
-_register(AgentPreset(
-    name="researcher",
-    description="Gathers evidence from the web and files, then cites what it used",
-    persona="researcher",
-    category="research",
-    tools=("web_fetch", "web_search", "read_file", "grep", "list_directory", "write_file",
-           "memory_add", "memory_search", "rag_search", "rag_ingest", "calculate",
-           "datetime_now", "notes_append"),
-    loop_mode="plan",
-    max_iterations=12,
-    planning=True,
-    reflection=True,
-    allow_network=True,
-    temperature=0.3,
-    instructions=(
-        "Collect evidence before concluding. Cite the source URL or file path for every "
-        "claim. Distinguish what you verified from what you inferred."
-    ),
-))
+_register(
+    AgentPreset(
+        name="researcher",
+        description="Gathers evidence from the web and files, then cites what it used",
+        persona="researcher",
+        category="research",
+        tools=(
+            "web_fetch",
+            "web_search",
+            "read_file",
+            "grep",
+            "list_directory",
+            "write_file",
+            "memory_add",
+            "memory_search",
+            "rag_search",
+            "rag_ingest",
+            "calculate",
+            "datetime_now",
+            "notes_append",
+        ),
+        loop_mode="plan",
+        max_iterations=12,
+        planning=True,
+        reflection=True,
+        allow_network=True,
+        temperature=0.3,
+        instructions=(
+            "Collect evidence before concluding. Cite the source URL or file path for every "
+            "claim. Distinguish what you verified from what you inferred."
+        ),
+    )
+)
 
-_register(AgentPreset(
-    name="analyst",
-    description="Turns data files into findings: query, aggregate, chart, conclude",
-    persona="analyst",
-    category="research",
-    tool_categories=("data", "files", "math", "text", "output"),
-    loop_mode="plan",
-    max_iterations=10,
-    temperature=0.2,
-    instructions=(
-        "Show the numbers behind every claim. State the row count, the time range and any "
-        "rows you excluded."
-    ),
-))
+_register(
+    AgentPreset(
+        name="analyst",
+        description="Turns data files into findings: query, aggregate, chart, conclude",
+        persona="analyst",
+        category="research",
+        tool_categories=("data", "files", "math", "text", "output"),
+        loop_mode="plan",
+        max_iterations=10,
+        temperature=0.2,
+        instructions=(
+            "Show the numbers behind every claim. State the row count, the time range and any "
+            "rows you excluded."
+        ),
+    )
+)
 
-_register(AgentPreset(
-    name="writer",
-    description="Drafts and edits prose with a consistent voice and structure",
-    persona="writer",
-    category="writing",
-    tool_categories=("files", "text", "output"),
-    max_risk="write",
-    loop_mode="reflect",
-    max_iterations=6,
-    temperature=0.8,
-    instructions=(
-        "Match the requested tone and length. Revise once against your own draft before "
-        "presenting the final text."
-    ),
-))
+_register(
+    AgentPreset(
+        name="writer",
+        description="Drafts and edits prose with a consistent voice and structure",
+        persona="writer",
+        category="writing",
+        tool_categories=("files", "text", "output"),
+        max_risk="write",
+        loop_mode="reflect",
+        max_iterations=6,
+        temperature=0.8,
+        instructions=(
+            "Match the requested tone and length. Revise once against your own draft before "
+            "presenting the final text."
+        ),
+    )
+)
 
-_register(AgentPreset(
-    name="devops",
-    description="Inspects and operates systems carefully, asking before anything destructive",
-    persona="devops",
-    category="operations",
-    tool_categories=("shell", "system", "files", "git", "web"),
-    loop_mode="react",
-    max_iterations=12,
-    parallel_tools=False,
-    allow_network=True,
-    temperature=0.1,
-    instructions=(
-        "Inspect before changing anything. Never run a destructive command without an "
-        "explicit approval, and always state the rollback step first."
-    ),
-))
+_register(
+    AgentPreset(
+        name="devops",
+        description="Inspects and operates systems carefully, asking before anything destructive",
+        persona="devops",
+        category="operations",
+        tool_categories=("shell", "system", "files", "git", "web"),
+        loop_mode="react",
+        max_iterations=12,
+        parallel_tools=False,
+        allow_network=True,
+        temperature=0.1,
+        instructions=(
+            "Inspect before changing anything. Never run a destructive command without an "
+            "explicit approval, and always state the rollback step first."
+        ),
+    )
+)
 
-_register(AgentPreset(
-    name="planner",
-    description="Produces a step-by-step plan without executing it",
-    persona="planner",
-    category="general",
-    tool_categories=("files", "search", "text"),
-    max_risk="read",
-    loop_mode="plan",
-    max_iterations=4,
-    temperature=0.3,
-    structured=True,
-    instructions=(
-        "Output a numbered plan. For each step give the goal, the tools to use, the "
-        "expected result and how to verify it. Do not execute the steps."
-    ),
-))
+_register(
+    AgentPreset(
+        name="planner",
+        description="Produces a step-by-step plan without executing it",
+        persona="planner",
+        category="general",
+        tool_categories=("files", "search", "text"),
+        max_risk="read",
+        loop_mode="plan",
+        max_iterations=4,
+        temperature=0.3,
+        structured=True,
+        instructions=(
+            "Output a numbered plan. For each step give the goal, the tools to use, the "
+            "expected result and how to verify it. Do not execute the steps."
+        ),
+    )
+)
 
-_register(AgentPreset(
-    name="tutor",
-    description="Explains concepts step by step and checks understanding",
-    persona="tutor",
-    category="writing",
-    tools=("read_file", "grep", "calculate", "datetime_now", "memory_search", "memory_add"),
-    max_risk="read",
-    loop_mode="single",
-    max_iterations=3,
-    temperature=0.6,
-    instructions=(
-        "Explain in small steps, define every term, and finish with one question that "
-        "checks understanding."
-    ),
-))
+_register(
+    AgentPreset(
+        name="tutor",
+        description="Explains concepts step by step and checks understanding",
+        persona="tutor",
+        category="writing",
+        tools=("read_file", "grep", "calculate", "datetime_now", "memory_search", "memory_add"),
+        max_risk="read",
+        loop_mode="single",
+        max_iterations=3,
+        temperature=0.6,
+        instructions=(
+            "Explain in small steps, define every term, and finish with one question that "
+            "checks understanding."
+        ),
+    )
+)
 
-_register(AgentPreset(
-    name="librarian",
-    description="Indexes documents and answers only from retrieved, cited context",
-    persona="researcher",
-    category="research",
-    tools=("rag_ingest", "rag_search", "rag_status", "read_file", "list_directory",
-           "directory_tree", "grep", "memory_search", "grounded_answer"),
-    max_risk="read",
-    loop_mode="react",
-    max_iterations=8,
-    temperature=0.1,
-    instructions=(
-        "Answer only from retrieved context and cite the chunk numbers. Say so plainly "
-        "when the corpus does not contain the answer."
-    ),
-))
+_register(
+    AgentPreset(
+        name="librarian",
+        description="Indexes documents and answers only from retrieved, cited context",
+        persona="researcher",
+        category="research",
+        tools=(
+            "rag_ingest",
+            "rag_search",
+            "rag_status",
+            "read_file",
+            "list_directory",
+            "directory_tree",
+            "grep",
+            "memory_search",
+            "grounded_answer",
+        ),
+        max_risk="read",
+        loop_mode="react",
+        max_iterations=8,
+        temperature=0.1,
+        instructions=(
+            "Answer only from retrieved context and cite the chunk numbers. Say so plainly "
+            "when the corpus does not contain the answer."
+        ),
+    )
+)
 
-_register(AgentPreset(
-    name="minimal",
-    description="No tools, no planning: a single fast completion",
-    persona="minimal",
-    category="general",
-    no_tools=True,
-    loop_mode="single",
-    max_iterations=1,
-    temperature=0.4,
-))
+_register(
+    AgentPreset(
+        name="minimal",
+        description="No tools, no planning: a single fast completion",
+        persona="minimal",
+        category="general",
+        no_tools=True,
+        loop_mode="single",
+        max_iterations=1,
+        temperature=0.4,
+    )
+)
 
-_register(AgentPreset(
-    name="sandboxed",
-    description="Read-only reconnaissance: no writes, no network, no execution",
-    persona="assistant",
-    category="operations",
-    max_risk="read",
-    allow_network=False,
-    disabled_tools=("python_exec", "shell_exec", "write_file", "edit_file", "delete_path"),
-    loop_mode="react",
-    max_iterations=6,
-    instructions="You may only read. Report what you found and what you would change.",
-))
+_register(
+    AgentPreset(
+        name="sandboxed",
+        description="Read-only reconnaissance: no writes, no network, no execution",
+        persona="assistant",
+        category="operations",
+        max_risk="read",
+        allow_network=False,
+        disabled_tools=("python_exec", "shell_exec", "write_file", "edit_file", "delete_path"),
+        loop_mode="react",
+        max_iterations=6,
+        instructions="You may only read. Report what you found and what you would change.",
+    )
+)
 
 
 def list_presets(category: str = "") -> list[AgentPreset]:
@@ -367,8 +415,9 @@ def get_preset(name: str) -> AgentPreset:
     if key in PRESETS:
         return PRESETS[key]
     suggestions = _closest(key, list(PRESETS))
-    raise ConfigError(f"unknown preset {name!r}",
-                      details={"known": preset_names(), "did_you_mean": suggestions})
+    raise ConfigError(
+        f"unknown preset {name!r}", details={"known": preset_names(), "did_you_mean": suggestions}
+    )
 
 
 def _closest(needle: str, options: Iterable[str], limit: int = 3) -> list[str]:
@@ -392,11 +441,15 @@ def register_preset(preset: AgentPreset, *, replace_existing: bool = False) -> A
     if not preset.name:
         raise ConfigError("preset name is required")
     if preset.name in PRESETS and not replace_existing:
-        raise ConfigError(f"preset {preset.name!r} already exists",
-                          details={"hint": "pass replace_existing=True to override"})
+        raise ConfigError(
+            f"preset {preset.name!r} already exists",
+            details={"hint": "pass replace_existing=True to override"},
+        )
     if preset.persona not in PERSONAS:
-        raise ConfigError(f"preset {preset.name!r} uses unknown persona {preset.persona!r}",
-                          details={"known": sorted(PERSONAS)})
+        raise ConfigError(
+            f"preset {preset.name!r} uses unknown persona {preset.persona!r}",
+            details={"known": sorted(PERSONAS)},
+        )
     PRESETS[preset.name] = preset
     return preset
 
@@ -413,20 +466,41 @@ def presets_from_config(config: Any = None) -> dict[str, AgentPreset]:
     out: dict[str, AgentPreset] = {}
     if not isinstance(section, dict):
         return out
-    text_fields = ("persona", "category", "loop_mode", "instructions", "max_risk",
-                   "model_role", "description")
+    text_fields = (
+        "persona",
+        "category",
+        "loop_mode",
+        "instructions",
+        "max_risk",
+        "model_role",
+        "description",
+    )
     int_fields = ("max_iterations",)
     float_fields = ("temperature",)
-    bool_fields = ("planning", "reflection", "parallel_tools", "allow_network", "structured",
-                   "no_tools")
+    bool_fields = (
+        "planning",
+        "reflection",
+        "parallel_tools",
+        "allow_network",
+        "structured",
+        "no_tools",
+    )
     tuple_fields = ("tools", "disabled_tools", "tool_categories", "examples")
     for name, values in section.items():
         if not isinstance(values, dict):
             continue
-        unknown = sorted(set(values) - {"extends"} - set(text_fields) - set(int_fields)
-                         - set(float_fields) - set(bool_fields) - set(tuple_fields))
+        unknown = sorted(
+            set(values)
+            - {"extends"}
+            - set(text_fields)
+            - set(int_fields)
+            - set(float_fields)
+            - set(bool_fields)
+            - set(tuple_fields)
+        )
         base = PRESETS.get(str(values.get("extends", ""))) or AgentPreset(
-            name=str(name), description=str(values.get("description", name)))
+            name=str(name), description=str(values.get("description", name))
+        )
         overrides: dict[str, Any] = {}
         for key in text_fields:
             if key in values:
@@ -444,16 +518,18 @@ def presets_from_config(config: Any = None) -> dict[str, AgentPreset]:
             if key in values:
                 overrides[key] = tuple(str(item) for item in values[key])
         preset = base.merge(**overrides)
-        preset = replace(preset, name=str(name),
-                         description=overrides.get("description", base.description))
+        preset = replace(
+            preset, name=str(name), description=overrides.get("description", base.description)
+        )
         if unknown:
             preset.metadata["unknown_keys"] = unknown
         out[str(name)] = register_preset(preset, replace_existing=True)
     return out
 
 
-def build_preset_agent(name: str, *, backend: Any = None, registry: Any = None,
-                       config: Any = None, **overrides: Any) -> Any:
+def build_preset_agent(
+    name: str, *, backend: Any = None, registry: Any = None, config: Any = None, **overrides: Any
+) -> Any:
     """Build an :class:`~magent.agent.Agent` from a preset.
 
     Args:
@@ -466,10 +542,18 @@ def build_preset_agent(name: str, *, backend: Any = None, registry: Any = None,
     from ..agent import Agent
     from ..llm.factory import build_backend
 
-    preset = get_preset(name).merge(**{key: value for key, value in overrides.items()
-                                       if key in AgentPreset.__dataclass_fields__})
-    extra = {key: value for key, value in overrides.items()
-             if key not in AgentPreset.__dataclass_fields__}
+    preset = get_preset(name).merge(
+        **{
+            key: value
+            for key, value in overrides.items()
+            if key in AgentPreset.__dataclass_fields__
+        }
+    )
+    extra = {
+        key: value
+        for key, value in overrides.items()
+        if key not in AgentPreset.__dataclass_fields__
+    }
     active_backend = backend if backend is not None else build_backend(config=config)
     agent_config = preset.agent_config()
     generation = None
@@ -477,17 +561,24 @@ def build_preset_agent(name: str, *, backend: Any = None, registry: Any = None,
         from ..config import GenerationConfig
 
         generation = GenerationConfig(temperature=preset.temperature)
-    return Agent(backend=active_backend, config=agent_config, generation=generation,
-                 registry=preset.build_registry(registry), settings=config,
-                 name=extra.pop("name", f"MAgent[{preset.name}]"),
-                 workspace=extra.pop("workspace", None),
-                 memory=extra.pop("memory", None),
-                 session=extra.pop("session", None),
-                 guardrails=extra.pop("guardrails", None),
-                 events=extra.pop("events", None),
-                 prompt_defaults={"examples_block": "\n\n".join(preset.examples),
-                                  **extra.pop("prompt_defaults", {})},
-                 **extra)
+    return Agent(
+        backend=active_backend,
+        config=agent_config,
+        generation=generation,
+        registry=preset.build_registry(registry),
+        settings=config,
+        name=extra.pop("name", f"MAgent[{preset.name}]"),
+        workspace=extra.pop("workspace", None),
+        memory=extra.pop("memory", None),
+        session=extra.pop("session", None),
+        guardrails=extra.pop("guardrails", None),
+        events=extra.pop("events", None),
+        prompt_defaults={
+            "examples_block": "\n\n".join(preset.examples),
+            **extra.pop("prompt_defaults", {}),
+        },
+        **extra,
+    )
 
 
 def describe_presets() -> list[dict[str, Any]]:
@@ -497,8 +588,10 @@ def describe_presets() -> list[dict[str, Any]]:
 
 def preset_table() -> Sequence[tuple[str, str, str, str]]:
     """Rows of ``(name, category, persona, description)`` for a CLI table."""
-    return [(preset.name, preset.category, preset.persona, preset.description)
-            for preset in list_presets()]
+    return [
+        (preset.name, preset.category, preset.persona, preset.description)
+        for preset in list_presets()
+    ]
 
 
 def preset_for_task(task: str) -> AgentPreset:
@@ -511,7 +604,10 @@ def preset_for_task(task: str) -> AgentPreset:
     rules = (
         ("reviewer", ("review", "audit", "critique", "pull request", "pr ")),
         ("devops", ("deploy", "server", "docker", "kubernetes", "nginx", "systemd", "ci pipeline")),
-        ("analyst", ("csv", "dataset", "analys", "analyz", "metrics", "sql", "chart", "statistics")),
+        (
+            "analyst",
+            ("csv", "dataset", "analys", "analyz", "metrics", "sql", "chart", "statistics"),
+        ),
         ("librarian", ("document", "knowledge base", "index these", "cite", "rag")),
         ("researcher", ("research", "investigate", "find out", "compare", "web", "survey")),
         ("writer", ("write", "draft", "blog", "essay", "rewrite", "copy", "readme")),

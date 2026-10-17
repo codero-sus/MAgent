@@ -13,8 +13,9 @@ import io
 import sys
 import threading
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, TextIO
+from typing import Any, TextIO
 
 from ..utils.files import atomic_write_text, ensure_dir
 
@@ -67,8 +68,9 @@ class ConsoleSink(OutputSink):
 
     name = "console"
 
-    def __init__(self, *, stream: TextIO | None = None, error: bool = False,
-                 color: bool | None = None) -> None:
+    def __init__(
+        self, *, stream: TextIO | None = None, error: bool = False, color: bool | None = None
+    ) -> None:
         """Bind the sink to a stream.
 
         Args:
@@ -172,7 +174,7 @@ class BufferSink(OutputSink):
         self._parts.append(text)
         self._written += len(text)
         if self._keep and sum(len(part) for part in self._parts) > self._keep * 2:
-            joined = "".join(self._parts)[-self._keep:]
+            joined = "".join(self._parts)[-self._keep :]
             self._parts = [joined]
 
     @property
@@ -266,7 +268,7 @@ class TeeSink(OutputSink):
         for sink in self.sinks:
             try:
                 sink.write(text)
-            except Exception:  # noqa: BLE001 - one dead sink must not stop the others
+            except Exception:
                 continue
 
     def flush(self) -> None:
@@ -327,8 +329,13 @@ class TimestampSink(OutputSink):
         return self.inner.tell()
 
 
-def build_sink(config: Any = None, *, path: str | Path | None = None,
-               stream: TextIO | None = None, quiet: bool | None = None) -> OutputSink:
+def build_sink(
+    config: Any = None,
+    *,
+    path: str | Path | None = None,
+    stream: TextIO | None = None,
+    quiet: bool | None = None,
+) -> OutputSink:
     """Choose a sink from configuration.
 
     Args:

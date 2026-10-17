@@ -36,7 +36,9 @@ _SECRET_ASSIGN = re.compile(
 _BEARER = re.compile(r"(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/\-=]{8,}")
 """Regex matching an HTTP authorization header value."""
 
-_KNOWN_PREFIXES = re.compile(r"\b(?:sk|pk|rk|ghp|gho|ghu|ghs|ghr|github_pat|xox[baprs]|AIza|ya29)[-_][A-Za-z0-9_\-]{10,}\b")
+_KNOWN_PREFIXES = re.compile(
+    r"\b(?:sk|pk|rk|ghp|gho|ghu|ghs|ghr|github_pat|xox[baprs]|AIza|ya29)[-_][A-Za-z0-9_\-]{10,}\b"
+)
 """Regex matching well known provider key formats."""
 
 _LONG_HEX = re.compile(r"\b[0-9a-fA-F]{32,}\b")
@@ -54,8 +56,9 @@ def is_secret_reference(value: Any) -> bool:
     return any(text.startswith(f"{scheme}:") for scheme in SCHEMES)
 
 
-def resolve_secret(value: str, *, default: str = "", environ: dict[str, str] | None = None,
-                   allow_exec: bool = True) -> str:
+def resolve_secret(
+    value: str, *, default: str = "", environ: dict[str, str] | None = None, allow_exec: bool = True
+) -> str:
     """Resolve a secret reference into its plaintext value.
 
     Non-reference values are returned unchanged, so callers can pass any config
@@ -187,7 +190,7 @@ class SecretStore:
 
     def as_references(self) -> dict[str, str]:
         """Return ``key -> file:...`` references safe to put in config."""
-        return {key: f"file:{self.path}" for key in self._values}
+        return dict.fromkeys(self._values, f"file:{self.path}")
 
 
 def redact_text(text: str, *, extra_secrets: list[str] | None = None) -> str:
@@ -211,8 +214,19 @@ def redact_mapping(data: Any, *, extra_secrets: list[str] | None = None) -> Any:
         out: dict[str, Any] = {}
         for key, value in data.items():
             name = str(key).lower()
-            if any(bad in name for bad in ("api_key", "apikey", "secret", "token", "password",
-                                           "authorization", "cookie", "credential")):
+            if any(
+                bad in name
+                for bad in (
+                    "api_key",
+                    "apikey",
+                    "secret",
+                    "token",
+                    "password",
+                    "authorization",
+                    "cookie",
+                    "credential",
+                )
+            ):
                 out[key] = REDACTED if value else value
             else:
                 out[key] = redact_mapping(value, extra_secrets=extra_secrets)

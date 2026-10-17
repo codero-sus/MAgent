@@ -6,6 +6,9 @@ calls tools, remembers, retrieves, guards itself, works in teams, and explains
 what it did — with **zero mandatory dependencies** beyond the Python standard
 library.
 
+> The product is **MAgent**—never “Magent.” Lowercase `magent` is reserved for
+> the Python import package, executable command, paths, and environment namespace.
+
 ```bash
 git clone https://github.com/codero-sus/MAgent && cd MAgent
 python -m magent doctor
@@ -29,14 +32,14 @@ talking to the models Cortex LLMHoster already serves on your machine.
 | **No dependencies** | `dependencies = []` in `pyproject.toml`. Stdlib only, by design and by test. |
 | **Local first** | Cortex LLMHoster over its documented `/v1` and `/admin/api` endpoints; an echo backend keeps everything working with no models running. |
 | **Honest failure** | 63 typed errors with codes and exit codes; edges report problems instead of raising, contracts raise loudly. |
-| **Verifiable** | 438 tests, plus an auto-generated manifest of **3,266 improvements** where every entry is re-checked against the code by `make verify`. |
+| **Verifiable** | 487 tests, plus an auto-generated manifest of **3,335 improvements** where every entry is re-checked against the code by `make verify`. |
 
 ## Install
 
 ```bash
 pip install -e .              # optional — `python -m magent` works from a checkout
 magent --help
-make test                     # 438 tests, offline, ~15 seconds
+make test                     # 487 tests, offline, ~35 seconds
 make verify                   # re-check the improvements manifest
 ```
 
@@ -171,7 +174,7 @@ src/magent/
 ## Testing and evaluation
 
 ```bash
-make test            # 438 tests: unit, integration, CLI, HTTP, doctests
+make test            # 487 tests: unit, integration, CLI, HTTP, doctests
 make smoke           # one end-to-end offline run of the whole stack
 make smoke-tools     # dispatch every registered tool
 make eval            # run the sample dataset

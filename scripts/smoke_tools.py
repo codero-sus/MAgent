@@ -127,9 +127,13 @@ def smoke_calls(root: Path) -> list[tuple[str, dict[str, Any]]]:
     """Return one realistic offline call per exercisable tool."""
     csv_text = CSV_ROWS
     json_text = json.dumps(NESTED_JSON)
-    records = json.dumps([
-        {"city": "pune", "score": 10}, {"city": "pune", "score": 22}, {"city": "delhi", "score": 7},
-    ])
+    records = json.dumps(
+        [
+            {"city": "pune", "score": 10},
+            {"city": "pune", "score": 22},
+            {"city": "delhi", "score": 7},
+        ]
+    )
     return [
         # -- files -----------------------------------------------------------
         ("read_file", {"path": "docs/guide.md"}),
@@ -181,21 +185,35 @@ def smoke_calls(root: Path) -> list[tuple[str, dict[str, Any]]]:
         ("parse_duration_tool", {"duration": "1h30m"}),
         # -- data ------------------------------------------------------------
         ("csv_read", {"path": "data.csv"}),
-        ("csv_read", {"path": "data.csv", "where": "city=pune", "sort_by": "score", "descending": True}),
+        (
+            "csv_read",
+            {"path": "data.csv", "where": "city=pune", "sort_by": "score", "descending": True},
+        ),
         ("csv_stats", {"path": "data.csv"}),
         ("json_query", {"data": json_text, "path": "items[1].name"}),
         ("json_flatten", {"data": json_text}),
         ("json_to_csv", {"data": json.dumps([{"a": 1, "b": {"c": 2}}, {"a": 3, "b": {"c": 4}}])}),
-        ("group_aggregate", {"records": records, "group_by": "city", "aggregate": "sum",
-                             "value_field": "score"}),
+        (
+            "group_aggregate",
+            {"records": records, "group_by": "city", "aggregate": "sum", "value_field": "score"},
+        ),
         ("sqlite_query", {"path": ":memory:", "sql": "SELECT 1 AS one, 'x' AS label"}),
-        ("sqlite_query", {"path": "smoke.db", "sql": "SELECT name, score FROM scores ORDER BY score DESC"}),
+        (
+            "sqlite_query",
+            {"path": "smoke.db", "sql": "SELECT name, score FROM scores ORDER BY score DESC"},
+        ),
         ("sqlite_schema", {"path": "smoke.db"}),
         # -- search ----------------------------------------------------------
         ("search_documents", {"query": "agent framework tools", "path": "."}),
-        ("similar_texts", {"text": "read a file", "candidates": '["read_file","write_file","grep"]'}),
+        (
+            "similar_texts",
+            {"text": "read a file", "candidates": '["read_file","write_file","grep"]'},
+        ),
         # -- python ----------------------------------------------------------
-        ("python_exec", {"code": "total = sum(i * i for i in range(10))\nprint(total)\nresult = total"}),
+        (
+            "python_exec",
+            {"code": "total = sum(i * i for i in range(10))\nprint(total)\nresult = total"},
+        ),
         ("audit_python", {"code": "import os\nos.system('id')"}),
         ("inspect_python", {"code": SCRIPT_SOURCE}),
         # -- system ----------------------------------------------------------
@@ -214,8 +232,15 @@ def smoke_calls(root: Path) -> list[tuple[str, dict[str, Any]]]:
         # -- output ----------------------------------------------------------
         ("format_table", {"data": csv_text, "style": "box"}),
         ("render_chart", {"values": "3,7,2,9", "labels": "a,b,c,d"}),
-        ("build_report", {"title": "Smoke", "sections": json.dumps(
-            [{"heading": "Intro", "body": "text"}, {"heading": "More", "body": "body"}])}),
+        (
+            "build_report",
+            {
+                "title": "Smoke",
+                "sections": json.dumps(
+                    [{"heading": "Intro", "body": "text"}, {"heading": "More", "body": "body"}]
+                ),
+            },
+        ),
         ("write_artifact", {"path": "out/artifact.json", "content": '{"a": 1}', "mode": "json"}),
         ("render_box_tool", {"text": "hello box", "title": "Smoke"}),
         ("render_key_value_tool", {"pairs": '{"alpha": 1, "beta": 2}'}),
@@ -242,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     registry = default_registry()
     failures_on_load = load_errors()
     names = set(registry.names())
-    covered = {name for name, _ in smoke_calls(Path("."))}
+    covered = {name for name, _ in smoke_calls(Path())}
     unaccounted = sorted(names - covered - set(SKIPPED))
     unknown_skips = sorted(set(SKIPPED) - names)
     unknown_calls = sorted(covered - names)
@@ -255,22 +280,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         build_workspace(root)
         config = load_config()
-        policy = SandboxPolicy(roots=[str(root)], command_policy="open", allow_network=False,
-                               deny_action="raise")
+        policy = SandboxPolicy(
+            roots=[str(root)], command_policy="open", allow_network=False, deny_action="raise"
+        )
         sandbox = Sandbox(policy, workspace=root)
-        context = ToolContext(workspace=root, sandbox=sandbox, config=config,
-                              registry=registry)
+        context = ToolContext(workspace=root, sandbox=sandbox, config=config, registry=registry)
         for index, (name, arguments) in enumerate(smoke_calls(root), start=1):
             result = registry.dispatch(
                 ToolCall(id=f"smoke_{index}", name=name, arguments=arguments), context
             )
-            rows.append({
-                "tool": name,
-                "ok": result.ok,
-                "duration_ms": round(result.duration_ms, 3),
-                "error_code": result.error_code,
-                "error": result.error,
-            })
+            rows.append(
+                {
+                    "tool": name,
+                    "ok": result.ok,
+                    "duration_ms": round(result.duration_ms, 3),
+                    "error_code": result.error_code,
+                    "error": result.error,
+                }
+            )
             if result.ok:
                 passed += 1
                 if args.verbose:
@@ -306,9 +333,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2, default=str))
     else:
         print()
-        print(f"registered tools : {report['tools_registered']} across {len(report['categories'])} categories")
+        print(
+            f"registered tools : {report['tools_registered']} across {len(report['categories'])} categories"
+        )
         print(f"calls dispatched : {report['calls']}  passed {passed}  failed {len(failed)}")
-        print(f"skipped          : {report['skipped']} (network, live Cortex, git repo, memory store)")
+        print(
+            f"skipped          : {report['skipped']} (network, live Cortex, git repo, memory store)"
+        )
         print(f"sandbox denials  : {decisions.get('denials')}")
         print(f"elapsed          : {report['seconds']}s")
         for problem in ("unaccounted_tools", "unknown_skips", "unknown_calls", "load_errors"):

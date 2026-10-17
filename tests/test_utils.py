@@ -7,8 +7,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from magent.utils import (colors, diff, files, hashing, ids, json_utils, mime, numbers, tables,
-                          text, timeutil, urls)
+from magent.utils import (
+    colors,
+    diff,
+    files,
+    hashing,
+    ids,
+    json_utils,
+    mime,
+    numbers,
+    tables,
+    text,
+    timeutil,
+    urls,
+)
 
 
 class TextHelpersTest(unittest.TestCase):
@@ -175,7 +187,9 @@ class TablesAndColorsTest(unittest.TestCase):
 
     def test_colorize_accepts_theme_names_and_codes(self) -> None:
         self.assertEqual(colors.strip_ansi(colors.colorize("x", "error", enabled=True)), "x")
-        self.assertEqual(colors.strip_ansi(colors.colorize("x", colors.ANSI.RED, enabled=True)), "x")
+        self.assertEqual(
+            colors.strip_ansi(colors.colorize("x", colors.ANSI.RED, enabled=True)), "x"
+        )
 
     def test_colorize_drops_unknown_styles(self) -> None:
         self.assertEqual(colors.colorize("x", "not-a-style", enabled=True), "x")
@@ -218,10 +232,10 @@ class DiffAndMiscTest(unittest.TestCase):
         self.assertEqual(urls.strip_query("https://example.com/a?x=1"), "https://example.com/a")
         self.assertTrue(urls.is_local_url("http://127.0.0.1:8624"))
         self.assertFalse(urls.is_local_url("https://example.com"))
-        self.assertEqual(urls.with_port("http://127.0.0.1", 8624),
-                         "http://127.0.0.1:8624")
-        self.assertEqual(urls.join_url("http://127.0.0.1:8624", "/v1/models"),
-                         "http://127.0.0.1:8624/v1/models")
+        self.assertEqual(urls.with_port("http://127.0.0.1", 8624), "http://127.0.0.1:8624")
+        self.assertEqual(
+            urls.join_url("http://127.0.0.1:8624", "/v1/models"), "http://127.0.0.1:8624/v1/models"
+        )
 
 
 if __name__ == "__main__":

@@ -13,8 +13,7 @@ import math
 import random as random_module
 import re
 import statistics
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from ...errors import ToolExecutionError
@@ -33,19 +32,77 @@ from ...utils.timeutil import format_duration, parse_duration
 _ALLOWED_MATH: dict[str, Any] = {
     name: getattr(math, name)
     for name in (
-        "acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "ceil", "comb", "copysign",
-        "cos", "cosh", "degrees", "dist", "erf", "erfc", "exp", "expm1", "fabs", "factorial",
-        "floor", "fmod", "frexp", "fsum", "gamma", "gcd", "hypot", "isclose", "isfinite", "isinf",
-        "isnan", "ldexp", "lgamma", "log", "log10", "log1p", "log2", "modf", "perm", "pow",
-        "radians", "remainder", "sin", "sinh", "sqrt", "tan", "tanh", "trunc", "prod",
+        "acos",
+        "acosh",
+        "asin",
+        "asinh",
+        "atan",
+        "atan2",
+        "atanh",
+        "ceil",
+        "comb",
+        "copysign",
+        "cos",
+        "cosh",
+        "degrees",
+        "dist",
+        "erf",
+        "erfc",
+        "exp",
+        "expm1",
+        "fabs",
+        "factorial",
+        "floor",
+        "fmod",
+        "frexp",
+        "fsum",
+        "gamma",
+        "gcd",
+        "hypot",
+        "isclose",
+        "isfinite",
+        "isinf",
+        "isnan",
+        "ldexp",
+        "lgamma",
+        "log",
+        "log10",
+        "log1p",
+        "log2",
+        "modf",
+        "perm",
+        "pow",
+        "radians",
+        "remainder",
+        "sin",
+        "sinh",
+        "sqrt",
+        "tan",
+        "tanh",
+        "trunc",
+        "prod",
     )
 }
 """Whitelisted math functions available to the calculator."""
 
 _ALLOWED_NAMES: dict[str, Any] = {
-    "pi": math.pi, "e": math.e, "tau": math.tau, "inf": math.inf, "nan": math.nan,
-    "abs": abs, "round": round, "min": min, "max": max, "sum": sum, "pow": pow,
-    "int": int, "float": float, "len": len, "True": True, "False": False, "None": None,
+    "pi": math.pi,
+    "e": math.e,
+    "tau": math.tau,
+    "inf": math.inf,
+    "nan": math.nan,
+    "abs": abs,
+    "round": round,
+    "min": min,
+    "max": max,
+    "sum": sum,
+    "pow": pow,
+    "int": int,
+    "float": float,
+    "len": len,
+    "True": True,
+    "False": False,
+    "None": None,
     **_ALLOWED_MATH,
 }
 """Names the calculator expression may reference."""
@@ -58,67 +115,185 @@ _EXPRESSION_BLOCKERS = re.compile(
 
 UNIT_FACTORS: dict[str, dict[str, float]] = {
     "length": {
-        "m": 1.0, "km": 1000.0, "cm": 0.01, "mm": 0.001, "um": 1e-6, "nm": 1e-9,
-        "in": 0.0254, "inch": 0.0254, "ft": 0.3048, "foot": 0.3048, "yd": 0.9144,
-        "mi": 1609.344, "mile": 1609.344, "nmi": 1852.0, "ly": 9.4607e15,
+        "m": 1.0,
+        "km": 1000.0,
+        "cm": 0.01,
+        "mm": 0.001,
+        "um": 1e-6,
+        "nm": 1e-9,
+        "in": 0.0254,
+        "inch": 0.0254,
+        "ft": 0.3048,
+        "foot": 0.3048,
+        "yd": 0.9144,
+        "mi": 1609.344,
+        "mile": 1609.344,
+        "nmi": 1852.0,
+        "ly": 9.4607e15,
     },
     "mass": {
-        "g": 1.0, "kg": 1000.0, "mg": 0.001, "ug": 1e-6, "t": 1e6, "tonne": 1e6,
-        "lb": 453.59237, "oz": 28.349523125, "st": 6350.29318,
+        "g": 1.0,
+        "kg": 1000.0,
+        "mg": 0.001,
+        "ug": 1e-6,
+        "t": 1e6,
+        "tonne": 1e6,
+        "lb": 453.59237,
+        "oz": 28.349523125,
+        "st": 6350.29318,
     },
     "time": {
-        "s": 1.0, "ms": 0.001, "us": 1e-6, "ns": 1e-9, "min": 60.0, "h": 3600.0,
-        "d": 86400.0, "wk": 604800.0, "yr": 31557600.0,
+        "s": 1.0,
+        "ms": 0.001,
+        "us": 1e-6,
+        "ns": 1e-9,
+        "min": 60.0,
+        "h": 3600.0,
+        "d": 86400.0,
+        "wk": 604800.0,
+        "yr": 31557600.0,
     },
     "data": {
-        "b": 1.0, "kb": 1000.0, "mb": 1000.0**2, "gb": 1000.0**3, "tb": 1000.0**4,
-        "kib": 1024.0, "mib": 1024.0**2, "gib": 1024.0**3, "tib": 1024.0**4,
-        "bit": 0.125, "kbit": 125.0, "mbit": 125000.0, "gbit": 125000000.0,
+        "b": 1.0,
+        "kb": 1000.0,
+        "mb": 1000.0**2,
+        "gb": 1000.0**3,
+        "tb": 1000.0**4,
+        "kib": 1024.0,
+        "mib": 1024.0**2,
+        "gib": 1024.0**3,
+        "tib": 1024.0**4,
+        "bit": 0.125,
+        "kbit": 125.0,
+        "mbit": 125000.0,
+        "gbit": 125000000.0,
     },
     "temperature": {},
     "area": {
-        "m2": 1.0, "km2": 1e6, "cm2": 1e-4, "ha": 10000.0, "acre": 4046.8564224,
-        "ft2": 0.09290304, "in2": 0.00064516, "mi2": 2589988.110336,
+        "m2": 1.0,
+        "km2": 1e6,
+        "cm2": 1e-4,
+        "ha": 10000.0,
+        "acre": 4046.8564224,
+        "ft2": 0.09290304,
+        "in2": 0.00064516,
+        "mi2": 2589988.110336,
     },
     "volume": {
-        "l": 1.0, "ml": 0.001, "m3": 1000.0, "cm3": 0.001, "gal": 3.785411784,
-        "qt": 0.946352946, "pt": 0.473176473, "cup": 0.2365882365, "floz": 0.0295735295625,
+        "l": 1.0,
+        "ml": 0.001,
+        "m3": 1000.0,
+        "cm3": 0.001,
+        "gal": 3.785411784,
+        "qt": 0.946352946,
+        "pt": 0.473176473,
+        "cup": 0.2365882365,
+        "floz": 0.0295735295625,
     },
     "speed": {
-        "mps": 1.0, "kph": 1 / 3.6, "mph": 0.44704, "knot": 0.514444444, "fps": 0.3048,
+        "mps": 1.0,
+        "kph": 1 / 3.6,
+        "mph": 0.44704,
+        "knot": 0.514444444,
+        "fps": 0.3048,
     },
     "pressure": {
-        "pa": 1.0, "kpa": 1000.0, "mpa": 1e6, "bar": 100000.0, "atm": 101325.0,
-        "psi": 6894.757293168, "torr": 133.322368, "mmhg": 133.322387415,
+        "pa": 1.0,
+        "kpa": 1000.0,
+        "mpa": 1e6,
+        "bar": 100000.0,
+        "atm": 101325.0,
+        "psi": 6894.757293168,
+        "torr": 133.322368,
+        "mmhg": 133.322387415,
     },
     "energy": {
-        "j": 1.0, "kj": 1000.0, "cal": 4.184, "kcal": 4184.0, "wh": 3600.0,
-        "kwh": 3.6e6, "ev": 1.602176634e-19, "btu": 1055.05585,
+        "j": 1.0,
+        "kj": 1000.0,
+        "cal": 4.184,
+        "kcal": 4184.0,
+        "wh": 3600.0,
+        "kwh": 3.6e6,
+        "ev": 1.602176634e-19,
+        "btu": 1055.05585,
     },
     "power": {
-        "w": 1.0, "kw": 1000.0, "mw": 1e6, "hp": 745.699872, "btuh": 0.29307107,
+        "w": 1.0,
+        "kw": 1000.0,
+        "mw": 1e6,
+        "hp": 745.699872,
+        "btuh": 0.29307107,
     },
     "frequency": {
-        "hz": 1.0, "khz": 1000.0, "mhz": 1e6, "ghz": 1e9, "rpm": 1 / 60.0,
+        "hz": 1.0,
+        "khz": 1000.0,
+        "mhz": 1e6,
+        "ghz": 1e9,
+        "rpm": 1 / 60.0,
     },
     "angle": {
-        "deg": 1.0, "rad": 180.0 / math.pi, "grad": 0.9, "turn": 360.0, "arcmin": 1 / 60.0,
+        "deg": 1.0,
+        "rad": 180.0 / math.pi,
+        "grad": 0.9,
+        "turn": 360.0,
+        "arcmin": 1 / 60.0,
         "arcsec": 1 / 3600.0,
     },
 }
 """Conversion factors grouped by dimension, each normalized to a base unit."""
 
 UNIT_ALIASES: dict[str, str] = {
-    "meter": "m", "meters": "m", "metre": "m", "kilometer": "km", "kilometers": "km",
-    "centimeter": "cm", "millimeter": "mm", "inch": "in", "inches": "in", "foot": "ft",
-    "feet": "ft", "yard": "yd", "yards": "yd", "mile": "mi", "miles": "mi",
-    "gram": "g", "grams": "g", "kilogram": "kg", "kilograms": "kg", "pound": "lb",
-    "pounds": "lb", "ounce": "oz", "ounces": "oz", "ton": "t", "tonne": "t",
-    "second": "s", "seconds": "s", "minute": "min", "minutes": "min", "hour": "h",
-    "hours": "h", "day": "d", "days": "d", "week": "wk", "weeks": "wk", "year": "yr",
-    "byte": "b", "bytes": "b", "kilobyte": "kb", "megabyte": "mb", "gigabyte": "gb",
-    "terabyte": "tb", "celsius": "c", "centigrade": "c", "fahrenheit": "f", "kelvin": "k",
-    "liter": "l", "litre": "l", "liters": "l", "gallon": "gal", "gallons": "gal",
+    "meter": "m",
+    "meters": "m",
+    "metre": "m",
+    "kilometer": "km",
+    "kilometers": "km",
+    "centimeter": "cm",
+    "millimeter": "mm",
+    "inch": "in",
+    "inches": "in",
+    "foot": "ft",
+    "feet": "ft",
+    "yard": "yd",
+    "yards": "yd",
+    "mile": "mi",
+    "miles": "mi",
+    "gram": "g",
+    "grams": "g",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "pound": "lb",
+    "pounds": "lb",
+    "ounce": "oz",
+    "ounces": "oz",
+    "ton": "t",
+    "tonne": "t",
+    "second": "s",
+    "seconds": "s",
+    "minute": "min",
+    "minutes": "min",
+    "hour": "h",
+    "hours": "h",
+    "day": "d",
+    "days": "d",
+    "week": "wk",
+    "weeks": "wk",
+    "year": "yr",
+    "byte": "b",
+    "bytes": "b",
+    "kilobyte": "kb",
+    "megabyte": "mb",
+    "gigabyte": "gb",
+    "terabyte": "tb",
+    "celsius": "c",
+    "centigrade": "c",
+    "fahrenheit": "f",
+    "kelvin": "k",
+    "liter": "l",
+    "litre": "l",
+    "liters": "l",
+    "gallon": "gal",
+    "gallons": "gal",
 }
 """Long unit names mapped to their short symbols."""
 
@@ -152,13 +327,17 @@ def calculate(expression: str, precision: int = 10) -> dict[str, Any]:
     audit_expression_ast(tree)
     try:
         code = compile(tree, "<expression>", "eval", dont_inherit=True)
-        value = eval(code, {"__builtins__": {}}, dict(_ALLOWED_NAMES))  # noqa: S307 - AST whitelisted
+        value = eval(code, {"__builtins__": {}}, dict(_ALLOWED_NAMES))
     except ZeroDivisionError as exc:
         raise ToolExecutionError("Division by zero") from exc
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ToolExecutionError(f"Could not evaluate expression: {exc}") from exc
     if isinstance(value, complex):
-        return {"expression": text, "result": {"real": value.real, "imag": value.imag}, "type": "complex"}
+        return {
+            "expression": text,
+            "result": {"real": value.real, "imag": value.imag},
+            "type": "complex",
+        }
     if isinstance(value, bool):
         return {"expression": text, "result": value, "type": "boolean"}
     if isinstance(value, float):
@@ -175,14 +354,55 @@ def calculate(expression: str, precision: int = 10) -> dict[str, Any]:
     return {"expression": text, "result": value, "type": type(value).__name__}
 
 
-ALLOWED_AST_NODES: frozenset[type] = frozenset({
-    ast.Expression, ast.Constant, ast.Num, ast.Str, ast.BinOp, ast.UnaryOp, ast.BoolOp,
-    ast.Compare, ast.Call, ast.Name, ast.Load, ast.Tuple, ast.List, ast.Dict, ast.Set,
-    ast.Subscript, ast.Index, ast.Slice, ast.IfExp, ast.Starred, ast.keyword,
-    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow, ast.MatMult,
-    ast.USub, ast.UAdd, ast.Not, ast.Invert, ast.And, ast.Or,
-    ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Is, ast.IsNot, ast.In, ast.NotIn,
-})
+ALLOWED_AST_NODES: frozenset[type] = frozenset(
+    {
+        ast.Expression,
+        ast.Constant,
+        ast.Num,
+        ast.Str,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.BoolOp,
+        ast.Compare,
+        ast.Call,
+        ast.Name,
+        ast.Load,
+        ast.Tuple,
+        ast.List,
+        ast.Dict,
+        ast.Set,
+        ast.Subscript,
+        ast.Index,
+        ast.Slice,
+        ast.IfExp,
+        ast.Starred,
+        ast.keyword,
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.FloorDiv,
+        ast.Mod,
+        ast.Pow,
+        ast.MatMult,
+        ast.USub,
+        ast.UAdd,
+        ast.Not,
+        ast.Invert,
+        ast.And,
+        ast.Or,
+        ast.Eq,
+        ast.NotEq,
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+        ast.Is,
+        ast.IsNot,
+        ast.In,
+        ast.NotIn,
+    }
+)
 """AST node types the calculator is willing to evaluate."""
 
 ALLOWED_CALLEES: frozenset[str] = frozenset(_ALLOWED_NAMES)
@@ -198,9 +418,7 @@ def audit_expression_ast(tree: ast.AST) -> None:
     """
     for node in ast.walk(tree):
         if type(node) not in ALLOWED_AST_NODES:
-            raise ToolExecutionError(
-                f"Expression uses unsupported syntax: {type(node).__name__}"
-            )
+            raise ToolExecutionError(f"Expression uses unsupported syntax: {type(node).__name__}")
         if isinstance(node, ast.Call) and not _callee_allowed(node.func):
             raise ToolExecutionError("Only whitelisted math functions may be called")
         if isinstance(node, ast.Name) and node.id not in ALLOWED_CALLEES:
@@ -303,8 +521,13 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> dict[str, Any]:
     target = UNIT_ALIASES.get(str(to_unit).lower(), str(to_unit).lower())
     if source in {"c", "f", "k"} and target in {"c", "f", "k"}:
         converted = _convert_temperature(float(value), source, target)
-        return {"value": float(value), "from": source, "to": target, "result": round(converted, 10),
-                "dimension": "temperature"}
+        return {
+            "value": float(value),
+            "from": source,
+            "to": target,
+            "result": round(converted, 10),
+            "dimension": "temperature",
+        }
     for dimension, table in UNIT_FACTORS.items():
         if source in table and target in table:
             base = float(value) * table[source]
@@ -392,8 +615,14 @@ def convert_base(number: str, from_base: int = 10, to_base: int = 16) -> dict[st
 
 
 @tool(category="math", risk="safe", tags=["random"])
-def random_number(minimum: float = 0.0, maximum: float = 1.0, count: int = 1,
-                  integer: bool = False, seed: int = 0, distribution: str = "uniform") -> dict[str, Any]:
+def random_number(
+    minimum: float = 0.0,
+    maximum: float = 1.0,
+    count: int = 1,
+    integer: bool = False,
+    seed: int = 0,
+    distribution: str = "uniform",
+) -> dict[str, Any]:
     """Generate random numbers with an optional reproducible seed.
 
     Args:
@@ -442,31 +671,68 @@ def vector_math(left: str, right: str = "", operation: str = "norm") -> dict[str
     second = _parse_numbers(right) if right else []
     if not first:
         raise ToolExecutionError("The left vector has no numbers")
-    if operation in {"dot", "cosine", "euclidean", "manhattan", "add", "subtract"} and len(second) != len(first):
+    if operation in {"dot", "cosine", "euclidean", "manhattan", "add", "subtract"} and len(
+        second
+    ) != len(first):
         raise ToolExecutionError("Both vectors must have the same length for this operation")
     if operation == "norm":
-        return {"operation": operation, "dim": len(first), "result": round(math.sqrt(math.fsum(v * v for v in first)), 10)}
+        return {
+            "operation": operation,
+            "dim": len(first),
+            "result": round(math.sqrt(math.fsum(v * v for v in first)), 10),
+        }
     if operation == "normalize":
         norm = math.sqrt(math.fsum(v * v for v in first)) or 1.0
-        return {"operation": operation, "dim": len(first), "result": [round(v / norm, 10) for v in first]}
+        return {
+            "operation": operation,
+            "dim": len(first),
+            "result": [round(v / norm, 10) for v in first],
+        }
     if operation == "dot":
-        return {"operation": operation, "dim": len(first),
-                "result": round(math.fsum(a * b for a, b in zip(first, second, strict=True)), 10)}
+        return {
+            "operation": operation,
+            "dim": len(first),
+            "result": round(math.fsum(a * b for a, b in zip(first, second, strict=True)), 10),
+        }
     if operation == "cosine":
-        return {"operation": operation, "dim": len(first), "result": cosine_similarity(first, second)}
+        return {
+            "operation": operation,
+            "dim": len(first),
+            "result": cosine_similarity(first, second),
+        }
     if operation == "euclidean":
-        return {"operation": operation, "dim": len(first),
-                "result": round(math.sqrt(math.fsum((a - b) ** 2 for a, b in zip(first, second, strict=True))), 10)}
+        return {
+            "operation": operation,
+            "dim": len(first),
+            "result": round(
+                math.sqrt(math.fsum((a - b) ** 2 for a, b in zip(first, second, strict=True))), 10
+            ),
+        }
     if operation == "manhattan":
-        return {"operation": operation, "dim": len(first),
-                "result": round(math.fsum(abs(a - b) for a, b in zip(first, second, strict=True)), 10)}
+        return {
+            "operation": operation,
+            "dim": len(first),
+            "result": round(math.fsum(abs(a - b) for a, b in zip(first, second, strict=True)), 10),
+        }
     if operation == "add":
-        return {"operation": operation, "dim": len(first), "result": [a + b for a, b in zip(first, second, strict=True)]}
+        return {
+            "operation": operation,
+            "dim": len(first),
+            "result": [a + b for a, b in zip(first, second, strict=True)],
+        }
     if operation == "subtract":
-        return {"operation": operation, "dim": len(first), "result": [a - b for a, b in zip(first, second, strict=True)]}
+        return {
+            "operation": operation,
+            "dim": len(first),
+            "result": [a - b for a, b in zip(first, second, strict=True)],
+        }
     if operation == "scale":
         factor = second[0] if second else 1.0
-        return {"operation": operation, "dim": len(first), "result": [round(v * factor, 10) for v in first]}
+        return {
+            "operation": operation,
+            "dim": len(first),
+            "result": [round(v * factor, 10) for v in first],
+        }
     raise ToolExecutionError(f"Unknown operation {operation!r}")
 
 
@@ -482,7 +748,7 @@ def current_time(timezone_name: str = "UTC", format: str = "") -> dict[str, Any]
     moment = datetime.now(tz)
     payload: dict[str, Any] = {
         "iso": moment.isoformat(),
-        "utc": moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "utc": moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "unix": int(moment.timestamp()),
         "unix_ms": int(moment.timestamp() * 1000),
         "date": moment.strftime("%Y-%m-%d"),
@@ -512,9 +778,9 @@ def _resolve_timezone(name: str) -> timezone:
     text = str(name or "UTC").strip()
     lowered = text.lower()
     if lowered in {"utc", "gmt", "z", "zulu"}:
-        return timezone.utc
+        return UTC
     if lowered in {"local", "system", ""}:
-        return datetime.now().astimezone().tzinfo or timezone.utc
+        return datetime.now().astimezone().tzinfo or UTC
     match = re.fullmatch(r"([+-])(\d{1,2})(?::?(\d{2}))?", text)
     if match:
         sign = -1 if match.group(1) == "-" else 1
@@ -524,14 +790,13 @@ def _resolve_timezone(name: str) -> timezone:
         if abs(offset) > timedelta(hours=14):
             raise ToolExecutionError("UTC offset must be within +/-14 hours")
         return timezone(offset, text)
-    raise ToolExecutionError(
-        f"Unknown timezone {name!r}; use UTC, local, or an offset like +05:30"
-    )
+    raise ToolExecutionError(f"Unknown timezone {name!r}; use UTC, local, or an offset like +05:30")
 
 
 @tool(category="datetime", risk="safe", tags=["parse", "format"])
-def format_datetime(value: str, output_format: str = "%Y-%m-%d %H:%M:%S",
-                    timezone_name: str = "UTC") -> dict[str, Any]:
+def format_datetime(
+    value: str, output_format: str = "%Y-%m-%d %H:%M:%S", timezone_name: str = "UTC"
+) -> dict[str, Any]:
     """Parse a date/time string and re-render it in another format.
 
     Args:
@@ -557,17 +822,27 @@ def _parse_datetime(value: str) -> datetime:
     if not text:
         raise ToolExecutionError("Empty date/time value")
     if re.fullmatch(r"-?\d{10}", text):
-        return datetime.fromtimestamp(int(text), tz=timezone.utc)
+        return datetime.fromtimestamp(int(text), tz=UTC)
     if re.fullmatch(r"-?\d{13}", text):
-        return datetime.fromtimestamp(int(text) / 1000.0, tz=timezone.utc)
+        return datetime.fromtimestamp(int(text) / 1000.0, tz=UTC)
     candidate = text.replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(candidate)
     except ValueError:
         parsed = None
     if parsed is None:
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d",
-                    "%d-%m-%Y", "%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%H:%M:%S"):
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+            "%d/%m/%Y",
+            "%m/%d/%Y",
+            "%Y/%m/%d",
+            "%d-%m-%Y",
+            "%b %d, %Y",
+            "%B %d, %Y",
+            "%d %b %Y",
+            "%H:%M:%S",
+        ):
             try:
                 parsed = datetime.strptime(text, fmt)
                 break
@@ -576,7 +851,7 @@ def _parse_datetime(value: str) -> datetime:
     if parsed is None:
         raise ToolExecutionError(f"Could not parse date/time value {value!r}")
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -641,7 +916,7 @@ def datetime_add(value: str, offset: str, timezone_name: str = "UTC") -> dict[st
         "offset": offset,
         "offset_seconds": seconds,
         "result_iso": localized.isoformat(),
-        "result_utc": localized.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "result_utc": localized.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "result_date": localized.strftime("%Y-%m-%d"),
         "weekday": localized.strftime("%A"),
         "unix": int(localized.timestamp()),
@@ -670,7 +945,7 @@ def calendar_month(year: int, month: int) -> dict[str, Any]:
         raise ToolExecutionError("year must be between 1 and 9999")
     text = calendar.month(year, month)
     days = calendar.monthrange(year, month)[1]
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     return {
         "year": year,
         "month": month,
@@ -705,9 +980,18 @@ def parse_duration_tool(duration: str) -> dict[str, Any]:
 
 
 TOOLS: list[Any] = [
-    calculate, compute_statistics, convert_units, convert_base, random_number,
-    vector_math, current_time, format_datetime, datetime_diff, datetime_add,
-    calendar_month, parse_duration_tool,
+    calculate,
+    compute_statistics,
+    convert_units,
+    convert_base,
+    random_number,
+    vector_math,
+    current_time,
+    format_datetime,
+    datetime_diff,
+    datetime_add,
+    calendar_month,
+    parse_duration_tool,
 ]
 """Every tool defined in this module."""
 
@@ -722,9 +1006,9 @@ __all__ = [
     "ALLOWED_AST_NODES",
     "ALLOWED_CALLEES",
     "TOOLS",
-    "audit_expression_ast",
     "UNIT_ALIASES",
     "UNIT_FACTORS",
+    "audit_expression_ast",
     "calculate",
     "calendar_month",
     "compute_statistics",

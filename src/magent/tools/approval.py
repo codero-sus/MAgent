@@ -226,16 +226,30 @@ class ApprovalManager:
         with self._lock:
             if signature in self._denied:
                 self.denied_count += 1
-                return self._record(request, ApprovalDecision.DENY, by="memory",
-                                    reason="previously denied in this session")
+                return self._record(
+                    request,
+                    ApprovalDecision.DENY,
+                    by="memory",
+                    reason="previously denied in this session",
+                )
             if self.policy.remember_exact and signature in self._exact_approved:
                 self.auto_approved += 1
-                return self._record(request, ApprovalDecision.APPROVE, by="memory",
-                                    reason="identical call approved earlier", remembered=True)
+                return self._record(
+                    request,
+                    ApprovalDecision.APPROVE,
+                    by="memory",
+                    reason="identical call approved earlier",
+                    remembered=True,
+                )
             if self.policy.remember_session and request.tool in self._session_approved:
                 self.auto_approved += 1
-                return self._record(request, ApprovalDecision.APPROVE, by="memory",
-                                    reason="tool approved for this session", remembered=True)
+                return self._record(
+                    request,
+                    ApprovalDecision.APPROVE,
+                    by="memory",
+                    reason="tool approved for this session",
+                    remembered=True,
+                )
 
         needed, reason = self.needs_approval(request)
         if not needed:
@@ -276,7 +290,7 @@ class ApprovalManager:
             return ApprovalDecision.APPROVE, "policy", "no approver configured; auto-approving"
         try:
             raw = self.prompt(request)
-        except Exception as exc:  # noqa: BLE001 - a broken prompter must not run tools
+        except Exception as exc:
             LOGGER.warning("approval prompt raised: %s", exc)
             return ApprovalDecision.DENY, "error", f"prompt failed: {exc}"
         if isinstance(raw, ApprovalDecision):
@@ -298,11 +312,19 @@ class ApprovalManager:
         }
         return mapping.get(text, ApprovalDecision.DENY), "operator", text
 
-    def _record(self, request: ApprovalRequest, decision: ApprovalDecision, *, by: str,
-                reason: str, remembered: bool = False) -> ApprovalRecord:
+    def _record(
+        self,
+        request: ApprovalRequest,
+        decision: ApprovalDecision,
+        *,
+        by: str,
+        reason: str,
+        remembered: bool = False,
+    ) -> ApprovalRecord:
         """Store a decision and write it to the audit log."""
-        record = ApprovalRecord(request=request, decision=decision, by=by, reason=reason,
-                                remembered=remembered)
+        record = ApprovalRecord(
+            request=request, decision=decision, by=by, reason=reason, remembered=remembered
+        )
         with self._lock:
             self.records.append(record)
             if len(self.records) > 1000:
@@ -310,7 +332,7 @@ class ApprovalManager:
         if self.audit is not None:
             try:
                 self.audit.record("approval", record.to_dict())
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
         return record
 
@@ -327,7 +349,7 @@ class ApprovalManager:
             return
         try:
             self.events.emit(kind, **data)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     # -- management ----------------------------------------------------------
@@ -418,8 +440,13 @@ def approve_reads(request: ApprovalRequest) -> ApprovalDecision:
 class ConsoleApprover:
     """Interactive terminal approver used by the CLI and REPL."""
 
-    def __init__(self, *, input_fn: Callable[[str], str] = input, output_fn: Callable[[str], Any] = print,
-                 default: ApprovalDecision = ApprovalDecision.DENY) -> None:
+    def __init__(
+        self,
+        *,
+        input_fn: Callable[[str], str] = input,
+        output_fn: Callable[[str], Any] = print,
+        default: ApprovalDecision = ApprovalDecision.DENY,
+    ) -> None:
         self.input_fn = input_fn
         self.output_fn = output_fn
         self.default = default
@@ -469,14 +496,14 @@ def prompter_for_mode(mode: str, *, interactive: bool = True) -> PromptFn:
 
 
 __all__ = [
+    "MODES",
+    "RISK_REQUIRING_APPROVAL",
     "ApprovalManager",
     "ApprovalPolicy",
     "ApprovalRecord",
     "ApprovalRequest",
     "ConsoleApprover",
-    "MODES",
     "PromptFn",
-    "RISK_REQUIRING_APPROVAL",
     "approve_reads",
     "auto_approve",
     "build_request",

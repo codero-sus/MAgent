@@ -441,7 +441,9 @@ class Message:
         return cls(role=Role.USER, content=text, metadata=dict(meta))
 
     @classmethod
-    def assistant(cls, text: str = "", tool_calls: list[ToolCall] | None = None, **meta: Any) -> Message:
+    def assistant(
+        cls, text: str = "", tool_calls: list[ToolCall] | None = None, **meta: Any
+    ) -> Message:
         """Build an assistant message, optionally carrying tool calls."""
         return cls(
             role=Role.ASSISTANT,
@@ -596,7 +598,9 @@ class Usage:
             prompt_tokens=prompt,
             completion_tokens=completion,
             total_tokens=total,
-            cached_tokens=int(details.get("cached_tokens") or 0) if isinstance(details, dict) else 0,
+            cached_tokens=int(details.get("cached_tokens") or 0)
+            if isinstance(details, dict)
+            else 0,
             reasoning_tokens=(
                 int(completion_details.get("reasoning_tokens") or 0)
                 if isinstance(completion_details, dict)
@@ -871,12 +875,7 @@ class RunResult:
     @property
     def tool_error_count(self) -> int:
         """Return how many tool invocations failed."""
-        return sum(
-            1
-            for step in self.steps
-            for result in step.tool_results
-            if not result.ok
-        )
+        return sum(1 for step in self.steps for result in step.tool_results if not result.ok)
 
     @property
     def succeeded(self) -> bool:
@@ -939,11 +938,13 @@ class RunResult:
                 if isinstance(step, dict)
             ],
             usage=Usage.from_dict(raw.get("usage")),
-            cost=CostEstimate(**{
-                k: v
-                for k, v in (raw.get("cost") or {}).items()
-                if k in {"prompt_cost", "completion_cost", "currency", "source"}
-            }),
+            cost=CostEstimate(
+                **{
+                    k: v
+                    for k, v in (raw.get("cost") or {}).items()
+                    if k in {"prompt_cost", "completion_cost", "currency", "source"}
+                }
+            ),
             started_at=float(raw.get("started_at") or now_ts()),
             finished_at=float(raw.get("finished_at") or now_ts()),
             model=str(raw.get("model") or ""),

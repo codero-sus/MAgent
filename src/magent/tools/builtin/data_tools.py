@@ -8,7 +8,6 @@ import json
 import re
 import sqlite3
 from collections import Counter, defaultdict
-from pathlib import Path
 from typing import Any
 
 from ...errors import ToolExecutionError
@@ -27,9 +26,17 @@ FORBIDDEN_SQL = re.compile(
 
 
 @tool(category="data", risk="read", filesystem=True, tags=["csv", "core"])
-def csv_read(path: str, delimiter: str = ",", has_header: bool = True, limit: int = 100,
-             columns: str = "", where: str = "", sort_by: str = "", descending: bool = False,
-             context: ToolContext | None = None) -> dict[str, Any]:
+def csv_read(
+    path: str,
+    delimiter: str = ",",
+    has_header: bool = True,
+    limit: int = 100,
+    columns: str = "",
+    where: str = "",
+    sort_by: str = "",
+    descending: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Read and filter a CSV or TSV file.
 
     Args:
@@ -61,7 +68,9 @@ def csv_read(path: str, delimiter: str = ",", has_header: bool = True, limit: in
         width = max(len(row) for row in rows)
         header = [f"col_{index}" for index in range(width)]
         body = rows
-    records = [dict(zip(header, row + [""] * (len(header) - len(row)), strict=False)) for row in body]
+    records = [
+        dict(zip(header, row + [""] * (len(header) - len(row)), strict=False)) for row in body
+    ]
     if where:
         records = _apply_where(records, where)
     if sort_by and records and sort_by in header:
@@ -87,7 +96,11 @@ def _apply_where(records: list[dict[str, Any]], clause: str) -> list[dict[str, A
     """Apply a ``column=value`` or ``column~substring`` filter."""
     if "~" in clause:
         key, _, needle = clause.partition("~")
-        return [record for record in records if needle.lower() in str(record.get(key.strip(), "")).lower()]
+        return [
+            record
+            for record in records
+            if needle.lower() in str(record.get(key.strip(), "")).lower()
+        ]
     if "=" in clause:
         key, _, value = clause.partition("=")
         return [record for record in records if str(record.get(key.strip(), "")) == value.strip()]
@@ -107,8 +120,9 @@ def _sort_key(value: Any) -> tuple[int, float, str]:
 
 
 @tool(category="data", risk="read", tags=["csv", "stats"])
-def csv_stats(path: str, delimiter: str = ",", columns: str = "",
-              context: ToolContext | None = None) -> dict[str, Any]:
+def csv_stats(
+    path: str, delimiter: str = ",", columns: str = "", context: ToolContext | None = None
+) -> dict[str, Any]:
     """Summarize a CSV file: row count, column types, and numeric ranges.
 
     Args:
@@ -138,18 +152,22 @@ def csv_stats(path: str, delimiter: str = ",", columns: str = "",
             except ValueError:
                 continue
         entry: dict[str, Any] = {
-            "type": "number" if numeric and len(numeric) == len([v for v in values if v]) else "text",
+            "type": "number"
+            if numeric and len(numeric) == len([v for v in values if v])
+            else "text",
             "non_empty": sum(1 for value in values if value.strip()),
             "empty": sum(1 for value in values if not value.strip()),
             "unique": len(set(values)),
         }
         if numeric:
-            entry.update({
-                "min": min(numeric),
-                "max": max(numeric),
-                "mean": round(sum(numeric) / len(numeric), 6),
-                "sum": round(sum(numeric), 6),
-            })
+            entry.update(
+                {
+                    "min": min(numeric),
+                    "max": max(numeric),
+                    "mean": round(sum(numeric) / len(numeric), 6),
+                    "sum": round(sum(numeric), 6),
+                }
+            )
         else:
             top = Counter(value for value in values if value.strip()).most_common(3)
             entry["top_values"] = [{"value": value, "count": count} for value, count in top]
@@ -222,8 +240,14 @@ def json_flatten(data: str, separator: str = ".", max_keys: int = 500) -> dict[s
 
 
 @tool(category="data", risk="read", filesystem=True, tags=["sqlite", "sql", "core"])
-def sqlite_query(path: str, sql: str, params: str = "", limit: int = 200,
-                 allow_write: bool = False, context: ToolContext | None = None) -> dict[str, Any]:
+def sqlite_query(
+    path: str,
+    sql: str,
+    params: str = "",
+    limit: int = 200,
+    allow_write: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Run a read-only SQL query against a SQLite database.
 
     Args:
@@ -238,9 +262,13 @@ def sqlite_query(path: str, sql: str, params: str = "", limit: int = 200,
     if not statement:
         raise ToolExecutionError("Empty SQL statement")
     if not allow_write and not SAFE_SQL_PATTERN.match(statement):
-        raise ToolExecutionError("Only SELECT/WITH statements are allowed unless allow_write is set")
+        raise ToolExecutionError(
+            "Only SELECT/WITH statements are allowed unless allow_write is set"
+        )
     if not allow_write and FORBIDDEN_SQL.search(statement):
-        raise ToolExecutionError("Statement contains a write keyword; pass allow_write=true to permit it")
+        raise ToolExecutionError(
+            "Statement contains a write keyword; pass allow_write=true to permit it"
+        )
     if ";" in statement:
         raise ToolExecutionError("Multiple statements are not allowed")
     if path != ":memory:":
@@ -262,7 +290,9 @@ def sqlite_query(path: str, sql: str, params: str = "", limit: int = 200,
     try:
         connection.row_factory = sqlite3.Row
         cursor = connection.execute(statement, arguments)
-        columns = [description[0] for description in cursor.description] if cursor.description else []
+        columns = (
+            [description[0] for description in cursor.description] if cursor.description else []
+        )
         rows = [dict(row) for row in cursor.fetchmany(max(1, limit))]
         total = cursor.rowcount
         if allow_write:
@@ -280,8 +310,11 @@ def sqlite_query(path: str, sql: str, params: str = "", limit: int = 200,
         "truncated": len(rows) >= limit,
         "records": rows,
         "preview_markdown": render_markdown_table(
-            [[_render_cell(record.get(column)) for column in columns] for record in rows[:10]], columns
-        ) if columns else "",
+            [[_render_cell(record.get(column)) for column in columns] for record in rows[:10]],
+            columns,
+        )
+        if columns
+        else "",
     }
 
 
@@ -318,8 +351,14 @@ def sqlite_schema(path: str, context: ToolContext | None = None) -> dict[str, An
             if kind in {"table", "view"}:
                 info = connection.execute(f'PRAGMA table_info("{name}")').fetchall()
                 entry["columns"] = [
-                    {"cid": row[0], "name": row[1], "type": row[2], "notnull": bool(row[3]),
-                     "default": row[4], "pk": bool(row[5])}
+                    {
+                        "cid": row[0],
+                        "name": row[1],
+                        "type": row[2],
+                        "notnull": bool(row[3]),
+                        "default": row[4],
+                        "pk": bool(row[5]),
+                    }
                     for row in info
                 ]
                 count = connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()
@@ -372,8 +411,9 @@ def json_to_csv(data: str, columns: str = "", flatten: bool = True) -> dict[str,
 
 
 @tool(category="data", risk="safe", tags=["group", "aggregate"])
-def group_aggregate(records: str, group_by: str, aggregate: str = "count",
-                    value_field: str = "", top: int = 20) -> dict[str, Any]:
+def group_aggregate(
+    records: str, group_by: str, aggregate: str = "count", value_field: str = "", top: int = 20
+) -> dict[str, Any]:
     """Group JSON records by a field and aggregate them.
 
     Args:
@@ -416,8 +456,16 @@ def group_aggregate(records: str, group_by: str, aggregate: str = "count",
             raise ToolExecutionError(f"Unknown aggregate {aggregate!r}")
         groups.append(entry)
     reverse = aggregate != "min"
-    groups.sort(key=lambda item: (item["value"] is None, -(item["value"] or 0) if isinstance(item.get("value"), (int, float)) else 0)
-                if reverse else (item["value"] is None, item.get("value") or 0))
+    groups.sort(
+        key=lambda item: (
+            (
+                item["value"] is None,
+                -(item["value"] or 0) if isinstance(item.get("value"), (int, float)) else 0,
+            )
+            if reverse
+            else (item["value"] is None, item.get("value") or 0)
+        )
+    )
     return {
         "group_by": group_by,
         "aggregate": aggregate,
@@ -441,8 +489,14 @@ def _to_number(value: Any) -> float | None:
 
 
 TOOLS: list[Any] = [
-    csv_read, csv_stats, json_query, json_flatten, sqlite_query, sqlite_schema,
-    json_to_csv, group_aggregate,
+    csv_read,
+    csv_stats,
+    json_query,
+    json_flatten,
+    sqlite_query,
+    sqlite_schema,
+    json_to_csv,
+    group_aggregate,
 ]
 """Every tool defined in this module."""
 

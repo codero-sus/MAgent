@@ -15,8 +15,8 @@ from typing import Any
 from ...errors import ToolExecutionError
 from ...tools.base import RISK_LEVELS, ToolContext, tool
 from ...types import ToolCall
-from ...utils.json_utils import loads_lenient
 from ...utils.hashing import short_hash
+from ...utils.json_utils import loads_lenient
 from ...utils.text import chunk_text, ellipsize
 
 
@@ -28,8 +28,13 @@ def new_call_id() -> str:
 
 
 @tool(category="meta", risk="safe", tags=["tools", "discovery", "core"])
-def list_tools(category: str = "", tag: str = "", name_filter: str = "",
-               include_schemas: bool = False, context: ToolContext | None = None) -> dict[str, Any]:
+def list_tools(
+    category: str = "",
+    tag: str = "",
+    name_filter: str = "",
+    include_schemas: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """List the tools available in this run.
 
     Args:
@@ -64,7 +69,9 @@ def list_tools(category: str = "", tag: str = "", name_filter: str = "",
         "total": registry.count(),
         "categories": by_category,
         "tools": entries,
-        "text": "\n".join(f"- {entry['name']} ({entry['risk']}): {entry['description']}" for entry in entries),
+        "text": "\n".join(
+            f"- {entry['name']} ({entry['risk']}): {entry['description']}" for entry in entries
+        ),
     }
 
 
@@ -83,7 +90,8 @@ def describe_tool(name: str, context: ToolContext | None = None) -> dict[str, An
     if instance is None:
         suggestions = registry.suggest(name, limit=5)
         raise ToolExecutionError(
-            f"No tool named {name!r}" + (f"; did you mean {', '.join(suggestions)}?" if suggestions else "?")
+            f"No tool named {name!r}"
+            + (f"; did you mean {', '.join(suggestions)}?" if suggestions else "?")
         )
     spec = instance.spec
     properties = spec.parameters.get("properties", {})
@@ -138,8 +146,9 @@ def _example_value(schema: dict[str, Any]) -> Any:
 
 
 @tool(category="meta", risk="execute", tags=["tools", "compose"])
-def use_tool(name: str, arguments: str = "{}", dry_run: bool = False,
-             context: ToolContext | None = None) -> dict[str, Any]:
+def use_tool(
+    name: str, arguments: str = "{}", dry_run: bool = False, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Dispatch another tool by name, enabling composition inside one call.
 
     Args:
@@ -157,16 +166,15 @@ def use_tool(name: str, arguments: str = "{}", dry_run: bool = False,
     if instance is None:
         suggestions = registry.suggest(name, limit=5)
         raise ToolExecutionError(
-            f"No tool named {name!r}" + (f"; did you mean {', '.join(suggestions)}?" if suggestions else "?")
+            f"No tool named {name!r}"
+            + (f"; did you mean {', '.join(suggestions)}?" if suggestions else "?")
         )
     parsed = loads_lenient(arguments) if arguments else {}
     if not isinstance(parsed, dict):
         raise ToolExecutionError("arguments must be a JSON object")
     nested = ctx.sub(dry_run=dry_run or ctx.dry_run)
     nested.extras["parent_tool"] = "use_tool"
-    result = registry.dispatch(
-        ToolCall(id=new_call_id(), name=name, arguments=parsed), nested
-    )
+    result = registry.dispatch(ToolCall(id=new_call_id(), name=name, arguments=parsed), nested)
     return {
         "tool": name,
         "ok": result.ok,
@@ -180,9 +188,15 @@ def use_tool(name: str, arguments: str = "{}", dry_run: bool = False,
 
 
 @tool(category="meta", risk="safe", tags=["llm", "consult"])
-def ask_llm(prompt: str, system: str = "", model: str = "", temperature: float = 0.2,
-            max_tokens: int = 1024, json_output: bool = False,
-            context: ToolContext | None = None) -> dict[str, Any]:
+def ask_llm(
+    prompt: str,
+    system: str = "",
+    model: str = "",
+    temperature: float = 0.2,
+    max_tokens: int = 1024,
+    json_output: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Ask the configured LLM a question in the middle of a tool run.
 
     Useful for classification, extraction, or a judgment call that is cheaper
@@ -250,15 +264,19 @@ def make_plan(goal: str, steps: str = "", max_steps: int = 12) -> dict[str, Any]
     entries: list[dict[str, Any]] = []
     for index, item in enumerate(parsed[:max_steps], start=1):
         if isinstance(item, dict):
-            entries.append({
-                "id": index,
-                "title": str(item.get("title") or item.get("step") or f"step {index}"),
-                "detail": str(item.get("detail", "")),
-                "tool": str(item.get("tool", "")),
-                "status": str(item.get("status", "pending")),
-            })
+            entries.append(
+                {
+                    "id": index,
+                    "title": str(item.get("title") or item.get("step") or f"step {index}"),
+                    "detail": str(item.get("detail", "")),
+                    "tool": str(item.get("tool", "")),
+                    "status": str(item.get("status", "pending")),
+                }
+            )
         else:
-            entries.append({"id": index, "title": str(item), "detail": "", "tool": "", "status": "pending"})
+            entries.append(
+                {"id": index, "title": str(item), "detail": "", "tool": "", "status": "pending"}
+            )
     text = "\n".join(
         f"{entry['id']}. {entry['title']}" + (f" - {entry['detail']}" if entry["detail"] else "")
         for entry in entries
@@ -274,7 +292,9 @@ def make_plan(goal: str, steps: str = "", max_steps: int = 12) -> dict[str, Any]
 
 
 @tool(category="meta", risk="safe", tags=["context", "summarize"])
-def summarize_for_context(text: str, max_chars: int = 4000, strategy: str = "head_tail") -> dict[str, Any]:
+def summarize_for_context(
+    text: str, max_chars: int = 4000, strategy: str = "head_tail"
+) -> dict[str, Any]:
     """Compress long text so it fits in a prompt without losing the ends.
 
     Args:
@@ -286,24 +306,42 @@ def summarize_for_context(text: str, max_chars: int = 4000, strategy: str = "hea
         raise ToolExecutionError("strategy must be head, tail, head_tail, or chunk")
     original = len(text)
     if original <= max_chars:
-        return {"text": text, "chars": original, "original_chars": original,
-                "compressed": False, "strategy": strategy, "chunks": 1}
+        return {
+            "text": text,
+            "chars": original,
+            "original_chars": original,
+            "compressed": False,
+            "strategy": strategy,
+            "chunks": 1,
+        }
     if strategy == "head":
         result = ellipsize(text, max_chars)
     elif strategy == "tail":
-        result = "..." + text[-(max_chars - 3):]
+        result = "..." + text[-(max_chars - 3) :]
     elif strategy == "head_tail":
         budget = max(200, (max_chars - 40) // 2)
         result = text[:budget] + "\n\n[... middle omitted ...]\n\n" + text[-budget:]
     else:
         pieces = chunk_text(text, max_chars=max_chars, overlap=0)
         result = pieces[0]
-        return {"text": result, "chars": len(result), "original_chars": original,
-                "compressed": True, "strategy": strategy, "chunks": len(pieces),
-                "chunk_sizes": [len(piece) for piece in pieces]}
-    return {"text": result, "chars": len(result), "original_chars": original,
-            "compressed": True, "strategy": strategy, "chunks": 1,
-            "reduction_percent": round(100 * (1 - len(result) / original), 1)}
+        return {
+            "text": result,
+            "chars": len(result),
+            "original_chars": original,
+            "compressed": True,
+            "strategy": strategy,
+            "chunks": len(pieces),
+            "chunk_sizes": [len(piece) for piece in pieces],
+        }
+    return {
+        "text": result,
+        "chars": len(result),
+        "original_chars": original,
+        "compressed": True,
+        "strategy": strategy,
+        "chunks": 1,
+        "reduction_percent": round(100 * (1 - len(result) / original), 1),
+    }
 
 
 TOOLS: list[Any] = [list_tools, describe_tool, use_tool, ask_llm, make_plan, summarize_for_context]

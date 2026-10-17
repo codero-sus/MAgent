@@ -22,13 +22,39 @@ True
 from __future__ import annotations
 
 from .manager import HANDOFF_MAX_CHARS, SessionManager, SessionStats, build_session_manager
-from .record import RECORD_VERSION, TITLE_MAX_WORDS, SessionRecord, Turn, derive_title, merge_records
-from .store import (DEFAULT_DIRNAME, MAX_TITLE_CHARS, SessionInfo, SessionStore, redact_record,
-                    session_dir, sorted_by_recency, touched_within)
-from .transcript import (MAX_ANSWER_CHARS, SPEAKER_RE, TOOL_LINE_RE, TRANSCRIPT_FORMATS,
-                         diff_transcripts, export_transcript, messages_to_transcript,
-                         parse_transcript, render_transcript, transcript_html, transcript_markdown,
-                         transcript_stats, transcript_text)
+from .record import (
+    RECORD_VERSION,
+    TITLE_MAX_WORDS,
+    SessionRecord,
+    Turn,
+    derive_title,
+    merge_records,
+)
+from .store import (
+    DEFAULT_DIRNAME,
+    MAX_TITLE_CHARS,
+    SessionInfo,
+    SessionStore,
+    redact_record,
+    session_dir,
+    sorted_by_recency,
+    touched_within,
+)
+from .transcript import (
+    MAX_ANSWER_CHARS,
+    SPEAKER_RE,
+    TOOL_LINE_RE,
+    TRANSCRIPT_FORMATS,
+    diff_transcripts,
+    export_transcript,
+    messages_to_transcript,
+    parse_transcript,
+    render_transcript,
+    transcript_html,
+    transcript_markdown,
+    transcript_stats,
+    transcript_text,
+)
 
 __all__ = [
     "DEFAULT_DIRNAME",

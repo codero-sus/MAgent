@@ -6,12 +6,10 @@ import json
 import unittest
 import urllib.error
 import urllib.request
-from pathlib import Path
 
-from magent.server import MagentServer, Router, Route, free_port, wait_for_health
-from magent.testing import EchoBackend, ToolScriptBackend
-
-from tests.support import MagentTestCase
+from magent.server import MAgentServer, Router, free_port, wait_for_health
+from magent.testing import EchoBackend
+from tests.support import MAgentTestCase
 
 
 class RouterTest(unittest.TestCase):
@@ -53,7 +51,7 @@ class RouterTest(unittest.TestCase):
         self.assertIn("path", described[0])
 
 
-class ServerTest(MagentTestCase):
+class ServerTest(MAgentTestCase):
     """End-to-end requests against a live server on a loopback port."""
 
     @classmethod
@@ -67,7 +65,7 @@ class ServerTest(MagentTestCase):
         config.tools.workspace = str(self.workspace)
         config.session.directory = str(self.home.path / "sessions")
         config.http.api_key = ""
-        self.server = MagentServer(config, backend=EchoBackend())
+        self.server = MAgentServer(config, backend=EchoBackend())
         self.port = free_port()
         self.url = self.server.start_background(host="127.0.0.1", port=self.port)
         self.assertTrue(wait_for_health(self.url, timeout=5.0))
@@ -76,18 +74,28 @@ class ServerTest(MagentTestCase):
         self.server.stop()
         super().tearDown()
 
-    def _request(self, path: str, *, method: str = "GET", body: dict | None = None,
-                 headers: dict[str, str] | None = None) -> tuple[int, dict]:
+    def _request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        body: dict | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, dict]:
         """Send one request and decode the JSON reply."""
         data = json.dumps(body).encode("utf-8") if body is not None else None
-        request = urllib.request.Request(self.url + path, data=data, method=method,
-                                         headers={"Content-Type": "application/json",
-                                                  **(headers or {})})
+        request = urllib.request.Request(
+            self.url + path,
+            data=data,
+            method=method,
+            headers={"Content-Type": "application/json", **(headers or {})},
+        )
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 raw = response.read()
-                return response.status, (json.loads(raw) if raw[:1] in (b"{", b"[") else
-                                         {"raw": raw.decode()})
+                return response.status, (
+                    json.loads(raw) if raw[:1] in (b"{", b"[") else {"raw": raw.decode()}
+                )
         except urllib.error.HTTPError as exc:
             raw = exc.read()
             return exc.code, json.loads(raw or b"{}")
@@ -111,8 +119,9 @@ class ServerTest(MagentTestCase):
         status, payload = self._request("/api/tools")
         self.assertEqual(status, 200)
         self.assertGreater(payload["count"], 100)
-        status, result = self._request("/api/tools/calculate", method="POST",
-                                       body={"expression": "6*7"})
+        status, result = self._request(
+            "/api/tools/calculate", method="POST", body={"expression": "6*7"}
+        )
         self.assertEqual(status, 200)
         self.assertEqual(result["content"]["result"], 42)
 
@@ -185,14 +194,14 @@ class ServerTest(MagentTestCase):
         self.assertIn("url", self.server.describe())
 
 
-class AuthTest(MagentTestCase):
+class AuthTest(MAgentTestCase):
     """A configured API key guards the non-public routes."""
 
     def setUp(self) -> None:
         super().setUp()
         config = self.config()
         config.http.api_key = "test-token"
-        self.server = MagentServer(config, backend=EchoBackend())
+        self.server = MAgentServer(config, backend=EchoBackend())
         self.url = self.server.start_background(host="127.0.0.1", port=free_port())
 
     def tearDown(self) -> None:

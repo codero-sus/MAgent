@@ -31,39 +31,156 @@ from typing import Any
 from ...errors import ToolExecutionError
 from ...tools.base import ToolContext, tool
 
-BLOCKED_MODULES: frozenset[str] = frozenset({
-    "subprocess", "socket", "ctypes", "multiprocessing", "signal", "shutil",
-    "importlib", "pkgutil", "sys", "os", "pathlib", "tempfile", "pty", "resource",
-    "http", "urllib", "ftplib", "smtplib", "telnetlib", "webbrowser", "asyncio",
-    "threading", "concurrent", "queue", "pickle", "shelve", "marshal",
-})
+BLOCKED_MODULES: frozenset[str] = frozenset(
+    {
+        "subprocess",
+        "socket",
+        "ctypes",
+        "multiprocessing",
+        "signal",
+        "shutil",
+        "importlib",
+        "pkgutil",
+        "sys",
+        "os",
+        "pathlib",
+        "tempfile",
+        "pty",
+        "resource",
+        "http",
+        "urllib",
+        "ftplib",
+        "smtplib",
+        "telnetlib",
+        "webbrowser",
+        "asyncio",
+        "threading",
+        "concurrent",
+        "queue",
+        "pickle",
+        "shelve",
+        "marshal",
+    }
+)
 """Modules that cannot be imported by executed code."""
 
-ALLOWED_MODULES: frozenset[str] = frozenset({
-    "math", "statistics", "random", "re", "json", "itertools", "functools",
-    "collections", "datetime", "decimal", "fractions", "string", "textwrap",
-    "unicodedata", "heapq", "bisect", "copy", "csv", "base64", "hashlib", "uuid",
-})
+ALLOWED_MODULES: frozenset[str] = frozenset(
+    {
+        "math",
+        "statistics",
+        "random",
+        "re",
+        "json",
+        "itertools",
+        "functools",
+        "collections",
+        "datetime",
+        "decimal",
+        "fractions",
+        "string",
+        "textwrap",
+        "unicodedata",
+        "heapq",
+        "bisect",
+        "copy",
+        "csv",
+        "base64",
+        "hashlib",
+        "uuid",
+    }
+)
 """Modules that are safe and useful for data manipulation."""
 
-SAFE_BUILTINS: frozenset[str] = frozenset({
-    "abs", "all", "any", "ascii", "bin", "bool", "bytearray", "bytes", "callable",
-    "chr", "complex", "dict", "divmod", "enumerate", "filter", "float", "format",
-    "frozenset", "getattr", "hasattr", "hash", "hex", "id", "int", "isinstance",
-    "issubclass", "iter", "len", "list", "map", "max", "min", "next", "oct", "ord",
-    "pow", "print", "range", "repr", "reversed", "round", "set", "slice", "sorted",
-    "str", "sum", "tuple", "type", "zip", "True", "False", "None",
-    "Exception", "ValueError", "TypeError", "KeyError", "IndexError", "ZeroDivisionError",
-    "ArithmeticError", "RuntimeError", "StopIteration",
-})
+SAFE_BUILTINS: frozenset[str] = frozenset(
+    {
+        "abs",
+        "all",
+        "any",
+        "ascii",
+        "bin",
+        "bool",
+        "bytearray",
+        "bytes",
+        "callable",
+        "chr",
+        "complex",
+        "dict",
+        "divmod",
+        "enumerate",
+        "filter",
+        "float",
+        "format",
+        "frozenset",
+        "getattr",
+        "hasattr",
+        "hash",
+        "hex",
+        "id",
+        "int",
+        "isinstance",
+        "issubclass",
+        "iter",
+        "len",
+        "list",
+        "map",
+        "max",
+        "min",
+        "next",
+        "oct",
+        "ord",
+        "pow",
+        "print",
+        "range",
+        "repr",
+        "reversed",
+        "round",
+        "set",
+        "slice",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+        "type",
+        "zip",
+        "True",
+        "False",
+        "None",
+        "Exception",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "ZeroDivisionError",
+        "ArithmeticError",
+        "RuntimeError",
+        "StopIteration",
+    }
+)
 """Builtins exposed to executed code."""
 
-BLOCKED_ATTRIBUTES: frozenset[str] = frozenset({
-    "__class__", "__bases__", "__mro__", "__subclasses__", "__globals__",
-    "__builtins__", "__import__", "__loader__", "__spec__", "__code__",
-    "__closure__", "__func__", "__self__", "__dict__", "__getattribute__",
-    "__setattr__", "__delattr__", "__reduce__", "__reduce_ex__",
-})
+BLOCKED_ATTRIBUTES: frozenset[str] = frozenset(
+    {
+        "__class__",
+        "__bases__",
+        "__mro__",
+        "__subclasses__",
+        "__globals__",
+        "__builtins__",
+        "__import__",
+        "__loader__",
+        "__spec__",
+        "__code__",
+        "__closure__",
+        "__func__",
+        "__self__",
+        "__dict__",
+        "__getattribute__",
+        "__setattr__",
+        "__delattr__",
+        "__reduce__",
+        "__reduce_ex__",
+    }
+)
 """Attribute names that enable sandbox escapes."""
 
 MAX_SOURCE_CHARS = 100_000
@@ -76,10 +193,20 @@ class SourceAuditError(ToolExecutionError):
     code = "python_source_rejected"
 
 
-@tool(category="python", risk="execute", executes_code=True, timeout=60.0,
-      tags=["exec", "code", "core"])
-def python_exec(code: str, timeout: float = 30.0, capture_files: bool = True,
-                allow_imports: bool = True, context: ToolContext | None = None) -> dict[str, Any]:
+@tool(
+    category="python",
+    risk="execute",
+    executes_code=True,
+    timeout=60.0,
+    tags=["exec", "code", "core"],
+)
+def python_exec(
+    code: str,
+    timeout: float = 30.0,
+    capture_files: bool = True,
+    allow_imports: bool = True,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Execute Python code in a restricted namespace and return its output.
 
     The code has no access to the filesystem, network, or process APIs unless
@@ -122,8 +249,9 @@ def python_exec(code: str, timeout: float = 30.0, capture_files: bool = True,
             import traceback
 
             traceback_text = "".join(
-                traceback.format_exception(type(result_container), result_container,
-                                           result_container.__traceback__)
+                traceback.format_exception(
+                    type(result_container), result_container, result_container.__traceback__
+                )
             )[-4000:]
     except SyntaxError as exc:
         error_type = "SyntaxError"
@@ -169,7 +297,7 @@ def _run_with_timeout(compiled: Any, namespace: dict[str, Any], timeout: float) 
     import concurrent.futures
 
     if timeout <= 0:
-        exec(compiled, namespace)  # noqa: S102 - audited, restricted namespace
+        exec(compiled, namespace)
         return None
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(exec, compiled, namespace)
@@ -177,7 +305,7 @@ def _run_with_timeout(compiled: Any, namespace: dict[str, Any], timeout: float) 
             return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
             raise TimeoutError(f"execution exceeded {timeout}s") from None
-        except BaseException as exc:  # noqa: BLE001 - surfaced to the caller
+        except BaseException as exc:
             return exc
 
 
@@ -204,9 +332,11 @@ def build_safe_namespace(*, workspace: Path | None = None) -> dict[str, Any]:
     import itertools
     import statistics
 
-    safe_builtins = {name: getattr(_builtins, name) for name in SAFE_BUILTINS if hasattr(_builtins, name)}
+    safe_builtins = {
+        name: getattr(_builtins, name) for name in SAFE_BUILTINS if hasattr(_builtins, name)
+    }
 
-    def guarded_import(name: str, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+    def guarded_import(name: str, globals=None, locals=None, fromlist=(), level=0):
         """Allow only modules on the safe allowlist."""
         root = name.split(".")[0]
         if root in BLOCKED_MODULES or root not in ALLOWED_MODULES:
@@ -215,18 +345,20 @@ def build_safe_namespace(*, workspace: Path | None = None) -> dict[str, Any]:
 
     safe_builtins["__import__"] = guarded_import
     namespace: dict[str, Any] = {"__builtins__": safe_builtins, "__name__": "__magent__"}
-    namespace.update({
-        "math": math,
-        "statistics": statistics,
-        "itertools": itertools,
-        "collections": collections,
-        "datetime": datetime,
-        "decimal": decimal,
-        "fractions": fractions,
-        "json": json,
-        "re": re,
-        "workspace": str(workspace) if workspace else ".",
-    })
+    namespace.update(
+        {
+            "math": math,
+            "statistics": statistics,
+            "itertools": itertools,
+            "collections": collections,
+            "datetime": datetime,
+            "decimal": decimal,
+            "fractions": fractions,
+            "json": json,
+            "re": re,
+            "workspace": str(workspace) if workspace else ".",
+        }
+    )
     return namespace
 
 
@@ -264,14 +396,25 @@ def audit_python_source(source: str, *, allow_imports: bool = True) -> dict[str,
             name = _call_name(node.func)
             if name:
                 calls.append(name)
-            if name in {"exec", "eval", "compile", "open", "input", "breakpoint", "exit", "quit",
-                        "globals", "locals", "vars", "memoryview"}:
+            if name in {
+                "exec",
+                "eval",
+                "compile",
+                "open",
+                "input",
+                "breakpoint",
+                "exit",
+                "quit",
+                "globals",
+                "locals",
+                "vars",
+                "memoryview",
+            }:
                 findings.append(f"blocked call: {name}")
     if not allow_imports and (imports or from_imports):
         findings.append("imports are disabled for this execution")
     blocked_imports = [
-        name for name in imports + from_imports
-        if name.split(".")[0] in BLOCKED_MODULES
+        name for name in imports + from_imports if name.split(".")[0] in BLOCKED_MODULES
     ]
     report = {
         "ok": not findings,
@@ -338,28 +481,33 @@ def inspect_python(code: str) -> dict[str, Any]:
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             docstring = ast.get_docstring(node) or ""
-            functions.append({
-                "name": node.name,
-                "line": node.lineno,
-                "async": isinstance(node, ast.AsyncFunctionDef),
-                "args": [arg.arg for arg in node.args.args],
-                "defaults": len(node.args.defaults),
-                "docstring": docstring.split("\n")[0][:200],
-                "returns": ast.unparse(node.returns) if node.returns else "",
-                "body_lines": node.end_lineno - node.lineno + 1 if node.end_lineno else 0,
-            })
+            functions.append(
+                {
+                    "name": node.name,
+                    "line": node.lineno,
+                    "async": isinstance(node, ast.AsyncFunctionDef),
+                    "args": [arg.arg for arg in node.args.args],
+                    "defaults": len(node.args.defaults),
+                    "docstring": docstring.split("\n")[0][:200],
+                    "returns": ast.unparse(node.returns) if node.returns else "",
+                    "body_lines": node.end_lineno - node.lineno + 1 if node.end_lineno else 0,
+                }
+            )
         elif isinstance(node, ast.ClassDef):
             methods = [
-                item.name for item in node.body
+                item.name
+                for item in node.body
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
             ]
-            classes.append({
-                "name": node.name,
-                "line": node.lineno,
-                "bases": [ast.unparse(base) for base in node.bases],
-                "methods": methods,
-                "docstring": (ast.get_docstring(node) or "").split("\n")[0][:200],
-            })
+            classes.append(
+                {
+                    "name": node.name,
+                    "line": node.lineno,
+                    "bases": [ast.unparse(base) for base in node.bases],
+                    "methods": methods,
+                    "docstring": (ast.get_docstring(node) or "").split("\n")[0][:200],
+                }
+            )
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             if isinstance(node, ast.Import):
                 imports.extend(alias.name for alias in node.names)
@@ -397,8 +545,8 @@ __all__ = [
     "BLOCKED_MODULES",
     "MAX_SOURCE_CHARS",
     "SAFE_BUILTINS",
-    "SourceAuditError",
     "TOOLS",
+    "SourceAuditError",
     "audit_python",
     "audit_python_source",
     "build_safe_namespace",

@@ -14,9 +14,10 @@ import csv
 import dataclasses
 import io
 import json
+from collections.abc import Iterable, Mapping, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from ..utils.json_utils import to_json
 
@@ -88,11 +89,16 @@ def to_plain(value: Any, _seen: set[int] | None = None, _depth: int = 0) -> Any:
             except TypeError:
                 pass
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
-            return {key: to_plain(getattr(value, key), seen, _depth + 1)
-                    for key in value.__dataclass_fields__}
+            return {
+                key: to_plain(getattr(value, key), seen, _depth + 1)
+                for key in value.__dataclass_fields__
+            }
         if hasattr(value, "__dict__"):
-            return {key: to_plain(item, seen, _depth + 1) for key, item in vars(value).items()
-                    if not key.startswith("_")}
+            return {
+                key: to_plain(item, seen, _depth + 1)
+                for key, item in vars(value).items()
+                if not key.startswith("_")
+            }
         return str(value)
     finally:
         seen.discard(identity)
@@ -152,10 +158,14 @@ def _yaml_scalar(value: Any) -> str:
     if "\n" in text:
         body = "\n".join(YAML_INDENT + line for line in text.split("\n"))
         return "|-\n" + body
-    needs_quotes = (text[0] in "!&*?|>%@`#-[]{},\"'" or text.strip() != text
-                    or ": " in text or " #" in text
-                    or text.lower() in {"true", "false", "null", "yes", "no", "on", "off"}
-                    or _is_number_like(text))
+    needs_quotes = (
+        text[0] in "!&*?|>%@`#-[]{},\"'"
+        or text.strip() != text
+        or ": " in text
+        or " #" in text
+        or text.lower() in {"true", "false", "null", "yes", "no", "on", "off"}
+        or _is_number_like(text)
+    )
     return json.dumps(text) if needs_quotes else text
 
 
@@ -274,8 +284,9 @@ def _text_list(items: Sequence[Any], depth: int, width: int) -> list[str]:
     return out
 
 
-def _text_item(item: Any, depth: int, width: int, *, bullet: bool = False,
-               pad_override: str = "") -> str:
+def _text_item(
+    item: Any, depth: int, width: int, *, bullet: bool = False, pad_override: str = ""
+) -> str:
     """Render one list element."""
     pad = pad_override or YAML_INDENT * depth
     prefix = f"{pad}- " if bullet else pad
@@ -302,8 +313,14 @@ def _inline_scalar(value: Any, width: int) -> str:
     return text.replace("\n", " ")
 
 
-def render_value(value: Any, fmt: str = DEFAULT_FORMAT, *, width: int = 0,
-                 indent: int = 2, sort_keys: bool = False) -> str:
+def render_value(
+    value: Any,
+    fmt: str = DEFAULT_FORMAT,
+    *,
+    width: int = 0,
+    indent: int = 2,
+    sort_keys: bool = False,
+) -> str:
     """Render any value in one of :data:`FORMATS`.
 
     Args:
@@ -409,8 +426,7 @@ def parse_format_choice(text: str) -> str:
     if value == DEFAULT_FORMAT and text and text.strip().lower() not in FORMATS:
         lowered = text.strip().lower()
         if lowered not in {"text", "table", "plain"}:
-            raise ConfigError(f"unknown format {text!r}",
-                              details={"allowed": list(FORMATS)})
+            raise ConfigError(f"unknown format {text!r}", details={"allowed": list(FORMATS)})
     return value
 
 
@@ -445,8 +461,8 @@ def iter_records(value: Any) -> Iterable[Mapping[str, Any]]:
 __all__ = [
     "CYCLE_MARKER",
     "DEFAULT_FORMAT",
-    "MAX_PLAIN_DEPTH",
     "FORMATS",
+    "MAX_PLAIN_DEPTH",
     "YAML_INDENT",
     "dump_formats",
     "iter_records",

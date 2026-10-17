@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 from ..errors import AgentError
 from ..logging_ import get_logger
@@ -163,15 +164,22 @@ class TeamTurn:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_result(cls, index: int, member: str, prompt: str, result: RunResult,
-                    seconds: float) -> TeamTurn:
+    def from_result(
+        cls, index: int, member: str, prompt: str, result: RunResult, seconds: float
+    ) -> TeamTurn:
         """Build a turn from a finished run."""
         return cls(
-            index=index, member=member, prompt=prompt, output=result.output or "",
-            seconds=round(seconds, 4), tokens=result.usage.total_tokens,
+            index=index,
+            member=member,
+            prompt=prompt,
+            output=result.output or "",
+            seconds=round(seconds, 4),
+            tokens=result.usage.total_tokens,
             cost=round(getattr(result.cost, "total", 0.0) or 0.0, 6),
-            ok=bool(result.succeeded), model=result.model,
-            stop_reason=str(result.stop_reason), error=result.error or "",
+            ok=bool(result.succeeded),
+            model=result.model,
+            stop_reason=str(result.stop_reason),
+            error=result.error or "",
             tools=sorted({call.name for step in result.steps for call in step.tool_calls}),
             metadata={"run_id": result.run_id, "steps": len(result.steps)},
         )
@@ -269,25 +277,30 @@ class TeamResult:
         """Human-readable transcript of the run."""
         lines = [f"# Team run ({self.mode}): {ellipsize(self.task, 120)}"]
         for turn in self.turns:
-            lines.append(f"\n## {turn.index + 1}. {turn.member} "
-                         f"({turn.seconds:.2f}s, {turn.tokens} tokens)")
+            lines.append(
+                f"\n## {turn.index + 1}. {turn.member} ({turn.seconds:.2f}s, {turn.tokens} tokens)"
+            )
             lines.append(ellipsize(turn.output.strip(), max_chars))
         if self.rounds:
             lines.append("\n## Debate")
             for round_ in self.rounds:
-                lines.append(f"- round {round_.index + 1}: "
-                             f"{len(round_.positions)} positions, "
-                             f"{len(round_.critiques)} critiques, "
-                             f"converged={round_.converged}")
+                lines.append(
+                    f"- round {round_.index + 1}: "
+                    f"{len(round_.positions)} positions, "
+                    f"{len(round_.critiques)} critiques, "
+                    f"converged={round_.converged}"
+                )
         lines.append(f"\n## Final ({self.judge or 'team'})")
         lines.append(ellipsize(self.output.strip(), max_chars * 2))
         return "\n".join(lines)
 
     def summary_line(self) -> str:
         """One-line summary for the CLI."""
-        return (f"team[{self.mode}] {len(self.turns)} turns, {self.tokens} tokens, "
-                f"{self.cost:.4f} cost, {self.seconds:.2f}s -> "
-                f"{'ok' if self.succeeded else self.error or 'no output'}")
+        return (
+            f"team[{self.mode}] {len(self.turns)} turns, {self.tokens} tokens, "
+            f"{self.cost:.4f} cost, {self.seconds:.2f}s -> "
+            f"{'ok' if self.succeeded else self.error or 'no output'}"
+        )
 
     def to_dict(self, *, include_outputs: bool = True) -> dict[str, Any]:
         """Serialise the result."""
@@ -317,12 +330,22 @@ class TeamResult:
 class Team:
     """A roster of agents plus an orchestration mode."""
 
-    def __init__(self, members: Sequence[TeamMember] = (), *, mode: str = "sequential",
-                 judge: TeamMember | str | None = None, max_rounds: int = 2,
-                 max_turns: int = MAX_TURNS, name: str = "team", parallel: bool = True,
-                 max_workers: int = 4, stop_phrases: Sequence[str] = STOP_PHRASES,
-                 record_handoffs: bool = True, on_turn: Callable[[TeamTurn], None] | None = None,
-                 options: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        members: Sequence[TeamMember] = (),
+        *,
+        mode: str = "sequential",
+        judge: TeamMember | str | None = None,
+        max_rounds: int = 2,
+        max_turns: int = MAX_TURNS,
+        name: str = "team",
+        parallel: bool = True,
+        max_workers: int = 4,
+        stop_phrases: Sequence[str] = STOP_PHRASES,
+        record_handoffs: bool = True,
+        on_turn: Callable[[TeamTurn], None] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
         """Build a team.
 
         Args:
@@ -363,8 +386,16 @@ class Team:
     # -- roster --------------------------------------------------------------
 
     @classmethod
-    def from_presets(cls, names: Sequence[str], *, backend: Any = None, config: Any = None,
-                     mode: str = "sequential", judge: str = "", **kwargs: Any) -> Team:
+    def from_presets(
+        cls,
+        names: Sequence[str],
+        *,
+        backend: Any = None,
+        config: Any = None,
+        mode: str = "sequential",
+        judge: str = "",
+        **kwargs: Any,
+    ) -> Team:
         """Build a team where each member is an agent created from a preset.
 
         Args:
@@ -381,9 +412,15 @@ class Team:
         for index, name in enumerate(names):
             preset = get_preset(name)
             agent = build_preset_agent(name, backend=backend, config=config)
-            members.append(TeamMember(name=f"{preset.name}-{index + 1}", agent=agent,
-                                      preset=preset.name, role=preset.description,
-                                      instructions=preset.instructions))
+            members.append(
+                TeamMember(
+                    name=f"{preset.name}-{index + 1}",
+                    agent=agent,
+                    preset=preset.name,
+                    role=preset.description,
+                    instructions=preset.instructions,
+                )
+            )
         return cls(members, mode=mode, judge=judge, **kwargs)
 
     def add(self, member: TeamMember) -> TeamMember:
@@ -427,9 +464,12 @@ class Team:
 
     def describe(self) -> str:
         """One-paragraph description of the team."""
-        names = ", ".join(f"{member.name}({member.preset or member.role})"
-                          for member in self.active_members())
-        return f"team {self.name!r} mode={self.mode} judge={self.judge_name or '-'} members: {names}"
+        names = ", ".join(
+            f"{member.name}({member.preset or member.role})" for member in self.active_members()
+        )
+        return (
+            f"team {self.name!r} mode={self.mode} judge={self.judge_name or '-'} members: {names}"
+        )
 
     # -- running -------------------------------------------------------------
 
@@ -473,35 +513,46 @@ class Team:
         """Create an empty result for the configured mode."""
         return TeamResult(task=task, mode=self.mode)
 
-    def _speak(self, member: TeamMember, prompt: str, options: dict[str, Any],
-               result: TeamResult) -> TeamTurn:
+    def _speak(
+        self, member: TeamMember, prompt: str, options: dict[str, Any], result: TeamResult
+    ) -> TeamTurn:
         """Run one member and record the turn."""
         started = time.perf_counter()
         try:
             text, run = member.ask(prompt, **options)
-            turn = TeamTurn.from_result(len(result.turns), member.name, prompt, run,
-                                        time.perf_counter() - started)
+            turn = TeamTurn.from_result(
+                len(result.turns), member.name, prompt, run, time.perf_counter() - started
+            )
             result.usage = result.usage.merge(run.usage)
             result.cost = round(result.cost + turn.cost, 6)
-        except Exception as exc:  # noqa: BLE001 - one failing member must not kill the team
+        except Exception as exc:
             LOGGER.warning("member %s failed: %s", member.name, exc)
-            turn = TeamTurn(index=len(result.turns), member=member.name, prompt=prompt,
-                            output="", seconds=time.perf_counter() - started, ok=False,
-                            error=f"{type(exc).__name__}: {exc}")
+            turn = TeamTurn(
+                index=len(result.turns),
+                member=member.name,
+                prompt=prompt,
+                output="",
+                seconds=time.perf_counter() - started,
+                ok=False,
+                error=f"{type(exc).__name__}: {exc}",
+            )
         member.turns_used += 1
         result.turns.append(turn)
         if self.on_turn is not None:
             try:
                 self.on_turn(turn)
-            except Exception as exc:  # noqa: BLE001 - callbacks must not break a run
+            except Exception as exc:
                 LOGGER.debug("on_turn callback failed: %s", exc)
         return turn
 
-    def _handoff(self, result: TeamResult, previous: TeamTurn, current: TeamTurn,
-                 task: str) -> Handoff:
+    def _handoff(
+        self, result: TeamResult, previous: TeamTurn, current: TeamTurn, task: str
+    ) -> Handoff:
         """Record the handoff between two consecutive turns."""
         handoff = build_handoff(
-            task=task, from_agent=previous.member, to_agent=current.member,
+            task=task,
+            from_agent=previous.member,
+            to_agent=current.member,
             summary=previous.output,
             next_steps=[line for line in current.output.split("\n")[:3] if line.strip()],
             confidence=0.9 if previous.ok else 0.4,
@@ -540,10 +591,13 @@ class Team:
                     break
                 if member.turns_used >= member.max_turns:
                     continue
-                prompt = member.prompt_for(task, previous=previous_text,
-                                           extra=f"Pass {round_index + 1} of {self.max_rounds}: "
-                                                 f"improve on the previous work, or reply "
-                                                 f"{self.stop_phrases[0]} when it is complete.")
+                prompt = member.prompt_for(
+                    task,
+                    previous=previous_text,
+                    extra=f"Pass {round_index + 1} of {self.max_rounds}: "
+                    f"improve on the previous work, or reply "
+                    f"{self.stop_phrases[0]} when it is complete.",
+                )
                 turn = self._speak(member, prompt, options, result)
                 if turn.ok and turn.output.strip():
                     previous_text = turn.output
@@ -586,10 +640,12 @@ class Team:
         else:
             result.metadata.setdefault("stopped", "max_turns")
         if chosen is not None:
-            final_prompt = (f"Task: {task}\n\nWork produced by the team:\n"
-                            f"{self._latest_output(result)}\n\n"
-                            "Write the final answer. Use the team's work, correct anything "
-                            "wrong, and do not mention the team.")
+            final_prompt = (
+                f"Task: {task}\n\nWork produced by the team:\n"
+                f"{self._latest_output(result)}\n\n"
+                "Write the final answer. Use the team's work, correct anything "
+                "wrong, and do not mention the team."
+            )
             final = self._speak(supervisor, final_prompt, options, result)
             result.output = final.output or self._latest_output(result)
         else:
@@ -611,12 +667,18 @@ class Team:
                     break
                 previous = positions.get(member.name, "")
                 prompt = member.prompt_for(
-                    task, previous=previous,
-                    extra=("Give your position. Be concrete and defend it."
-                           if not previous else
-                           "Revise your position in light of the critiques below.\n"
-                           + "\n".join(f"{name}: {ellipsize(text, 300)}"
-                                       for name, text in debate.critiques.items())))
+                    task,
+                    previous=previous,
+                    extra=(
+                        "Give your position. Be concrete and defend it."
+                        if not previous
+                        else "Revise your position in light of the critiques below.\n"
+                        + "\n".join(
+                            f"{name}: {ellipsize(text, 300)}"
+                            for name, text in debate.critiques.items()
+                        )
+                    ),
+                )
                 turn = self._speak(member, prompt, options, result)
                 if turn.output.strip():
                     positions[member.name] = turn.output
@@ -653,25 +715,40 @@ class Team:
         answers: dict[str, str] = {}
         if self.parallel and len(voters) > 1:
             turns: list[TeamTurn] = []
-            with ThreadPoolExecutor(max_workers=min(self.max_workers, len(voters)),
-                                    thread_name_prefix="team-vote") as pool:
+            with ThreadPoolExecutor(
+                max_workers=min(self.max_workers, len(voters)), thread_name_prefix="team-vote"
+            ) as pool:
                 futures = {}
                 for member in voters:
                     prompt = member.prompt_for(task)
                     started = time.perf_counter()
-                    futures[pool.submit(self._safe_ask, member, prompt, options)] = (member,
-                                                                                    prompt,
-                                                                                    started)
+                    futures[pool.submit(self._safe_ask, member, prompt, options)] = (
+                        member,
+                        prompt,
+                        started,
+                    )
                 for future in as_completed(futures):
                     member, prompt, started = futures[future]
                     text, run, error = future.result()
-                    turn = (TeamTurn.from_result(len(result.turns) + len(turns), member.name,
-                                                 prompt, run, time.perf_counter() - started)
-                            if run is not None else
-                            TeamTurn(index=len(result.turns) + len(turns), member=member.name,
-                                     prompt=prompt, output=text,
-                                     seconds=time.perf_counter() - started, ok=False,
-                                     error=error))
+                    turn = (
+                        TeamTurn.from_result(
+                            len(result.turns) + len(turns),
+                            member.name,
+                            prompt,
+                            run,
+                            time.perf_counter() - started,
+                        )
+                        if run is not None
+                        else TeamTurn(
+                            index=len(result.turns) + len(turns),
+                            member=member.name,
+                            prompt=prompt,
+                            output=text,
+                            seconds=time.perf_counter() - started,
+                            ok=False,
+                            error=error,
+                        )
+                    )
                     turns.append(turn)
                     if run is not None:
                         result.usage = result.usage.merge(run.usage)
@@ -701,14 +778,15 @@ class Team:
         result.metadata["votes"] = {name: len(text) for name, text in answers.items()}
         return result
 
-    def _safe_ask(self, member: TeamMember, prompt: str,
-                  options: dict[str, Any]) -> tuple[str, RunResult | None, str]:
+    def _safe_ask(
+        self, member: TeamMember, prompt: str, options: dict[str, Any]
+    ) -> tuple[str, RunResult | None, str]:
         """Ask one member, converting failures into a triple instead of raising."""
         try:
             text, run = member.ask(prompt, **options)
             run.metadata.setdefault("team_member", member.name)
             return text, run, ""
-        except Exception as exc:  # noqa: BLE001 - parallel votes must not raise into the pool
+        except Exception as exc:
             LOGGER.warning("vote from %s failed: %s", member.name, exc)
             return "", None, f"{type(exc).__name__}: {exc}"
 
@@ -741,8 +819,7 @@ class Team:
                 return member
         return None
 
-    def _critique_target(self, member: TeamMember,
-                         positions: dict[str, str]) -> tuple[str, str]:
+    def _critique_target(self, member: TeamMember, positions: dict[str, str]) -> tuple[str, str]:
         """Pick the position this member should critique (not its own)."""
         others = [(name, text) for name, text in positions.items() if name != member.name]
         if not others:
@@ -758,7 +835,7 @@ class Team:
         if len(texts) < 2:
             return True
         for index, first in enumerate(texts):
-            for second in texts[index + 1:]:
+            for second in texts[index + 1 :]:
                 if similarity(first, second) < 0.75:
                     return False
         return True
@@ -775,13 +852,23 @@ class Team:
 
     def __repr__(self) -> str:
         """Compact developer representation."""
-        return (f"Team(name={self.name!r}, mode={self.mode!r}, "
-                f"members={[m.name for m in self.members]})")
+        return (
+            f"Team(name={self.name!r}, mode={self.mode!r}, "
+            f"members={[m.name for m in self.members]})"
+        )
 
 
-def run_team(members: Iterable[TeamMember] | Iterable[Any], task: str, *, mode: str = "sequential",
-             judge: str = "", max_rounds: int = 2, backend: Any = None, config: Any = None,
-             **kwargs: Any) -> TeamResult:
+def run_team(
+    members: Iterable[TeamMember] | Iterable[Any],
+    task: str,
+    *,
+    mode: str = "sequential",
+    judge: str = "",
+    max_rounds: int = 2,
+    backend: Any = None,
+    config: Any = None,
+    **kwargs: Any,
+) -> TeamResult:
     """Build a team and run one task in a single call.
 
     Args:
@@ -802,17 +889,26 @@ def run_team(members: Iterable[TeamMember] | Iterable[Any], task: str, *, mode: 
         elif isinstance(item, tuple) and len(item) == 2:
             roster.append(TeamMember(name=str(item[0]), agent=item[1]))
         else:
-            roster.append(TeamMember(name=getattr(item, "name", f"member-{len(roster) + 1}"),
-                                     agent=item))
+            roster.append(
+                TeamMember(name=getattr(item, "name", f"member-{len(roster) + 1}"), agent=item)
+            )
     team = Team(roster, mode=mode, judge=judge, max_rounds=max_rounds, **kwargs)
     return team.run(task)
 
 
-def team_from_presets(names: Sequence[str], *, mode: str = "sequential", backend: Any = None,
-                      config: Any = None, judge: str = "", **kwargs: Any) -> Team:
+def team_from_presets(
+    names: Sequence[str],
+    *,
+    mode: str = "sequential",
+    backend: Any = None,
+    config: Any = None,
+    judge: str = "",
+    **kwargs: Any,
+) -> Team:
     """Convenience wrapper around :meth:`Team.from_presets`."""
-    return Team.from_presets(names, backend=backend, config=config, mode=mode, judge=judge,
-                             **kwargs)
+    return Team.from_presets(
+        names, backend=backend, config=config, mode=mode, judge=judge, **kwargs
+    )
 
 
 def handoff_chain(result: TeamResult) -> str:

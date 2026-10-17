@@ -26,9 +26,22 @@ from typing import Any
 from ._version import __version__
 from .errors import MAgentError
 from .logging_ import get_logger
-from .paths import data_dir, cache_dir, config_dir, repo_root
-from .types import (AgentEvent, ChatResponse, CostEstimate, EventKind, Message, ModelInfo, Role,
-                    RunResult, StepRecord, StopReason, ToolCall, ToolResult, Usage)
+from .paths import cache_dir, config_dir, data_dir, repo_root
+from .types import (
+    AgentEvent,
+    ChatResponse,
+    CostEstimate,
+    EventKind,
+    Message,
+    ModelInfo,
+    Role,
+    RunResult,
+    StepRecord,
+    StopReason,
+    ToolCall,
+    ToolResult,
+    Usage,
+)
 
 __all__ = [
     "Agent",
@@ -198,7 +211,8 @@ def capabilities() -> dict[str, Any]:
     metadata.  Every value here is derived from the installed source tree rather
     than hard-coded, so it cannot drift.
     """
-    from .paths import bundled_docs_dir, describe as describe_paths, improvements_manifest
+    from .paths import bundled_docs_dir, improvements_manifest
+    from .paths import describe as describe_paths
 
     manifest = improvements_manifest()
     return {

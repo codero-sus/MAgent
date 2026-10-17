@@ -26,8 +26,9 @@ DANGEROUS_GIT_ARGS = re.compile(
 """Argument patterns that could escape the repository or delete work."""
 
 
-def _git(args: list[str], context: ToolContext, *, cwd: Path | None = None,
-         timeout: float = 60.0) -> dict[str, Any]:
+def _git(
+    args: list[str], context: ToolContext, *, cwd: Path | None = None, timeout: float = 60.0
+) -> dict[str, Any]:
     """Run a git command inside the workspace and return a structured result."""
     if not args:
         raise ToolExecutionError("No git arguments supplied")
@@ -42,9 +43,14 @@ def _git(args: list[str], context: ToolContext, *, cwd: Path | None = None,
     if context.dry_run:
         return {"command": joined, "dry_run": True, "stdout": "", "stderr": "", "returncode": 0}
     try:
-        completed = subprocess.run(  # noqa: S603 - sandbox-checked, no shell
-            command, cwd=str(workspace), capture_output=True, text=True,
-            timeout=timeout, env=env, check=False,
+        completed = subprocess.run(
+            command,
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+            check=False,
         )
     except FileNotFoundError as exc:
         raise ToolExecutionError("git is not installed or not on PATH") from exc
@@ -124,8 +130,13 @@ def parse_status_v2(output: str) -> dict[str, Any]:
 
 
 @tool(category="git", risk="read", timeout=60.0, tags=["git", "history"])
-def git_log(limit: int = 20, path: str = "", author: str = "", grep: str = "",
-            context: ToolContext | None = None) -> dict[str, Any]:
+def git_log(
+    limit: int = 20,
+    path: str = "",
+    author: str = "",
+    grep: str = "",
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Show commit history as structured records.
 
     Args:
@@ -135,7 +146,11 @@ def git_log(limit: int = 20, path: str = "", author: str = "", grep: str = "",
         grep: filter by commit message substring
     """
     ctx = context or ToolContext()
-    args = ["log", f"-{max(1, min(limit, 500))}", "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%D"]
+    args = [
+        "log",
+        f"-{max(1, min(limit, 500))}",
+        "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%D",
+    ]
     if path:
         args += ["--", path]
     if author:
@@ -150,15 +165,17 @@ def git_log(limit: int = 20, path: str = "", author: str = "", grep: str = "",
         parts = line.split("\x1f")
         if len(parts) < 6:
             continue
-        commits.append({
-            "hash": parts[0],
-            "short_hash": parts[1],
-            "author": parts[2],
-            "email": parts[3],
-            "date": parts[4],
-            "subject": parts[5],
-            "refs": parts[6] if len(parts) > 6 else "",
-        })
+        commits.append(
+            {
+                "hash": parts[0],
+                "short_hash": parts[1],
+                "author": parts[2],
+                "email": parts[3],
+                "date": parts[4],
+                "subject": parts[5],
+                "refs": parts[6] if len(parts) > 6 else "",
+            }
+        )
     result["commits"] = commits
     result["count"] = len(commits)
     result.pop("stdout", None)
@@ -166,8 +183,9 @@ def git_log(limit: int = 20, path: str = "", author: str = "", grep: str = "",
 
 
 @tool(category="git", risk="read", timeout=60.0, tags=["git", "diff"])
-def git_diff(staged: bool = False, path: str = "", ref: str = "",
-             context: ToolContext | None = None) -> dict[str, Any]:
+def git_diff(
+    staged: bool = False, path: str = "", ref: str = "", context: ToolContext | None = None
+) -> dict[str, Any]:
     """Show a diff of the working tree, index, or a specific ref.
 
     Args:
@@ -185,19 +203,27 @@ def git_diff(staged: bool = False, path: str = "", ref: str = "",
         args += ["--", path]
     result = _git(args, ctx)
     text = result.get("stdout", "")
-    result.update({
-        "files_changed": len(re.findall(r"^diff --git ", text, re.MULTILINE)),
-        "additions": sum(int(match) for match in re.findall(r"^\+(\+\+)?", text, re.MULTILINE) if not match),
-        "lines": text.count("\n"),
-    })
+    result.update(
+        {
+            "files_changed": len(re.findall(r"^diff --git ", text, re.MULTILINE)),
+            "additions": sum(
+                int(match) for match in re.findall(r"^\+(\+\+)?", text, re.MULTILINE) if not match
+            ),
+            "lines": text.count("\n"),
+        }
+    )
     result["additions"] = len(re.findall(r"^\+(?!\+\+)", text, re.MULTILINE))
     result["deletions"] = len(re.findall(r"^-(?!--)", text, re.MULTILINE))
     return result
 
 
 @tool(category="git", risk="write", timeout=60.0, tags=["git", "commit"])
-def git_commit(message: str, add_all: bool = False, allow_empty: bool = False,
-               context: ToolContext | None = None) -> dict[str, Any]:
+def git_commit(
+    message: str,
+    add_all: bool = False,
+    allow_empty: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Stage tracked changes and create a commit.
 
     Args:
@@ -220,7 +246,9 @@ def git_commit(message: str, add_all: bool = False, allow_empty: bool = False,
 
 
 @tool(category="git", risk="write", timeout=60.0, tags=["git", "stage"])
-def git_add(paths: str, all_changes: bool = False, context: ToolContext | None = None) -> dict[str, Any]:
+def git_add(
+    paths: str, all_changes: bool = False, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Stage files in the index.
 
     Args:
@@ -244,10 +272,17 @@ def git_branches(all_remotes: bool = True, context: ToolContext | None = None) -
         all_remotes: include remote-tracking branches
     """
     ctx = context or ToolContext()
-    args = ["branch", "--all", "--format=%(refname:short)%09%(objectname:short)%09%(HEAD)%09%(upstream:short)"]
+    args = [
+        "branch",
+        "--all",
+        "--format=%(refname:short)%09%(objectname:short)%09%(HEAD)%09%(upstream:short)",
+    ]
     if not all_remotes:
         args[1] = "--no-color"
-        args = ["branch", "--format=%(refname:short)%09%(objectname:short)%09%(HEAD)%09%(upstream:short)"]
+        args = [
+            "branch",
+            "--format=%(refname:short)%09%(objectname:short)%09%(HEAD)%09%(upstream:short)",
+        ]
     result = _git(args, ctx)
     branches: list[dict[str, Any]] = []
     current = ""
@@ -259,13 +294,15 @@ def git_branches(all_remotes: bool = True, context: ToolContext | None = None) -
         is_head = len(parts) > 2 and parts[2].strip() == "*"
         if is_head:
             current = name
-        branches.append({
-            "name": name,
-            "commit": parts[1] if len(parts) > 1 else "",
-            "current": is_head,
-            "upstream": parts[3] if len(parts) > 3 else "",
-            "remote": name.startswith("origin/") or "/" in name,
-        })
+        branches.append(
+            {
+                "name": name,
+                "commit": parts[1] if len(parts) > 1 else "",
+                "current": is_head,
+                "upstream": parts[3] if len(parts) > 3 else "",
+                "remote": name.startswith("origin/") or "/" in name,
+            }
+        )
     result["branches"] = branches
     result["current"] = current
     result["count"] = len(branches)
@@ -274,8 +311,9 @@ def git_branches(all_remotes: bool = True, context: ToolContext | None = None) -
 
 
 @tool(category="git", risk="read", timeout=120.0, tags=["git", "blame", "annotate"])
-def git_blame(path: str, line_start: int = 0, line_count: int = 50,
-              context: ToolContext | None = None) -> dict[str, Any]:
+def git_blame(
+    path: str, line_start: int = 0, line_count: int = 50, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Show which commit last touched each line of a file.
 
     Args:
@@ -301,9 +339,10 @@ def git_blame(path: str, line_start: int = 0, line_count: int = 50,
         elif line.startswith("summary "):
             summary = line[8:]
         elif line.startswith("\t"):
-            records.append({"commit": current_commit, "author": author,
-                            "summary": summary, "line": line[1:]})
-    result["blame"] = records[:max(1, line_count) * 2]
+            records.append(
+                {"commit": current_commit, "author": author, "summary": summary, "line": line[1:]}
+            )
+    result["blame"] = records[: max(1, line_count) * 2]
     result.pop("stdout", None)
     return result
 
@@ -323,17 +362,32 @@ def git_remote_info(context: ToolContext | None = None) -> dict[str, Any]:
     for line in result.get("stdout", "").splitlines():
         parts = line.split()
         if len(parts) >= 2:
-            remotes.append({"name": parts[0], "url": redact_url(parts[1]),
-                            "direction": parts[2].strip("()") if len(parts) > 2 else ""})
+            remotes.append(
+                {
+                    "name": parts[0],
+                    "url": redact_url(parts[1]),
+                    "direction": parts[2].strip("()") if len(parts) > 2 else "",
+                }
+            )
     result["remotes"] = remotes
     result.pop("stdout", None)
     return result
 
 
-@tool(category="git", risk="write", timeout=180.0, requires_approval=True,
-      tags=["git", "push", "network"])
-def git_push(remote: str = "origin", branch: str = "", force: bool = False,
-             set_upstream: bool = False, context: ToolContext | None = None) -> dict[str, Any]:
+@tool(
+    category="git",
+    risk="write",
+    timeout=180.0,
+    requires_approval=True,
+    tags=["git", "push", "network"],
+)
+def git_push(
+    remote: str = "origin",
+    branch: str = "",
+    force: bool = False,
+    set_upstream: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Push commits to a remote repository.
 
     Args:
@@ -355,8 +409,9 @@ def git_push(remote: str = "origin", branch: str = "", force: bool = False,
 
 
 @tool(category="git", risk="read", timeout=60.0, tags=["git", "show"])
-def git_show(ref: str = "HEAD", path: str = "", stat_only: bool = False,
-             context: ToolContext | None = None) -> dict[str, Any]:
+def git_show(
+    ref: str = "HEAD", path: str = "", stat_only: bool = False, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Show a commit, tag, or file at a revision.
 
     Args:
@@ -372,8 +427,16 @@ def git_show(ref: str = "HEAD", path: str = "", stat_only: bool = False,
 
 
 TOOLS: list[Any] = [
-    git_status, git_log, git_diff, git_commit, git_add, git_branches, git_blame,
-    git_remote_info, git_push, git_show,
+    git_status,
+    git_log,
+    git_diff,
+    git_commit,
+    git_add,
+    git_branches,
+    git_blame,
+    git_remote_info,
+    git_push,
+    git_show,
 ]
 """Every tool defined in this module."""
 

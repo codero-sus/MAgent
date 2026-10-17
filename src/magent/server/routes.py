@@ -11,8 +11,9 @@ debug with ``curl``.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 ROUTE_METHODS: tuple[str, ...] = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD")
 """HTTP methods the router knows about."""
@@ -49,22 +50,31 @@ class Route:
     @property
     def pattern(self) -> re.Pattern[str]:
         """Compiled regular expression matching this route."""
-        escaped = PARAM_RE.sub(r"(?P<\1>[^/]+)", re.escape(self.path).replace(r"\{", "{")
-                               .replace(r"\}", "}"))
+        escaped = PARAM_RE.sub(
+            r"(?P<\1>[^/]+)", re.escape(self.path).replace(r"\{", "{").replace(r"\}", "}")
+        )
         return re.compile("^" + escaped + "/?$")
 
     def match(self, method: str, path: str) -> dict[str, str] | None:
         """Return the path parameters when this route handles the request."""
-        if self.method != method.upper() and not (self.method == "GET" and method.upper() == "HEAD"):
+        if self.method != method.upper() and not (
+            self.method == "GET" and method.upper() == "HEAD"
+        ):
             return None
         match = self.pattern.match(path or "/")
         return match.groupdict() if match else None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the route for the API index."""
-        return {"method": self.method, "path": self.path, "name": self.name,
-                "description": self.description, "auth": self.auth, "stream": self.stream,
-                "parameters": self.parameters}
+        return {
+            "method": self.method,
+            "path": self.path,
+            "name": self.name,
+            "description": self.description,
+            "auth": self.auth,
+            "stream": self.stream,
+            "parameters": self.parameters,
+        }
 
 
 @dataclass(slots=True)
@@ -132,8 +142,10 @@ class Router:
 
     def describe(self) -> list[dict[str, Any]]:
         """Serialise every route, for ``GET /api``."""
-        return [route.to_dict() for route in sorted(self.routes,
-                                                    key=lambda item: (item.path, item.method))]
+        return [
+            route.to_dict()
+            for route in sorted(self.routes, key=lambda item: (item.path, item.method))
+        ]
 
     def iter_routes(self) -> Iterable[Route]:
         """Iterate the registered routes."""

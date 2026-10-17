@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 from ..types import RunResult
 from ..utils.json_utils import extract_json
@@ -95,8 +96,9 @@ class Handoff:
         values.update({key: value for key, value in extra.items() if key in known})
         steps = values.get("next_steps")
         if isinstance(steps, str):
-            values["next_steps"] = [line.strip(" -\t") for line in steps.split("\n")
-                                    if line.strip()]
+            values["next_steps"] = [
+                line.strip(" -\t") for line in steps.split("\n") if line.strip()
+            ]
         for key in ("files", "blockers"):
             item = values.get(key)
             if isinstance(item, str):
@@ -113,15 +115,26 @@ class Handoff:
 
     def __repr__(self) -> str:
         """Compact developer representation."""
-        return (f"Handoff(task={ellipsize(self.task, 40)!r}, from={self.from_agent!r}, "
-                f"to={self.to_agent!r}, steps={len(self.next_steps)}, "
-                f"confidence={self.confidence:.2f})")
+        return (
+            f"Handoff(task={ellipsize(self.task, 40)!r}, from={self.from_agent!r}, "
+            f"to={self.to_agent!r}, steps={len(self.next_steps)}, "
+            f"confidence={self.confidence:.2f})"
+        )
 
 
-def build_handoff(result: RunResult | None = None, *, task: str = "", from_agent: str = "",
-                  to_agent: str = "", summary: str = "", next_steps: Sequence[str] = (),
-                  files: Sequence[str] = (), blockers: Sequence[str] = (),
-                  confidence: float | None = None, **metadata: Any) -> Handoff:
+def build_handoff(
+    result: RunResult | None = None,
+    *,
+    task: str = "",
+    from_agent: str = "",
+    to_agent: str = "",
+    summary: str = "",
+    next_steps: Sequence[str] = (),
+    files: Sequence[str] = (),
+    blockers: Sequence[str] = (),
+    confidence: float | None = None,
+    **metadata: Any,
+) -> Handoff:
     """Build a handoff, deriving what it can from a finished run.
 
     Args:
@@ -149,7 +162,8 @@ def build_handoff(result: RunResult | None = None, *, task: str = "", from_agent
         metadata = getattr(result, "metadata", None) or {}
         if not derived_task:
             derived_task = str(metadata.get("prompt", "") or "") or str(
-                getattr(result, "task", "") or "")
+                getattr(result, "task", "") or ""
+            )
         for step in getattr(result, "steps", None) or []:
             for item in getattr(step, "tool_results", None) or []:
                 path = str((getattr(item, "metadata", None) or {}).get("path", "") or "")
@@ -162,9 +176,18 @@ def build_handoff(result: RunResult | None = None, *, task: str = "", from_agent
             confidence = 1.0 if getattr(result, "succeeded", False) else 0.4
     if confidence is None:
         confidence = 0.8 if text and not blockers else 0.3
-    return Handoff(task=derived_task, summary=text, next_steps=list(next_steps), files=touched,
-                   blockers=list(blockers), confidence=confidence, from_agent=from_agent,
-                   to_agent=to_agent, run_id=run_id, metadata=dict(metadata))
+    return Handoff(
+        task=derived_task,
+        summary=text,
+        next_steps=list(next_steps),
+        files=touched,
+        blockers=list(blockers),
+        confidence=confidence,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        run_id=run_id,
+        metadata=dict(metadata),
+    )
 
 
 def parse_handoff(text: str, *, from_agent: str = "", to_agent: str = "") -> Handoff:
@@ -185,9 +208,14 @@ def parse_handoff(text: str, *, from_agent: str = "", to_agent: str = "") -> Han
             payload = candidate
     if isinstance(payload, dict):
         return Handoff.from_dict(payload, from_agent=from_agent, to_agent=to_agent)
-    return Handoff(task="", summary=(text or "").strip(), from_agent=from_agent,
-                   to_agent=to_agent, confidence=0.5,
-                   metadata={"parsed": False, "reason": "no JSON object found"})
+    return Handoff(
+        task="",
+        summary=(text or "").strip(),
+        from_agent=from_agent,
+        to_agent=to_agent,
+        confidence=0.5,
+        metadata={"parsed": False, "reason": "no JSON object found"},
+    )
 
 
 def handoff_block(handoff: Handoff, *, max_chars: int = 2_000) -> str:
@@ -201,8 +229,9 @@ def handoff_block(handoff: Handoff, *, max_chars: int = 2_000) -> str:
         lines.append(f"Done so far: {handoff.summary.strip()}")
     if handoff.next_steps:
         lines.append("Remaining:")
-        lines.extend(f"  {index}. {step}" for index, step in
-                     enumerate(handoff.next_steps[:10], start=1))
+        lines.extend(
+            f"  {index}. {step}" for index, step in enumerate(handoff.next_steps[:10], start=1)
+        )
     if handoff.files:
         lines.append("Files: " + ", ".join(handoff.files[:10]))
     if handoff.blockers:

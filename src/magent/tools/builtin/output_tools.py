@@ -8,7 +8,6 @@ returning prose that has to be post-processed.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from ...errors import ToolExecutionError
@@ -26,8 +25,9 @@ from ...utils.tables import (
 
 
 @tool(category="output", risk="safe", tags=["format", "table", "core"])
-def format_table(data: str, columns: str = "", style: str = "markdown",
-                 title: str = "", align: str = "") -> dict[str, Any]:
+def format_table(
+    data: str, columns: str = "", style: str = "markdown", title: str = "", align: str = ""
+) -> dict[str, Any]:
     """Render records as a table in one of several styles.
 
     Args:
@@ -57,13 +57,21 @@ def format_table(data: str, columns: str = "", style: str = "markdown",
         writer.writerows(rows)
         text = buffer.getvalue()
     elif style == "ascii":
-        text = render_table(rows, header, alignments=alignments, borders=True, unicode_borders=False)
+        text = render_table(
+            rows, header, alignments=alignments, borders=True, unicode_borders=False
+        )
     else:
         text = render_table(rows, header, alignments=alignments, borders=False)
     if title:
         text = f"{title}\n{text}"
-    return {"style": style, "rows": len(rows), "columns": header, "text": text,
-            "chars": len(text), "lines": text.count("\n") + 1}
+    return {
+        "style": style,
+        "rows": len(rows),
+        "columns": header,
+        "text": text,
+        "chars": len(text),
+        "lines": text.count("\n") + 1,
+    }
 
 
 def _coerce_rows(data: str, columns: str) -> tuple[list[list[str]], list[str]]:
@@ -79,10 +87,19 @@ def _coerce_rows(data: str, columns: str) -> tuple[list[list[str]], list[str]]:
     header = [name.strip() for name in columns.split(",") if name.strip()]
     if isinstance(parsed, list) and parsed:
         if isinstance(parsed[0], dict):
-            header = header or list(dict.fromkeys(key for item in parsed if isinstance(item, dict) for key in item))
-            rows = [[_cell(item.get(name, "")) for name in header] for item in parsed if isinstance(item, dict)]
+            header = header or list(
+                dict.fromkeys(key for item in parsed if isinstance(item, dict) for key in item)
+            )
+            rows = [
+                [_cell(item.get(name, "")) for name in header]
+                for item in parsed
+                if isinstance(item, dict)
+            ]
             return rows, header
-        rows = [[_cell(value) for value in item] if isinstance(item, list) else [_cell(item)] for item in parsed]
+        rows = [
+            [_cell(value) for value in item] if isinstance(item, list) else [_cell(item)]
+            for item in parsed
+        ]
         width = max((len(row) for row in rows), default=0)
         header = header or [f"col_{index}" for index in range(width)]
         rows = [row + [""] * (len(header) - len(row)) for row in rows]
@@ -112,8 +129,9 @@ def _cell(value: Any) -> str:
 
 
 @tool(category="output", risk="safe", tags=["chart", "visualize"])
-def render_chart(values: str, labels: str = "", style: str = "bar", width: int = 40,
-                 title: str = "") -> dict[str, Any]:
+def render_chart(
+    values: str, labels: str = "", style: str = "bar", width: int = 40, title: str = ""
+) -> dict[str, Any]:
     """Render an ASCII bar chart from numeric values.
 
     Args:
@@ -134,25 +152,41 @@ def render_chart(values: str, labels: str = "", style: str = "bar", width: int =
             raise ToolExecutionError(f"Not a number: {chunk!r}") from None
     if not numbers:
         raise ToolExecutionError("No numeric values supplied")
-    names = [item.strip().strip('"') for item in str(labels).replace("[", " ").replace("]", " ").split(",")] if labels else []
+    names = (
+        [
+            item.strip().strip('"')
+            for item in str(labels).replace("[", " ").replace("]", " ").split(",")
+        ]
+        if labels
+        else []
+    )
     names = names or [f"#{index + 1}" for index in range(len(numbers))]
     names = (names + [f"#{index + 1}" for index in range(len(numbers))])[: len(numbers)]
     if style == "progress":
         total = max(numbers) or 1.0
-        rows = [[name, render_progress(value, total, width=width)]
-                for name, value in zip(names, numbers, strict=False)]
+        rows = [
+            [name, render_progress(value, total, width=width)]
+            for name, value in zip(names, numbers, strict=False)
+        ]
         text = render_table(rows, ["label", f"progress (max {max(numbers):g})"], borders=False)
     else:
         text = render_bar_chart(dict(zip(names, numbers, strict=False)), width=width)
     if title:
         text = f"{title}\n{text}"
-    return {"style": style, "points": len(numbers), "max": max(numbers), "min": min(numbers),
-            "sum": round(sum(numbers), 6), "text": text}
+    return {
+        "style": style,
+        "points": len(numbers),
+        "max": max(numbers),
+        "min": min(numbers),
+        "sum": round(sum(numbers), 6),
+        "text": text,
+    }
 
 
 @tool(category="output", risk="safe", tags=["markdown", "report", "core"])
-def build_report(title: str, sections: str, summary: str = "", footer: str = "",
-                 include_toc: bool = True) -> dict[str, Any]:
+def build_report(
+    title: str, sections: str, summary: str = "", footer: str = "", include_toc: bool = True
+) -> dict[str, Any]:
     """Assemble a Markdown report from titled sections.
 
     Args:
@@ -203,8 +237,14 @@ def build_report(title: str, sections: str, summary: str = "", footer: str = "",
 
 
 @tool(category="output", risk="write", filesystem=True, tags=["write", "artifact"])
-def write_artifact(path: str, content: str, mode: str = "text", append: bool = False,
-                   create_dirs: bool = True, context: ToolContext | None = None) -> dict[str, Any]:
+def write_artifact(
+    path: str,
+    content: str,
+    mode: str = "text",
+    append: bool = False,
+    create_dirs: bool = True,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Write a deliverable file into the workspace.
 
     Args:
@@ -250,7 +290,9 @@ def write_artifact(path: str, content: str, mode: str = "text", append: bool = F
 
 
 @tool(category="output", risk="safe", tags=["box", "format"])
-def render_box_tool(text: str, title: str = "", style: str = "rounded", width: int = 60) -> dict[str, Any]:
+def render_box_tool(
+    text: str, title: str = "", style: str = "rounded", width: int = 60
+) -> dict[str, Any]:
     """Draw text inside a Unicode box, useful for highlighting a finding.
 
     Args:
@@ -291,7 +333,12 @@ def render_key_value_tool(pairs: str, title: str = "", sort: bool = False) -> di
 
 
 TOOLS: list[Any] = [
-    format_table, render_chart, build_report, write_artifact, render_box_tool, render_key_value_tool,
+    format_table,
+    render_chart,
+    build_report,
+    write_artifact,
+    render_box_tool,
+    render_key_value_tool,
 ]
 """Every tool defined in this module."""
 

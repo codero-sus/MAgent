@@ -13,11 +13,12 @@ from __future__ import annotations
 import sys
 import threading
 import time
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any
 
 from ..types import AgentEvent, EventKind, RunResult, StepRecord, ToolCall, ToolResult
-from ..utils.colors import SPINNER_FRAMES, ASCII_SPINNER_FRAMES, colorize, strip_ansi, themed
+from ..utils.colors import ASCII_SPINNER_FRAMES, SPINNER_FRAMES, colorize, strip_ansi, themed
 from ..utils.tables import render_key_value, render_progress, render_spinner_frame
 from ..utils.text import ellipsize
 from ..utils.timeutil import format_duration
@@ -111,9 +112,16 @@ class RenderOptions:
 class Spinner:
     """A terminal spinner that keeps working while a run is in flight."""
 
-    def __init__(self, sink: OutputSink | None = None, *, message: str = "thinking",
-                 enabled: bool = True, unicode: bool = True, color: bool = True,
-                 interval: float = 0.1) -> None:
+    def __init__(
+        self,
+        sink: OutputSink | None = None,
+        *,
+        message: str = "thinking",
+        enabled: bool = True,
+        unicode: bool = True,
+        color: bool = True,
+        interval: float = 0.1,
+    ) -> None:
         """Prepare the spinner.
 
         Args:
@@ -146,7 +154,7 @@ class Spinner:
             stream = sys.stderr
         try:
             return bool(stream.isatty())
-        except Exception:  # noqa: BLE001 - assume non-interactive
+        except Exception:
             return False
 
     def start(self, message: str = "") -> Spinner:
@@ -186,7 +194,7 @@ class Spinner:
         try:
             self.sink.write("\r\033[K" + text)
             self._drawn = True
-        except Exception:  # noqa: BLE001 - a closed stream just stops the animation
+        except Exception:
             self._stop.set()
 
     def _clear(self) -> None:
@@ -195,7 +203,7 @@ class Spinner:
             return
         try:
             self.sink.write("\r\033[K")
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         self._drawn = False
 
@@ -228,8 +236,13 @@ class Spinner:
 class ResultRenderer:
     """Render agent runs for humans or machines."""
 
-    def __init__(self, options: RenderOptions | None = None, *, sink: OutputSink | None = None,
-                 width: int = 0) -> None:
+    def __init__(
+        self,
+        options: RenderOptions | None = None,
+        *,
+        sink: OutputSink | None = None,
+        width: int = 0,
+    ) -> None:
         """Configure the renderer.
 
         Args:
@@ -242,8 +255,9 @@ class ResultRenderer:
         self._width = width
 
     @classmethod
-    def from_config(cls, config: Any = None, *, sink: OutputSink | None = None,
-                    width: int = 0) -> ResultRenderer:
+    def from_config(
+        cls, config: Any = None, *, sink: OutputSink | None = None, width: int = 0
+    ) -> ResultRenderer:
         """Build a renderer from configuration."""
         return cls(RenderOptions.from_config(config), sink=sink, width=width)
 
@@ -274,8 +288,14 @@ class ResultRenderer:
     def notice(self, text: str, *, level: str = "info") -> None:
         """Print a prefixed status line (info/success/warning/error/muted)."""
         style = LEVEL_STYLES.get(level, "muted")
-        marker = {"info": "•", "success": "✓", "warning": "!", "error": "✗",
-                  "muted": "·", "tool": "→"}.get(level, "•")
+        marker = {
+            "info": "•",
+            "success": "✓",
+            "warning": "!",
+            "error": "✗",
+            "muted": "·",
+            "tool": "→",
+        }.get(level, "•")
         if not self.options.unicode:
             marker = {"✓": "+", "✗": "x", "→": "->", "•": "*"}.get(marker, marker)
         self.print(self.options.style(f"{marker} {text}", style))
@@ -306,8 +326,13 @@ class ResultRenderer:
         if not text:
             return ""
         if self.options.markdown and looks_like_markdown(text):
-            return render_markdown(text, color=self.options.color, unicode=self.options.unicode,
-                                   width=self.width, show_link_urls=self.options.verbose)
+            return render_markdown(
+                text,
+                color=self.options.color,
+                unicode=self.options.unicode,
+                width=self.width,
+                show_link_urls=self.options.verbose,
+            )
         if self.options.color:
             return text
         return strip_ansi(text)
@@ -345,7 +370,9 @@ class ResultRenderer:
 
     def render_tool_call(self, call: ToolCall) -> str:
         """Render one tool invocation."""
-        args = ", ".join(f"{key}={_short(value)}" for key, value in list(call.arguments.items())[:6])
+        args = ", ".join(
+            f"{key}={_short(value)}" for key, value in list(call.arguments.items())[:6]
+        )
         more = len(call.arguments) - 6
         if more > 0:
             args += f", +{more}"
@@ -372,9 +399,14 @@ class ResultRenderer:
         usage = result.usage
         pairs: list[tuple[str, str]] = []
         if usage and not usage.is_empty():
-            pairs.append(("tokens", f"{usage.total_tokens} "
-                                   f"(prompt {usage.prompt_tokens}, "
-                                   f"completion {usage.completion_tokens})"))
+            pairs.append(
+                (
+                    "tokens",
+                    f"{usage.total_tokens} "
+                    f"(prompt {usage.prompt_tokens}, "
+                    f"completion {usage.completion_tokens})",
+                )
+            )
             if usage.cached_tokens:
                 pairs.append(("cached", f"{usage.cached_tokens} ({result.cache_hit_rate():.0%})"))
             if usage.reasoning_tokens:
@@ -423,7 +455,9 @@ class ResultRenderer:
         data = event.data or {}
         if kind == EventKind.TEXT_DELTA:
             return ""
-        if kind in {EventKind.STEP_STARTED,}:
+        if kind in {
+            EventKind.STEP_STARTED,
+        }:
             return self.options.style(f"· step {int(data.get('step', 0)) + 1}", "muted")
         if kind == EventKind.TOOL_CALL:
             call = data.get("call")
@@ -438,23 +472,30 @@ class ResultRenderer:
         if kind == EventKind.TOOL_ERROR:
             return self.render_error(data.get("error") or data.get("message") or "tool failed")
         if kind == EventKind.APPROVAL_REQUESTED:
-            return self.options.style(f"? approval needed for {data.get('name', 'tool')}", "warning")
+            return self.options.style(
+                f"? approval needed for {data.get('name', 'tool')}", "warning"
+            )
         if kind == EventKind.GUARDRAIL_BLOCKED:
             return self.options.style(f"! guardrail: {data.get('reason', 'blocked')}", "warning")
         if kind == EventKind.PLAN_CREATED:
             steps = data.get("steps") or []
             return self.options.style(f"plan: {len(steps)} steps", "info")
         if kind == EventKind.REFLECTION:
-            return self.options.style(f"reflection: {ellipsize(str(data.get('note', '')), 120)}",
-                                      "accent")
+            return self.options.style(
+                f"reflection: {ellipsize(str(data.get('note', '')), 120)}", "accent"
+            )
         if kind == EventKind.LLM_RETRY:
-            return self.options.style(f"retry {data.get('attempt', '?')}: "
-                                      f"{ellipsize(str(data.get('error', '')), 100)}", "warning")
+            return self.options.style(
+                f"retry {data.get('attempt', '?')}: {ellipsize(str(data.get('error', '')), 100)}",
+                "warning",
+            )
         if kind == EventKind.MODEL_SWITCHED:
             return self.options.style(f"model -> {data.get('model', '?')}", "info")
         if kind in {EventKind.RUN_FINISHED, EventKind.RUN_FAILED}:
-            return self.options.style(f"run {'failed' if kind == EventKind.RUN_FAILED else 'finished'}",
-                                      "error" if kind == EventKind.RUN_FAILED else "success")
+            return self.options.style(
+                f"run {'failed' if kind == EventKind.RUN_FAILED else 'finished'}",
+                "error" if kind == EventKind.RUN_FAILED else "success",
+            )
         if self.options.debug:
             return self.options.style(f"· {getattr(kind, 'value', kind)} {data}", "muted")
         return ""
@@ -471,7 +512,9 @@ class ResultRenderer:
         if text:
             self.print(text)
 
-    def stream(self, events: Iterable[AgentEvent], *, show_text: bool = True) -> Iterator[AgentEvent]:
+    def stream(
+        self, events: Iterable[AgentEvent], *, show_text: bool = True
+    ) -> Iterator[AgentEvent]:
         """Pass events through, printing deltas and notable lines as they arrive."""
         for event in events:
             if show_text and self.options.stream_to_terminal and event.kind == EventKind.TEXT_DELTA:
@@ -484,12 +527,17 @@ class ResultRenderer:
 
     def spinner(self, message: str = "thinking") -> Spinner:
         """Create a spinner bound to this renderer's settings."""
-        return Spinner(self.sink, message=message,
-                       enabled=self.options.spinner and not self.options.silent,
-                       unicode=self.options.unicode, color=self.options.color)
+        return Spinner(
+            self.sink,
+            message=message,
+            enabled=self.options.spinner and not self.options.silent,
+            unicode=self.options.unicode,
+            color=self.options.color,
+        )
 
-    def progress(self, items: Sequence[Any], *, total: int = 0, label: str = "",
-                 show: bool | None = None) -> Iterator[Any]:
+    def progress(
+        self, items: Sequence[Any], *, total: int = 0, label: str = "", show: bool | None = None
+    ) -> Iterator[Any]:
         """Iterate items while drawing a progress bar."""
         enabled = self.options.progress if show is None else show
         count = total or len(items)
@@ -498,8 +546,13 @@ class ResultRenderer:
             return
         for index, item in enumerate(items, start=1):
             yield item
-            bar = render_progress(index, count, width=min(30, max(10, self.width // 3)),
-                                  label=label, color=self.options.color)
+            bar = render_progress(
+                index,
+                count,
+                width=min(30, max(10, self.width // 3)),
+                label=label,
+                color=self.options.color,
+            )
             self.sink.write("\r\033[K" + bar)
         self.sink.write("\n")
 
@@ -510,14 +563,18 @@ class ResultRenderer:
             return self.options.style(title, "heading") + "\n" + render_key_value(rendered)
         return render_key_value(rendered)
 
-    def table(self, rows: Sequence[Sequence[Any]], headers: Sequence[str], *,
-              title: str = "") -> str:
+    def table(
+        self, rows: Sequence[Sequence[Any]], headers: Sequence[str], *, title: str = ""
+    ) -> str:
         """Render a bordered table."""
         from ..utils.tables import render_table
 
-        body = render_table([[ _short(cell, 60) for cell in row] for row in rows],
-                            headers=list(headers), unicode_borders=self.options.unicode,
-                            color=self.options.color)
+        body = render_table(
+            [[_short(cell, 60) for cell in row] for row in rows],
+            headers=list(headers),
+            unicode_borders=self.options.unicode,
+            color=self.options.color,
+        )
         if title:
             return self.options.style(title, "heading") + "\n" + body
         return body

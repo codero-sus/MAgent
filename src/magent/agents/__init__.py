@@ -21,11 +21,30 @@ True
 from __future__ import annotations
 
 from .handoff import HANDOFF_PROMPT, Handoff, build_handoff, handoff_block, parse_handoff
-from .presets import (PRESETS, PRESET_CATEGORIES, AgentPreset, build_preset_agent,
-                      describe_presets, get_preset, list_presets, preset_for_task, preset_names,
-                      preset_table, presets_from_config, register_preset)
-from .team import (TEAM_MODES, DebateRound, Team, TeamMember, TeamResult, TeamTurn, run_team,
-                   team_from_presets)
+from .presets import (
+    PRESET_CATEGORIES,
+    PRESETS,
+    AgentPreset,
+    build_preset_agent,
+    describe_presets,
+    get_preset,
+    list_presets,
+    preset_for_task,
+    preset_names,
+    preset_table,
+    presets_from_config,
+    register_preset,
+)
+from .team import (
+    TEAM_MODES,
+    DebateRound,
+    Team,
+    TeamMember,
+    TeamResult,
+    TeamTurn,
+    run_team,
+    team_from_presets,
+)
 
 __all__ = [
     "HANDOFF_PROMPT",

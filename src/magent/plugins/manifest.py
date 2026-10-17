@@ -9,9 +9,10 @@ for capabilities the configuration forbids - *before* executing its code.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from .._version import __version__
 from ..errors import PluginError
@@ -35,8 +36,15 @@ HOOK_POINTS: tuple[str, ...] = (
 )
 """Hook points a plugin may register for."""
 
-CAPABILITIES: tuple[str, ...] = ("tools", "hooks", "personas", "templates", "skills",
-                                 "backends", "metrics")
+CAPABILITIES: tuple[str, ...] = (
+    "tools",
+    "hooks",
+    "personas",
+    "templates",
+    "skills",
+    "backends",
+    "metrics",
+)
 """Things a plugin is allowed to contribute."""
 
 
@@ -138,8 +146,10 @@ class PluginManifest:
         target = Path(path).expanduser()
         raw = read_json(target)
         if not isinstance(raw, dict):
-            raise PluginError(f"plugin manifest {target} is not a JSON object",
-                              details={"path": str(target), "type": type(raw).__name__})
+            raise PluginError(
+                f"plugin manifest {target} is not a JSON object",
+                details={"path": str(target), "type": type(raw).__name__},
+            )
         return cls.from_dict(raw, path=target)
 
     def summary_line(self) -> str:
@@ -210,8 +220,9 @@ def manifest_for(directory: str | Path, *, fallback_name: str = "") -> PluginMan
         try:
             manifest = PluginManifest.from_file(found)
         except (PluginError, OSError, ValueError) as exc:
-            raise PluginError(f"invalid plugin manifest in {root}: {exc}",
-                              details={"path": str(found)}) from exc
+            raise PluginError(
+                f"invalid plugin manifest in {root}: {exc}", details={"path": str(found)}
+            ) from exc
         # ``path`` always names the plugin *directory* - importers join the entry
         # onto it - so the manifest file itself is recorded separately.
         manifest.metadata.setdefault("manifest_file", str(found))
@@ -222,9 +233,13 @@ def manifest_for(directory: str | Path, *, fallback_name: str = "") -> PluginMan
         if not (root / entry).is_file():
             candidates = sorted(root.glob("*.py"))
             entry = candidates[0].name if candidates else entry
-        manifest = PluginManifest(name=name, entry=entry, path=str(root),
-                                  description="(no manifest)",
-                                  metadata={"inferred": True})
+        manifest = PluginManifest(
+            name=name,
+            entry=entry,
+            path=str(root),
+            description="(no manifest)",
+            metadata={"inferred": True},
+        )
     if root.is_dir():
         entry_path = root / manifest.entry
         if entry_path.is_file() and not manifest.checksum:
@@ -260,8 +275,9 @@ def write_manifest(manifest: PluginManifest, directory: str | Path) -> Path:
     root = Path(directory).expanduser()
     root.mkdir(parents=True, exist_ok=True)
     target = root / MANIFEST_NAMES[0]
-    target.write_text(json.dumps(manifest.to_dict(), indent=2, ensure_ascii=False) + "\n",
-                      encoding="utf-8")
+    target.write_text(
+        json.dumps(manifest.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     return target
 
 

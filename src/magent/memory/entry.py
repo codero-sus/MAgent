@@ -8,8 +8,9 @@ is transient: it is filled in by the retrieval pass and never persisted.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 from ..types import new_id
 from ..utils.hashing import content_hash
@@ -19,8 +20,16 @@ DEFAULT_KIND = "note"
 """Entry kind used when a caller does not specify one."""
 
 KINDS: tuple[str, ...] = (
-    "note", "fact", "decision", "preference", "task", "outcome", "entity",
-    "episode", "skill", "error",
+    "note",
+    "fact",
+    "decision",
+    "preference",
+    "task",
+    "outcome",
+    "entity",
+    "episode",
+    "skill",
+    "error",
 )
 """Well-known entry kinds; arbitrary strings are still accepted."""
 
@@ -84,8 +93,14 @@ class MemoryEntry:
         self.access_count += 1
         self.last_accessed = now if now is not None else time.time()
 
-    def update(self, content: str | None = None, *, importance: float | None = None,
-               tags: Iterable[str] | None = None, metadata: dict[str, Any] | None = None) -> None:
+    def update(
+        self,
+        content: str | None = None,
+        *,
+        importance: float | None = None,
+        tags: Iterable[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Update the mutable fields and stamp ``updated_at``."""
         if content is not None:
             self.content = collapse_whitespace(str(content)).strip()
@@ -93,7 +108,9 @@ class MemoryEntry:
         if importance is not None:
             self.importance = max(0.0, min(1.0, float(importance)))
         if tags is not None:
-            self.tags = list(dict.fromkeys(str(tag).strip().lower() for tag in tags if str(tag).strip()))
+            self.tags = list(
+                dict.fromkeys(str(tag).strip().lower() for tag in tags if str(tag).strip())
+            )
         if metadata:
             self.metadata.update(metadata)
         self.updated_at = time.time()
@@ -143,8 +160,9 @@ class MemoryEntry:
         """Serialize to a single JSON line."""
         import json
 
-        return json.dumps(self.to_dict(include_embedding=include_embedding), ensure_ascii=False,
-                          default=str)
+        return json.dumps(
+            self.to_dict(include_embedding=include_embedding), ensure_ascii=False, default=str
+        )
 
     def summary_line(self, *, limit: int = 160) -> str:
         """Render the entry as one line for prompts and CLI output."""

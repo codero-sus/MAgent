@@ -134,16 +134,41 @@ class Verdict:
         return cls(ok=True, action="allow", text=text, stage=stage)
 
     @classmethod
-    def block(cls, reason: str, *, rule: str = "", severity: str = "high", stage: str = "prompt",
-              findings: list[Finding] | None = None, text: str = "") -> Verdict:
+    def block(
+        cls,
+        reason: str,
+        *,
+        rule: str = "",
+        severity: str = "high",
+        stage: str = "prompt",
+        findings: list[Finding] | None = None,
+        text: str = "",
+    ) -> Verdict:
         """Return a verdict that stops the request."""
-        return cls(ok=False, blocked=True, action="block", rule=rule, reason=reason,
-                   severity=severity, stage=stage, findings=list(findings or []), text=text)
+        return cls(
+            ok=False,
+            blocked=True,
+            action="block",
+            rule=rule,
+            reason=reason,
+            severity=severity,
+            stage=stage,
+            findings=list(findings or []),
+            text=text,
+        )
 
     @classmethod
-    def rewrite(cls, text: str, *, action: str = "redact", reason: str = "", rule: str = "",
-                findings: list[Finding] | None = None, stage: str = "prompt",
-                metadata: dict[str, Any] | None = None) -> Verdict:
+    def rewrite(
+        cls,
+        text: str,
+        *,
+        action: str = "redact",
+        reason: str = "",
+        rule: str = "",
+        findings: list[Finding] | None = None,
+        stage: str = "prompt",
+        metadata: dict[str, Any] | None = None,
+    ) -> Verdict:
         """Return a verdict that modified the text but allowed it through.
 
         ``rewritten`` is always set, and caller metadata is merged in rather
@@ -151,9 +176,18 @@ class Verdict:
         """
         merged = {"rewritten": True}
         merged.update(metadata or {})
-        return cls(ok=True, blocked=False, action=action, rule=rule, reason=reason,
-                   severity="medium", text=text, findings=list(findings or []), stage=stage,
-                   metadata=merged)
+        return cls(
+            ok=True,
+            blocked=False,
+            action=action,
+            rule=rule,
+            reason=reason,
+            severity="medium",
+            text=text,
+            findings=list(findings or []),
+            stage=stage,
+            metadata=merged,
+        )
 
     def merge(self, other: Verdict) -> Verdict:
         """Combine two verdicts, keeping the stricter outcome."""
@@ -181,8 +215,10 @@ class Verdict:
 
 def _stricter_action(left: str, right: str) -> str:
     """Return whichever of two actions is more restrictive."""
-    return max((left, right), key=ACTIONS.index) if left in ACTIONS and right in ACTIONS else (
-        right or left
+    return (
+        max((left, right), key=ACTIONS.index)
+        if left in ACTIONS and right in ACTIONS
+        else (right or left)
     )
 
 
@@ -193,4 +229,4 @@ def worst(findings: list[Finding]) -> Finding | None:
     return max(findings, key=lambda item: (item.severity_rank, item.score))
 
 
-__all__ = ["ACTIONS", "Finding", "SEVERITIES", "Verdict", "worst"]
+__all__ = ["ACTIONS", "SEVERITIES", "Finding", "Verdict", "worst"]

@@ -11,11 +11,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _bootstrap import heading, main_guard, workspace  # noqa: E402
-
-from magent.errors import PermissionDeniedError  # noqa: E402
-from magent.tools import ToolContext, build_sandbox, default_registry  # noqa: E402
-from magent.config import default_config  # noqa: E402
+from _bootstrap import heading, main_guard, workspace
+from magent.config import default_config
+from magent.errors import PermissionDeniedError
+from magent.tools import ToolContext, build_sandbox, default_registry
 
 
 def body() -> None:
@@ -23,14 +22,17 @@ def body() -> None:
     registry = default_registry()
     heading(f"{registry.count()} tools in {len(registry.categories())} categories")
     for category, tools in sorted(registry.by_category().items()):
-        print(f"  {category:<12} {len(tools):>3}  {', '.join(item.spec.name for item in tools[:3])}")
+        print(
+            f"  {category:<12} {len(tools):>3}  {', '.join(item.spec.name for item in tools[:3])}"
+        )
         del tools
 
     root = workspace()
     config = default_config()
     config.tools.workspace = str(root)
-    context = ToolContext(config=config, registry=registry,
-                          sandbox=build_sandbox(config, workspace=root))
+    context = ToolContext(
+        config=config, registry=registry, sandbox=build_sandbox(config, workspace=root)
+    )
 
     heading("calling a tool")
     result = registry.get("calculate").run({"expression": "6*7"}, context=context)
@@ -38,7 +40,8 @@ def body() -> None:
 
     written = registry.get("write_file").run(
         {"path": str(root / "notes.txt"), "content": "deploy on fridays at 15:00 UTC"},
-        context=context)
+        context=context,
+    )
     print("write_file ->", written.ok, written.error or "")
 
     read = registry.get("read_file").run({"path": str(root / "notes.txt")}, context=context)

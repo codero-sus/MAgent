@@ -12,9 +12,10 @@ from __future__ import annotations
 import os
 import platform
 import time
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from ..llm.tokens import TokenEstimator, truncate_to_tokens
 from ..utils.text import ellipsize
@@ -111,8 +112,16 @@ class SystemPromptBuilder:
 
     # -- construction --------------------------------------------------------
 
-    def add(self, name: str, text: str, *, weight: int | None = None, required: bool = False,
-            max_chars: int = 0, source: str = "") -> "SystemPromptBuilder":
+    def add(
+        self,
+        name: str,
+        text: str,
+        *,
+        weight: int | None = None,
+        required: bool = False,
+        max_chars: int = 0,
+        source: str = "",
+    ) -> SystemPromptBuilder:
         """Add or replace one section; returns ``self`` for chaining."""
         if not str(text or "").strip():
             self._sections.pop(name, None)
@@ -127,7 +136,7 @@ class SystemPromptBuilder:
         )
         return self
 
-    def extend(self, sections: Iterable[tuple[str, str]], **kwargs: Any) -> "SystemPromptBuilder":
+    def extend(self, sections: Iterable[tuple[str, str]], **kwargs: Any) -> SystemPromptBuilder:
         """Add several ``(name, text)`` sections at once."""
         for name, text in sections:
             self.add(name, text, **kwargs)
@@ -137,30 +146,48 @@ class SystemPromptBuilder:
         """Drop a section; report whether it existed."""
         return self._sections.pop(name, None) is not None
 
-    def identity(self, *, agent_name: str = "MAgent", tagline: str = "a capable local agent",
-                 backend: str = "Cortex LLMHoster", language: str = "the user's language") -> "SystemPromptBuilder":
+    def identity(
+        self,
+        *,
+        agent_name: str = "MAgent",
+        tagline: str = "a capable local agent",
+        backend: str = "Cortex LLMHoster",
+        language: str = "the user's language",
+    ) -> SystemPromptBuilder:
         """Set the identity section from the standard template."""
-        return self.add("identity", SYSTEM_IDENTITY.render(
-            agent_name=agent_name, tagline=tagline, backend=backend, language=language),
-            required=True, source="template:system_identity")
+        return self.add(
+            "identity",
+            SYSTEM_IDENTITY.render(
+                agent_name=agent_name, tagline=tagline, backend=backend, language=language
+            ),
+            required=True,
+            source="template:system_identity",
+        )
 
-    def persona(self, persona: Persona | str = DEFAULT_PERSONA) -> "SystemPromptBuilder":
+    def persona(self, persona: Persona | str = DEFAULT_PERSONA) -> SystemPromptBuilder:
         """Set the persona section from a :class:`Persona` or a name."""
         resolved = persona if isinstance(persona, Persona) else get_persona(str(persona))
         return self.add("persona", resolved.prompt(), source=f"persona:{resolved.name}")
 
-    def environment(self, *, workspace: str | Path | None = None, model: str = "",
-                    extras: str = "") -> "SystemPromptBuilder":
+    def environment(
+        self, *, workspace: str | Path | None = None, model: str = "", extras: str = ""
+    ) -> SystemPromptBuilder:
         """Set the environment section with runtime facts."""
-        return self.add("environment", SYSTEM_ENVIRONMENT.render(
-            workspace=str(workspace or Path.cwd()),
-            platform=f"{platform.system()} {platform.release()} ({platform.machine()})",
-            date=time.strftime("%Y-%m-%d %H:%M %Z").strip(),
-            model=model or "the configured model",
-            extras=extras,
-        ), source="runtime")
+        return self.add(
+            "environment",
+            SYSTEM_ENVIRONMENT.render(
+                workspace=str(workspace or Path.cwd()),
+                platform=f"{platform.system()} {platform.release()} ({platform.machine()})",
+                date=time.strftime("%Y-%m-%d %H:%M %Z").strip(),
+                model=model or "the configured model",
+                extras=extras,
+            ),
+            source="runtime",
+        )
 
-    def rules(self, *, tools: bool = True, safety: bool = True, output: bool = True) -> "SystemPromptBuilder":
+    def rules(
+        self, *, tools: bool = True, safety: bool = True, output: bool = True
+    ) -> SystemPromptBuilder:
         """Set the rules section from the standard rule templates."""
         blocks = []
         if tools:
@@ -171,27 +198,27 @@ class SystemPromptBuilder:
             blocks.append(SYSTEM_OUTPUT_RULES.render())
         return self.add("rules", "\n\n".join(blocks), required=True, source="template:rules")
 
-    def tools(self, block: str, *, max_chars: int = 6000) -> "SystemPromptBuilder":
+    def tools(self, block: str, *, max_chars: int = 6000) -> SystemPromptBuilder:
         """Set the tools section, typically a registry prompt block."""
         return self.add("tools", block, max_chars=max_chars, source="registry")
 
-    def context(self, block: str, *, max_chars: int = 8000) -> "SystemPromptBuilder":
+    def context(self, block: str, *, max_chars: int = 8000) -> SystemPromptBuilder:
         """Set retrieved task context."""
         return self.add("context", block, max_chars=max_chars, source="rag")
 
-    def memory(self, block: str, *, max_chars: int = 3000) -> "SystemPromptBuilder":
+    def memory(self, block: str, *, max_chars: int = 3000) -> SystemPromptBuilder:
         """Set recalled memories."""
         return self.add("memory", block, max_chars=max_chars, source="memory")
 
-    def task(self, block: str) -> "SystemPromptBuilder":
+    def task(self, block: str) -> SystemPromptBuilder:
         """Set a task-specific instruction block."""
         return self.add("task", block, source="task")
 
-    def examples(self, block: str, *, max_chars: int = 2000) -> "SystemPromptBuilder":
+    def examples(self, block: str, *, max_chars: int = 2000) -> SystemPromptBuilder:
         """Set few-shot examples."""
         return self.add("examples", block, max_chars=max_chars, source="few_shot")
 
-    def extra(self, block: str) -> "SystemPromptBuilder":
+    def extra(self, block: str) -> SystemPromptBuilder:
         """Set user supplied extra instructions."""
         return self.add("extra", block, source="config")
 
@@ -260,8 +287,9 @@ class SystemPromptBuilder:
                 self.remove(section.name)
                 continue
             truncated = truncate_to_tokens(section.text, keep, estimator=self.estimator)
-            self.add(section.name, truncated, weight=section.weight, max_chars=0,
-                     source=section.source)
+            self.add(
+                section.name, truncated, weight=section.weight, max_chars=0, source=section.source
+            )
         return max(0, before - self.token_estimate())
 
     def build(self, *, max_tokens: int | None = None) -> str:
@@ -280,9 +308,14 @@ class SystemPromptBuilder:
         return f"<SystemPromptBuilder sections={self.names()} tokens={self.token_estimate()}>"
 
 
-def describe_environment(workspace: str | Path | None = None, *, model: str = "",
-                         include_files: bool = False, max_files: int = 15,
-                         include_git: bool = True) -> str:
+def describe_environment(
+    workspace: str | Path | None = None,
+    *,
+    model: str = "",
+    include_files: bool = False,
+    max_files: int = 15,
+    include_git: bool = True,
+) -> str:
     """Build the extras block of runtime facts about the workspace.
 
     Args:
@@ -300,8 +333,10 @@ def describe_environment(workspace: str | Path | None = None, *, model: str = ""
         entries = []
     lines.append(f"- Workspace entries: {len(entries)}")
     if include_files and entries:
-        lines.append(f"- Top level: {', '.join(entries[:max_files])}"
-                     + (" ..." if len(entries) > max_files else ""))
+        lines.append(
+            f"- Top level: {', '.join(entries[:max_files])}"
+            + (" ..." if len(entries) > max_files else "")
+        )
     if include_git:
         head = root / ".git" / "HEAD"
         try:
@@ -320,8 +355,9 @@ def describe_environment(workspace: str | Path | None = None, *, model: str = ""
     return "\n".join(lines)
 
 
-def tool_prompt_block(registry: Any, *, style: str = "compact", max_chars: int = 6000,
-                      include_hidden: bool = False) -> str:
+def tool_prompt_block(
+    registry: Any, *, style: str = "compact", max_chars: int = 6000, include_hidden: bool = False
+) -> str:
     """Render a registry's tools into a prompt block with a size ceiling.
 
     Falls back to a one-line-per-tool listing when the verbose rendering would
@@ -336,8 +372,10 @@ def tool_prompt_block(registry: Any, *, style: str = "compact", max_chars: int =
     if len(compact) <= max_chars:
         return compact
     names = registry.names()
-    header = (f"{len(names)} tools available: {', '.join(names)}\n"
-              "Call describe_tool(name) for the exact arguments of any of them.")
+    header = (
+        f"{len(names)} tools available: {', '.join(names)}\n"
+        "Call describe_tool(name) for the exact arguments of any of them."
+    )
     return ellipsize(header, max_chars)
 
 
@@ -385,7 +423,9 @@ def build_system_prompt(
     if system_prompt_override.strip():
         return system_prompt_override.strip()
     builder = SystemPromptBuilder(max_tokens=max_tokens)
-    builder.identity(agent_name=agent_name, tagline=tagline, backend=backend_name, language=language)
+    builder.identity(
+        agent_name=agent_name, tagline=tagline, backend=backend_name, language=language
+    )
     builder.persona(persona)
     builder.environment(
         workspace=workspace,
@@ -409,9 +449,9 @@ def build_system_prompt(
 
 
 __all__ = [
-    "PromptSection",
     "SECTION_ORDER",
     "SECTION_WEIGHTS",
+    "PromptSection",
     "SystemPromptBuilder",
     "build_system_prompt",
     "describe_environment",

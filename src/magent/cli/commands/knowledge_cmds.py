@@ -12,10 +12,8 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from ..commands import Command
-from ...errors import MAgentError
 from ...utils.text import ellipsize
-
+from ..commands import Command
 
 # -- memory ------------------------------------------------------------------
 
@@ -41,11 +39,17 @@ def memory_command(ctx: Any, args: argparse.Namespace) -> int:
         if args.id:
             removed = store.delete(args.id)
             store.save()
-            ctx.notice(f"{'deleted' if removed else 'not found'}: {args.id}",
-                       level="success" if removed else "warning")
+            ctx.notice(
+                f"{'deleted' if removed else 'not found'}: {args.id}",
+                level="success" if removed else "warning",
+            )
             return 0 if removed else 1
-        count = store.delete_matching(args.text or "", kind=args.kind or "",
-                                      min_score=args.min_score or 0.0, limit=args.limit or 0)
+        count = store.delete_matching(
+            args.text or "",
+            kind=args.kind or "",
+            min_score=args.min_score or 0.0,
+            limit=args.limit or 0,
+        )
         store.save()
         ctx.notice(f"deleted {count} entries", level="success")
         return 0 if count else 1
@@ -54,32 +58,49 @@ def memory_command(ctx: Any, args: argparse.Namespace) -> int:
         if ctx.config.output.format != "text":
             ctx.emit(stats, fmt=ctx.config.output.format)
             return 0
-        ctx.key_values([(key, value) for key, value in stats.items()
-                        if not isinstance(value, (dict, list))], title="memory")
+        ctx.key_values(
+            [(key, value) for key, value in stats.items() if not isinstance(value, (dict, list))],
+            title="memory",
+        )
         kinds = stats.get("kinds") or {}
         if kinds:
             ctx.print("")
-            ctx.table([(kind, str(count)) for kind, count in sorted(kinds.items())],
-                      ["kind", "entries"])
+            ctx.table(
+                [(kind, str(count)) for kind, count in sorted(kinds.items())], ["kind", "entries"]
+            )
         return 0
     if action == "compact":
         merged = store.compact(threshold=args.threshold or 0.95)
         store.save()
         ctx.notice(f"merged {merged} near-duplicate entries", level="success")
         return 0
-    entries = (store.search(args.text, limit=args.limit or 20) if args.text
-               else (store.recent(args.limit or 20) if action == "recent"
-                     else store.list_entries(limit=args.limit or 20)))
+    entries = (
+        store.search(args.text, limit=args.limit or 20)
+        if args.text
+        else (
+            store.recent(args.limit or 20)
+            if action == "recent"
+            else store.list_entries(limit=args.limit or 20)
+        )
+    )
     if ctx.config.output.format != "text":
         ctx.emit([entry.to_dict() for entry in entries], fmt=ctx.config.output.format)
         return 0
     if not entries:
         ctx.notice("no entries")
         return 0
-    rows = [(entry.id[:12], entry.kind, f"{entry.score:.2f}" if entry.score else "-",
-             ellipsize(entry.content, 62)) for entry in entries]
-    ctx.table(rows, ["id", "kind", "score", "content"],
-              title=f"{len(entries)} entries in {store.path}")
+    rows = [
+        (
+            entry.id[:12],
+            entry.kind,
+            f"{entry.score:.2f}" if entry.score else "-",
+            ellipsize(entry.content, 62),
+        )
+        for entry in entries
+    ]
+    ctx.table(
+        rows, ["id", "kind", "score", "content"], title=f"{len(entries)} entries in {store.path}"
+    )
     return 0
 
 
@@ -101,11 +122,15 @@ def rag_command(ctx: Any, args: argparse.Namespace) -> int:
         report = retriever.ingest(paths)
         path = ctx.save_index()
         if ctx.config.output.format != "text":
-            ctx.emit({"report": report.to_dict(), "index": str(path or "")},
-                     fmt=ctx.config.output.format)
+            ctx.emit(
+                {"report": report.to_dict(), "index": str(path or "")}, fmt=ctx.config.output.format
+            )
             return 0
-        ctx.notice(f"indexed {report.chunks} chunks from {report.files} files "
-                   f"in {report.seconds * 1000:.0f} ms", level="success")
+        ctx.notice(
+            f"indexed {report.chunks} chunks from {report.files} files "
+            f"in {report.seconds * 1000:.0f} ms",
+            level="success",
+        )
         if report.skipped:
             ctx.notice(f"skipped {len(report.skipped)} files", level="muted")
         if path:
@@ -117,15 +142,23 @@ def rag_command(ctx: Any, args: argparse.Namespace) -> int:
             return 2
         result = retriever.retrieve(args.query, limit=args.limit or 5)
         if ctx.config.output.format != "text":
-            ctx.emit({"query": args.query, "chunks": [chunk.to_dict() for chunk in result.chunks]},
-                     fmt=ctx.config.output.format)
+            ctx.emit(
+                {"query": args.query, "chunks": [chunk.to_dict() for chunk in result.chunks]},
+                fmt=ctx.config.output.format,
+            )
             return 0
         if not result.chunks:
             ctx.notice("no matches; run `magent rag ingest` first", level="warning")
             return 1
-        rows = [(f"{index}", f"{chunk.source}:{chunk.start_line}-{chunk.end_line}",
-                 f"{chunk.score:.2f}", ellipsize(chunk.text.replace('\n', ' '), 60))
-                for index, chunk in enumerate(result.chunks, start=1)]
+        rows = [
+            (
+                f"{index}",
+                f"{chunk.source}:{chunk.start_line}-{chunk.end_line}",
+                f"{chunk.score:.2f}",
+                ellipsize(chunk.text.replace("\n", " "), 60),
+            )
+            for index, chunk in enumerate(result.chunks, start=1)
+        ]
         ctx.table(rows, ["#", "location", "score", "text"])
         return 0
     if action == "context":
@@ -138,8 +171,10 @@ def rag_command(ctx: Any, args: argparse.Namespace) -> int:
     if ctx.config.output.format != "text":
         ctx.emit(stats, fmt=ctx.config.output.format)
         return 0
-    ctx.key_values([(key, value) for key, value in stats.items()
-                    if not isinstance(value, (dict, list))], title="retrieval index")
+    ctx.key_values(
+        [(key, value) for key, value in stats.items() if not isinstance(value, (dict, list))],
+        title="retrieval index",
+    )
     return 0
 
 
@@ -160,10 +195,21 @@ def sessions_command(ctx: Any, args: argparse.Namespace) -> int:
         if not infos:
             ctx.notice("no stored sessions")
             return 0
-        rows = [(info.age, info.id[:18], str(info.messages), str(info.tokens),
-                 ellipsize(info.title or info.preview, 44)) for info in infos]
-        ctx.table(rows, ["age", "id", "msgs", "tokens", "title"],
-                  title=f"{len(infos)} sessions in {sessions.store.directory}")
+        rows = [
+            (
+                info.age,
+                info.id[:18],
+                str(info.messages),
+                str(info.tokens),
+                ellipsize(info.title or info.preview, 44),
+            )
+            for info in infos
+        ]
+        ctx.table(
+            rows,
+            ["age", "id", "msgs", "tokens", "title"],
+            title=f"{len(infos)} sessions in {sessions.store.directory}",
+        )
         return 0
     if action == "show":
         record = sessions.load(args.id) if args.id else getattr(sessions, "current", None)
@@ -173,8 +219,13 @@ def sessions_command(ctx: Any, args: argparse.Namespace) -> int:
         if ctx.config.output.format != "text":
             ctx.emit(record.to_dict(), fmt=ctx.config.output.format)
             return 0
-        ctx.write(render_transcript(record, fmt=args.transcript_format or "markdown",
-                                    redact=ctx.config.session.redact_secrets))
+        ctx.write(
+            render_transcript(
+                record,
+                fmt=args.transcript_format or "markdown",
+                redact=ctx.config.session.redact_secrets,
+            )
+        )
         return 0
     if action == "export":
         if not args.id:
@@ -189,8 +240,10 @@ def sessions_command(ctx: Any, args: argparse.Namespace) -> int:
             ctx.error("delete needs a session id")
             return 2
         removed = sessions.delete(args.id)
-        ctx.notice(f"{'deleted' if removed else 'not found'}: {args.id}",
-                   level="success" if removed else "warning")
+        ctx.notice(
+            f"{'deleted' if removed else 'not found'}: {args.id}",
+            level="success" if removed else "warning",
+        )
         return 0 if removed else 1
     if action == "search":
         if not args.query:
@@ -198,8 +251,10 @@ def sessions_command(ctx: Any, args: argparse.Namespace) -> int:
             return 2
         hits = sessions.search(args.query, limit=args.limit or 10)
         if ctx.config.output.format != "text":
-            ctx.emit([{"session": info.to_dict(), "matches": lines} for info, lines in hits],
-                     fmt=ctx.config.output.format)
+            ctx.emit(
+                [{"session": info.to_dict(), "matches": lines} for info, lines in hits],
+                fmt=ctx.config.output.format,
+            )
             return 0
         for info, lines in hits:
             ctx.print(f"{info.id[:18]}  {ellipsize(info.title, 50)}")
@@ -216,8 +271,10 @@ def sessions_command(ctx: Any, args: argparse.Namespace) -> int:
     if ctx.config.output.format != "text":
         ctx.emit(stats, fmt=ctx.config.output.format)
         return 0
-    ctx.key_values([(key, value) for key, value in stats.items()
-                    if not isinstance(value, (dict, list))], title="sessions")
+    ctx.key_values(
+        [(key, value) for key, value in stats.items() if not isinstance(value, (dict, list))],
+        title="sessions",
+    )
     return 0
 
 
@@ -235,7 +292,7 @@ def trace_command(ctx: Any, args: argparse.Namespace) -> int:
         if ctx.config.output.format != "text":
             ctx.emit([line for line in lines if line.strip()], fmt="jsonl")
             return 0
-        for line in lines[-args.limit or -50:]:
+        for line in lines[-args.limit or -50 :]:
             if line.strip():
                 ctx.print(ellipsize(line, 160))
         return 0
@@ -249,50 +306,82 @@ def trace_command(ctx: Any, args: argparse.Namespace) -> int:
         return 0
     ctx.print(trace.flame(width=args.graph_width or ctx.config.output.width or 60))
     ctx.print("")
-    ctx.key_values([("trace", trace.trace_id), ("spans", len(trace.spans())),
-                    ("errors", len(trace.errors())),
-                    ("duration", f"{trace.duration_ms:.1f} ms")])
+    ctx.key_values(
+        [
+            ("trace", trace.trace_id),
+            ("spans", len(trace.spans())),
+            ("errors", len(trace.errors())),
+            ("duration", f"{trace.duration_ms:.1f} ms"),
+        ]
+    )
     return 0
 
 
 def _configure_memory(parser: argparse.ArgumentParser) -> None:
     """Arguments for ``magent memory``."""
-    parser.add_argument("action", nargs="?", default="list",
-                        choices=["list", "search", "recent", "add", "forget", "compact", "stats"],
-                        help="what to do")
+    parser.add_argument(
+        "action",
+        nargs="?",
+        default="list",
+        choices=["list", "search", "recent", "add", "forget", "compact", "stats"],
+        help="what to do",
+    )
     parser.add_argument("text", nargs="?", default="", help="content or query")
     parser.add_argument("--id", default="", help="entry id to forget")
     parser.add_argument("--kind", default="", help="entry kind or filter")
     parser.add_argument("--tag", action="append", default=None, help="tag (repeatable)")
     parser.add_argument("--limit", type=int, default=20, help="maximum entries")
-    parser.add_argument("--min-score", dest="min_score", type=float, default=0.0,
-                        help="forget only entries above this score")
-    parser.add_argument("--threshold", type=float, default=0.95,
-                        help="similarity threshold for compact")
+    parser.add_argument(
+        "--min-score",
+        dest="min_score",
+        type=float,
+        default=0.0,
+        help="forget only entries above this score",
+    )
+    parser.add_argument(
+        "--threshold", type=float, default=0.95, help="similarity threshold for compact"
+    )
 
 
 def _configure_rag(parser: argparse.ArgumentParser) -> None:
     """Arguments for ``magent rag``."""
-    parser.add_argument("action", nargs="?", default="status",
-                        choices=["status", "ingest", "search", "context"], help="what to do")
+    parser.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=["status", "ingest", "search", "context"],
+        help="what to do",
+    )
     parser.add_argument("paths", nargs="*", default=[], help="paths to ingest")
     parser.add_argument("--query", default="", help="search text")
     parser.add_argument("--limit", type=int, default=5, help="chunks to return")
-    parser.add_argument("--no-root", dest="no_root", action="store_true",
-                        help="treat paths as given instead of relative to the workspace")
+    parser.add_argument(
+        "--no-root",
+        dest="no_root",
+        action="store_true",
+        help="treat paths as given instead of relative to the workspace",
+    )
 
 
 def _configure_sessions(parser: argparse.ArgumentParser) -> None:
     """Arguments for ``magent sessions``."""
-    parser.add_argument("action", nargs="?", default="list",
-                        choices=["list", "show", "export", "delete", "search", "prune", "stats"],
-                        help="what to do")
+    parser.add_argument(
+        "action",
+        nargs="?",
+        default="list",
+        choices=["list", "show", "export", "delete", "search", "prune", "stats"],
+        help="what to do",
+    )
     parser.add_argument("id", nargs="?", default="", help="session id")
     parser.add_argument("--query", default="", help="search text")
     parser.add_argument("--tag", default="", help="filter by tag")
     parser.add_argument("--limit", type=int, default=20, help="maximum sessions")
-    parser.add_argument("--transcript-format", dest="transcript_format", default="markdown",
-                        help="transcript format: markdown|text|json|html")
+    parser.add_argument(
+        "--transcript-format",
+        dest="transcript_format",
+        default="markdown",
+        help="transcript format: markdown|text|json|html",
+    )
     parser.add_argument("--output", default="", help="output path for export")
     parser.add_argument("--keep", type=int, default=10, help="sessions kept by prune")
 
@@ -301,8 +390,13 @@ def _configure_trace(parser: argparse.ArgumentParser) -> None:
     """Arguments for ``magent trace``."""
     parser.add_argument("--path", default="", help="read traces from this JSONL file")
     parser.add_argument("--limit", type=int, default=50, help="lines to show")
-    parser.add_argument("--graph-width", dest="graph_width", type=int, default=0,
-                        help="flame graph width (0 uses the output width)")
+    parser.add_argument(
+        "--graph-width",
+        dest="graph_width",
+        type=int,
+        default=0,
+        help="flame graph width (0 uses the output width)",
+    )
 
 
 COMMANDS: tuple[Command, ...] = (
@@ -317,8 +411,11 @@ COMMANDS: tuple[Command, ...] = (
             "Memory is a hybrid BM25/vector store. `list`, `search`, `recent`, `add`, "
             "`forget`, `compact` and `stats` cover everything the agent can do to it."
         ),
-        examples=("magent memory list", "magent memory search 'deployment steps'",
-                  "magent memory add 'the API key lives in ~/.config/magent/secrets.toml'"),
+        examples=(
+            "magent memory list",
+            "magent memory search 'deployment steps'",
+            "magent memory add 'the API key lives in ~/.config/magent/secrets.toml'",
+        ),
     ),
     Command(
         name="rag",
@@ -330,8 +427,11 @@ COMMANDS: tuple[Command, ...] = (
             "Ingest documents, then search them. Chunks keep their source and line "
             "range, so an answer can always be traced back to the file it came from."
         ),
-        examples=("magent rag ingest docs/", "magent rag search 'how do guardrails work'",
-                  "magent rag status"),
+        examples=(
+            "magent rag ingest docs/",
+            "magent rag search 'how do guardrails work'",
+            "magent rag status",
+        ),
     ),
     Command(
         name="sessions",
@@ -339,8 +439,11 @@ COMMANDS: tuple[Command, ...] = (
         run=sessions_command,
         group="knowledge",
         configure=_configure_sessions,
-        examples=("magent sessions list", "magent sessions show --id ses_1234",
-                  "magent sessions search 'flaky test'"),
+        examples=(
+            "magent sessions list",
+            "magent sessions show --id ses_1234",
+            "magent sessions search 'flaky test'",
+        ),
     ),
     Command(
         name="trace",

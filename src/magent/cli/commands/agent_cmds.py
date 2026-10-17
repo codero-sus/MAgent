@@ -15,12 +15,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ..commands import Command
-from ...errors import MAgentError
 from ...output.render import RenderOptions, ResultRenderer
 from ...types import EventKind
 from ...utils.files import read_text_safe, write_json
 from ...utils.text import ellipsize
+from ..commands import Command
 
 PROMPT_FILE_LIMIT = 200_000
 """Characters read from ``--prompt-file`` or ``--file``."""
@@ -47,9 +46,13 @@ def _read_prompt(args: argparse.Namespace, extra: str = "") -> str:
 def _run_options(args: argparse.Namespace) -> dict[str, Any]:
     """Translate CLI flags into ``Agent.run`` options."""
     options: dict[str, Any] = {}
-    for flag, key in (("loop_mode", "loop_mode"), ("persona", "persona"),
-                      ("system", "system"), ("task_block", "task_block"),
-                      ("context_block", "context_block")):
+    for flag, key in (
+        ("loop_mode", "loop_mode"),
+        ("persona", "persona"),
+        ("system", "system"),
+        ("task_block", "task_block"),
+        ("context_block", "context_block"),
+    ):
         value = getattr(args, flag, "") or ""
         if value:
             options[key] = value
@@ -86,7 +89,7 @@ def _context_block(args: argparse.Namespace) -> str:
         target = Path(path).expanduser()
         try:
             text = read_text_safe(target, limit=PROMPT_FILE_LIMIT)
-        except Exception as exc:  # noqa: BLE001 - a missing file is reported, not fatal
+        except Exception as exc:
             blocks.append(f"File {target}: unreadable ({exc})")
             continue
         blocks.append(f"## File: {target}\n\n{text.strip()}")
@@ -104,19 +107,28 @@ def _agent_command(ctx: Any, args: argparse.Namespace, *, extra_prompt: str = ""
     context_block = _context_block(args)
     if context_block:
         options["context_block"] = "\n\n".join(
-            part for part in (options.get("context_block", ""), context_block) if part)
+            part for part in (options.get("context_block", ""), context_block) if part
+        )
     skills = ctx.skills
     if not getattr(args, "no_skills", False) and skills is not None:
         block = skills.prompt_block(prompt)
         if block:
             options["context_block"] = "\n\n".join(
-                part for part in (options.get("context_block", ""), block) if part)
-    agent = ctx.build_preset_agent(preset, name=f"MAgent[{preset}]" if preset else "MAgent") \
-        if preset else ctx.build_agent()
-    want_stream = bool(getattr(args, "stream", False)) and not ctx.quiet \
+                part for part in (options.get("context_block", ""), block) if part
+            )
+    agent = (
+        ctx.build_preset_agent(preset, name=f"MAgent[{preset}]" if preset else "MAgent")
+        if preset
+        else ctx.build_agent()
+    )
+    want_stream = (
+        bool(getattr(args, "stream", False))
+        and not ctx.quiet
         and ctx.config.output.format == "text"
-    renderer = ResultRenderer(RenderOptions.from_config(ctx.config), sink=ctx.sink,
-                              width=ctx.config.output.width or 0)
+    )
+    renderer = ResultRenderer(
+        RenderOptions.from_config(ctx.config), sink=ctx.sink, width=ctx.config.output.width or 0
+    )
     if want_stream:
         events = list(renderer.stream(agent.stream(prompt, **options)))
         result = None
@@ -164,7 +176,7 @@ def _wants_spinner(ctx: Any, args: argparse.Namespace) -> bool:
         return False
     try:
         return bool(sys.stderr.isatty())
-    except Exception:  # noqa: BLE001 - assume non-interactive
+    except Exception:
         return False
 
 
@@ -176,33 +188,62 @@ def configure_run(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--stdin", action="store_true", help="append piped stdin to the prompt")
     parser.add_argument("--preset", default="", help="start from an agent preset")
     parser.add_argument("--persona", default="", help="override the persona")
-    parser.add_argument("--loop-mode", dest="loop_mode", default="",
-                        choices=["", "react", "plan", "reflect", "single"],
-                        help="reasoning loop to use")
-    parser.add_argument("--max-iterations", dest="max_iterations", type=int, default=0,
-                        help="ceiling on reasoning steps")
+    parser.add_argument(
+        "--loop-mode",
+        dest="loop_mode",
+        default="",
+        choices=["", "react", "plan", "reflect", "single"],
+        help="reasoning loop to use",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        dest="max_iterations",
+        type=int,
+        default=0,
+        help="ceiling on reasoning steps",
+    )
     parser.add_argument("--temperature", type=float, default=None, help="sampling temperature")
-    parser.add_argument("--max-tokens", dest="max_tokens", type=int, default=0,
-                        help="ceiling on generated tokens")
-    parser.add_argument("--tool", dest="tools", action="append", default=None,
-                        help="restrict the run to these tools (repeatable)")
+    parser.add_argument(
+        "--max-tokens", dest="max_tokens", type=int, default=0, help="ceiling on generated tokens"
+    )
+    parser.add_argument(
+        "--tool",
+        dest="tools",
+        action="append",
+        default=None,
+        help="restrict the run to these tools (repeatable)",
+    )
     parser.add_argument("--session", default="", help="session id to record into")
     parser.add_argument("--system", default="", help="replace the system prompt")
     parser.add_argument("--context", dest="context_block", default="", help="extra context block")
     parser.add_argument("--task", dest="task_block", default="", help="explicit task block")
     parser.add_argument("--stream", action="store_true", help="stream tokens as they arrive")
-    parser.add_argument("--no-spinner", dest="no_spinner", action="store_true",
-                        help="do not animate a spinner")
-    parser.add_argument("--dry-run", dest="dry_run", action="store_true",
-                        help="plan tool calls without executing them")
+    parser.add_argument(
+        "--no-spinner", dest="no_spinner", action="store_true", help="do not animate a spinner"
+    )
+    parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="plan tool calls without executing them",
+    )
     parser.add_argument("--structured", action="store_true", help="ask for JSON and parse it")
-    parser.add_argument("--include-files", dest="include_files", action="store_true",
-                        help="attach workspace files that match the prompt")
-    parser.add_argument("--recall", dest="memory_recall", action="store_true",
-                        help="recall memories into the prompt")
+    parser.add_argument(
+        "--include-files",
+        dest="include_files",
+        action="store_true",
+        help="attach workspace files that match the prompt",
+    )
+    parser.add_argument(
+        "--recall",
+        dest="memory_recall",
+        action="store_true",
+        help="recall memories into the prompt",
+    )
     parser.add_argument("--remember", action="store_true", help="store the outcome as a memory")
-    parser.add_argument("--no-skills", dest="no_skills", action="store_true",
-                        help="do not inject matching skills")
+    parser.add_argument(
+        "--no-skills", dest="no_skills", action="store_true", help="do not inject matching skills"
+    )
     parser.add_argument("--save", default="", help="write the run result as JSON to this path")
 
 
@@ -211,10 +252,12 @@ def configure_chat(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("prompt", nargs="?", default="", help="first message (optional)")
     parser.add_argument("--preset", default="", help="start from an agent preset")
     parser.add_argument("--session", default="", help="resume or create this session id")
-    parser.add_argument("--no-stream", dest="no_stream", action="store_true",
-                        help="disable token streaming")
-    parser.add_argument("--interactive", action="store_true",
-                        help="keep the session open after the first message")
+    parser.add_argument(
+        "--no-stream", dest="no_stream", action="store_true", help="disable token streaming"
+    )
+    parser.add_argument(
+        "--interactive", action="store_true", help="keep the session open after the first message"
+    )
 
 
 def configure_plan(parser: argparse.ArgumentParser) -> None:
@@ -222,8 +265,9 @@ def configure_plan(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("prompt", nargs="?", default="", help="the goal to plan")
     parser.add_argument("--prompt-file", default="", help="read the goal from a file")
     parser.add_argument("--stdin", action="store_true", help="append piped stdin")
-    parser.add_argument("--max-steps", dest="max_steps", type=int, default=6,
-                        help="ceiling on plan steps")
+    parser.add_argument(
+        "--max-steps", dest="max_steps", type=int, default=6, help="ceiling on plan steps"
+    )
 
 
 def run_command(ctx: Any, args: argparse.Namespace) -> int:
@@ -243,9 +287,12 @@ def chat_command(ctx: Any, args: argparse.Namespace) -> int:
     """``magent chat`` - an interactive session."""
     from ..repl import Repl
 
-    repl = Repl(ctx, session_id=getattr(args, "session", "") or "",
-                preset=getattr(args, "preset", "") or "",
-                stream=not getattr(args, "no_stream", False))
+    repl = Repl(
+        ctx,
+        session_id=getattr(args, "session", "") or "",
+        preset=getattr(args, "preset", "") or "",
+        stream=not getattr(args, "no_stream", False),
+    )
     if args.prompt:
         repl.ask(args.prompt)
         if not getattr(args, "interactive", False):
@@ -268,8 +315,14 @@ def plan_command(ctx: Any, args: argparse.Namespace) -> int:
     ctx.print("")
     rows = []
     for index, step in enumerate(plan.steps, start=1):
-        rows.append((str(index), f"{step.title or ''} {step.detail or ''}".strip(),
-                     step.tool or "-", step.status or "pending"))
+        rows.append(
+            (
+                str(index),
+                f"{step.title or ''} {step.detail or ''}".strip(),
+                step.tool or "-",
+                step.status or "pending",
+            )
+        )
     ctx.table(rows, ["#", "step", "tool", "status"])
     if getattr(plan, "notes", ""):
         ctx.print("")
@@ -289,13 +342,15 @@ def reflect_command(ctx: Any, args: argparse.Namespace) -> int:
     renderer.print_result(result)
     critique = agent.critique(prompt, result.output)
     if ctx.config.output.format != "text":
-        ctx.emit({"result": result.to_dict(), "critique": critique},
-                 fmt=ctx.config.output.format)
+        ctx.emit({"result": result.to_dict(), "critique": critique}, fmt=ctx.config.output.format)
         return 0
     ctx.print("")
     ctx.notice("self-critique")
-    ctx.print(json.dumps(critique, indent=2, default=str) if isinstance(critique, (dict, list))
-              else str(critique))
+    ctx.print(
+        json.dumps(critique, indent=2, default=str)
+        if isinstance(critique, (dict, list))
+        else str(critique)
+    )
     return 0
 
 
@@ -312,9 +367,11 @@ COMMANDS: tuple[Command, ...] = (
             "skills and session recording. Use --stream to watch tokens arrive and "
             "--format json to hand the result to another program."
         ),
-        examples=('magent run "summarise the failures in ci.log"',
-                  'magent run "refactor parse_args" --preset coder --stream',
-                  'git diff | magent run "review this change" --stdin'),
+        examples=(
+            'magent run "summarise the failures in ci.log"',
+            'magent run "refactor parse_args" --preset coder --stream',
+            'git diff | magent run "review this change" --stdin',
+        ),
     ),
     Command(
         name="ask",
@@ -325,8 +382,10 @@ COMMANDS: tuple[Command, ...] = (
         aliases=("a",),
         configure=configure_run,
         description="Like ``run`` but the answer is printed alone, so it composes in a pipe.",
-        examples=('magent ask "what does magent.config do?"',
-                  'magent ask "list the tools" --preset planner'),
+        examples=(
+            'magent ask "what does magent.config do?"',
+            'magent ask "list the tools" --preset planner',
+        ),
     ),
     Command(
         name="chat",
@@ -365,11 +424,11 @@ COMMANDS: tuple[Command, ...] = (
 
 __all__ = [
     "COMMANDS",
+    "ask_command",
+    "chat_command",
     "configure_chat",
     "configure_plan",
     "configure_run",
-    "ask_command",
-    "chat_command",
     "plan_command",
     "reflect_command",
     "run_command",

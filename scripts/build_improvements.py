@@ -20,9 +20,10 @@ import argparse
 import ast
 import json
 import sys
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 """Repository root, derived from this file's location."""
@@ -61,13 +62,43 @@ CATEGORY_BY_PACKAGE: dict[str, str] = {
 }
 """Package name to manifest category."""
 
-SKIP_SYMBOLS: frozenset[str] = frozenset({
-    "__init__", "__post_init__", "__repr__", "__len__", "__contains__", "__iter__", "__getitem__",
-    "__getattr__", "__dir__", "__enter__", "__exit__", "__call__", "__hash__", "__eq__", "__str__",
-    "__bool__", "__del__", "__set_name__", "__init_subclass__", "__class_getitem__", "__format__",
-    "wrapper", "decorate", "composed", "line", "separator", "frame", "walk", "split_with", "handler",
-    "generator", "flush", "close",
-})
+SKIP_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "__init__",
+        "__post_init__",
+        "__repr__",
+        "__len__",
+        "__contains__",
+        "__iter__",
+        "__getitem__",
+        "__getattr__",
+        "__dir__",
+        "__enter__",
+        "__exit__",
+        "__call__",
+        "__hash__",
+        "__eq__",
+        "__str__",
+        "__bool__",
+        "__del__",
+        "__set_name__",
+        "__init_subclass__",
+        "__class_getitem__",
+        "__format__",
+        "wrapper",
+        "decorate",
+        "composed",
+        "line",
+        "separator",
+        "frame",
+        "walk",
+        "split_with",
+        "handler",
+        "generator",
+        "flush",
+        "close",
+    }
+)
 """Dunder and closure helpers are skipped: they are plumbing, not features."""
 
 KIND_BY_PREFIX: tuple[tuple[str, str], ...] = (
@@ -219,18 +250,22 @@ def collect_symbols(path: Path) -> list[Improvement]:
                     continue
                 qualified = _qualified_name(stack, child.name)
                 if _is_documented(child):
-                    out.append(Improvement(
-                        id="", category=category, kind=kind,
-                        title=_docstring_first_line(child),
-                        ref=f"{rel}#{qualified}",
-                        description=_docstring_summary(child),
-                        symbol=qualified,
-                        line=getattr(child, "lineno", 0),
-                        metadata={"defined_in": rel},
-                    ))
-                if isinstance(child, ast.ClassDef):
-                    visit(child, [*stack, child.name])
-                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    out.append(
+                        Improvement(
+                            id="",
+                            category=category,
+                            kind=kind,
+                            title=_docstring_first_line(child),
+                            ref=f"{rel}#{qualified}",
+                            description=_docstring_summary(child),
+                            symbol=qualified,
+                            line=getattr(child, "lineno", 0),
+                            metadata={"defined_in": rel},
+                        )
+                    )
+                if isinstance(child, ast.ClassDef) or isinstance(
+                    child, (ast.FunctionDef, ast.AsyncFunctionDef)
+                ):
                     visit(child, [*stack, child.name])
             else:
                 visit(child, stack)
@@ -264,15 +299,19 @@ def collect_tools(path: Path) -> list[Improvement]:
                     tool_name = str(keyword.value.value)
             tool_name = tool_name or node.name
             summary = _docstring_first_line(node) or f"Tool {tool_name}"
-            out.append(Improvement(
-                id="", category="tools", kind="tool",
-                title=f"Tool ``{tool_name}``: {summary}",
-                ref=f"{rel}#{node.name}",
-                description=_docstring_summary(node),
-                symbol=node.name,
-                line=getattr(node, "lineno", 0),
-                metadata={"tool": tool_name},
-            ))
+            out.append(
+                Improvement(
+                    id="",
+                    category="tools",
+                    kind="tool",
+                    title=f"Tool ``{tool_name}``: {summary}",
+                    ref=f"{rel}#{node.name}",
+                    description=_docstring_summary(node),
+                    symbol=node.name,
+                    line=getattr(node, "lineno", 0),
+                    metadata={"tool": tool_name},
+                )
+            )
     return out
 
 
@@ -301,15 +340,19 @@ def collect_commands(path: Path) -> list[Improvement]:
         if not command_name or not handler:
             continue
         help_text = _constant_text(values.get("help")) or command_name
-        out.append(Improvement(
-            id="", category="interface", kind="command",
-            title=f"CLI command ``magent {command_name}``: {help_text}",
-            ref=f"{rel}#{handler}",
-            description=_constant_text(values.get("description")) or help_text,
-            symbol=handler,
-            line=getattr(node, "lineno", 0),
-            metadata={"command": command_name},
-        ))
+        out.append(
+            Improvement(
+                id="",
+                category="interface",
+                kind="command",
+                title=f"CLI command ``magent {command_name}``: {help_text}",
+                ref=f"{rel}#{handler}",
+                description=_constant_text(values.get("description")) or help_text,
+                symbol=handler,
+                line=getattr(node, "lineno", 0),
+                metadata={"command": command_name},
+            )
+        )
     return out
 
 
@@ -320,8 +363,11 @@ def _constant_text(node: ast.AST | None) -> str:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value.strip()
     if isinstance(node, ast.JoinedStr):
-        parts = [part.value for part in node.values
-                 if isinstance(part, ast.Constant) and isinstance(part.value, str)]
+        parts = [
+            part.value
+            for part in node.values
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+        ]
         return "".join(parts).strip()
     return ""
 
@@ -339,22 +385,27 @@ def collect_markdown(path: Path) -> list[Improvement]:
     """One entry per ``##`` section of a documentation page."""
     rel = relative(path)
     out: list[Improvement] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(),
-                                   start=1):
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+    ):
         text = line.strip()
         if not text.startswith("## "):
             continue
         heading = text[3:].strip()
         if not heading:
             continue
-        out.append(Improvement(
-            id="", category="documentation", kind="section",
-            title=heading,
-            ref=f"{rel}#{heading}",
-            description=f"{heading} (documented in {rel})",
-            symbol=heading,
-            line=number,
-        ))
+        out.append(
+            Improvement(
+                id="",
+                category="documentation",
+                kind="section",
+                title=heading,
+                ref=f"{rel}#{heading}",
+                description=f"{heading} (documented in {rel})",
+                symbol=heading,
+                line=number,
+            )
+        )
     return out
 
 
@@ -376,13 +427,17 @@ def collect_files() -> list[Improvement]:
             rel = relative(path)
             if rel == MANIFEST_PATH.name or rel == DOC_PATH.name:
                 continue
-            out.append(Improvement(
-                id="", category=category, kind=kind,
-                title=f"{rel}",
-                ref=rel,
-                description=f"{kind.replace('-', ' ').capitalize()} shipped at {rel}",
-                metadata={"bytes": path.stat().st_size},
-            ))
+            out.append(
+                Improvement(
+                    id="",
+                    category=category,
+                    kind=kind,
+                    title=f"{rel}",
+                    ref=rel,
+                    description=f"{kind.replace('-', ' ').capitalize()} shipped at {rel}",
+                    metadata={"bytes": path.stat().st_size},
+                )
+            )
     out.extend(collect_make_targets())
     return out
 
@@ -406,13 +461,17 @@ def collect_make_targets() -> list[Improvement]:
             continue
         names = [item for item in target.split() if item]
         for name in names:
-            out.append(Improvement(
-                id="", category="tooling", kind="make-target",
-                title=f"``make {name}``",
-                ref=f"Makefile#{name}:",
-                description=f"Make target {name} (dependencies: {dependencies.strip() or 'none'})",
-                symbol=f"{name}:",
-            ))
+            out.append(
+                Improvement(
+                    id="",
+                    category="tooling",
+                    kind="make-target",
+                    title=f"``make {name}``",
+                    ref=f"Makefile#{name}:",
+                    description=f"Make target {name} (dependencies: {dependencies.strip() or 'none'})",
+                    symbol=f"{name}:",
+                )
+            )
     return out
 
 
@@ -425,8 +484,8 @@ def collect_doc_claims() -> list[Improvement]:
     """
     out: list[Improvement] = []
     source_map = {
-        "skills": (REPO_ROOT / "src/magent/skills/library.py", "name=\"", "Skill"),
-        "presets": (REPO_ROOT / "src/magent/agents/presets.py", "name=\"", "AgentPreset"),
+        "skills": (REPO_ROOT / "src/magent/skills/library.py", 'name="', "Skill"),
+        "presets": (REPO_ROOT / "src/magent/agents/presets.py", 'name="', "AgentPreset"),
     }
     for category, (path, marker, _kind) in source_map.items():
         if not path.is_file():
@@ -449,13 +508,17 @@ def collect_doc_claims() -> list[Improvement]:
                 continue
             label = values["name"]
             description = values.get("description") or values.get("body", "")[:120]
-            out.append(Improvement(
-                id="", category=category, kind=category[:-1] or "item",
-                title=f"{category[:-1].capitalize()} ``{label}``: {description or 'shipped feature'}",
-                ref=f"{rel}#{label}",
-                description=description,
-                symbol=label,
-            ))
+            out.append(
+                Improvement(
+                    id="",
+                    category=category,
+                    kind=category[:-1] or "item",
+                    title=f"{category[:-1].capitalize()} ``{label}``: {description or 'shipped feature'}",
+                    ref=f"{rel}#{label}",
+                    description=description,
+                    symbol=label,
+                )
+            )
     personas = REPO_ROOT / "src/magent/prompts/personas.py"
     if personas.is_file():
         rel = relative(personas)
@@ -466,16 +529,23 @@ def collect_doc_claims() -> list[Improvement]:
                 name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
                 if name != "Persona":
                     continue
-                values = {keyword.arg: _constant_text(keyword.value) for keyword in node.keywords
-                          if keyword.arg}
+                values = {
+                    keyword.arg: _constant_text(keyword.value)
+                    for keyword in node.keywords
+                    if keyword.arg
+                }
                 if not values.get("name"):
                     continue
-                out.append(Improvement(
-                    id="", category="prompting", kind="persona",
-                    title=f"Persona ``{values['name']}``: {values.get('role') or 'shipped persona'}",
-                    ref=f"{rel}#{values['name']}",
-                    symbol=values["name"],
-                ))
+                out.append(
+                    Improvement(
+                        id="",
+                        category="prompting",
+                        kind="persona",
+                        title=f"Persona ``{values['name']}``: {values.get('role') or 'shipped persona'}",
+                        ref=f"{rel}#{values['name']}",
+                        symbol=values["name"],
+                    )
+                )
     templates = REPO_ROOT / "src/magent/prompts/templates.py"
     if templates.is_file():
         rel = relative(templates)
@@ -486,16 +556,23 @@ def collect_doc_claims() -> list[Improvement]:
                 name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
                 if name not in {"PromptTemplate", "_template"}:
                     continue
-                values = {keyword.arg: _constant_text(keyword.value) for keyword in node.keywords
-                          if keyword.arg}
+                values = {
+                    keyword.arg: _constant_text(keyword.value)
+                    for keyword in node.keywords
+                    if keyword.arg
+                }
                 if not values.get("name"):
                     continue
-                out.append(Improvement(
-                    id="", category="prompting", kind="template",
-                    title=f"Prompt template ``{values['name']}``",
-                    ref=f"{rel}#{values['name']}",
-                    symbol=values["name"],
-                ))
+                out.append(
+                    Improvement(
+                        id="",
+                        category="prompting",
+                        kind="template",
+                        title=f"Prompt template ``{values['name']}``",
+                        ref=f"{rel}#{values['name']}",
+                        symbol=values["name"],
+                    )
+                )
     return out
 
 
@@ -512,14 +589,18 @@ def collect_errors() -> list[Improvement]:
             continue
         if not any(_attribute_name(base) == "MAgentError" for base in node.bases):
             continue
-        out.append(Improvement(
-            id="", category="foundation", kind="error",
-            title=f"Typed error ``{node.name}``: {_docstring_first_line(node) or node.name}",
-            ref=f"{rel}#{node.name}",
-            description=_docstring_summary(node),
-            symbol=node.name,
-            line=getattr(node, "lineno", 0),
-        ))
+        out.append(
+            Improvement(
+                id="",
+                category="foundation",
+                kind="error",
+                title=f"Typed error ``{node.name}``: {_docstring_first_line(node) or node.name}",
+                ref=f"{rel}#{node.name}",
+                description=_docstring_summary(node),
+                symbol=node.name,
+                line=getattr(node, "lineno", 0),
+            )
+        )
     return out
 
 
@@ -605,19 +686,28 @@ def render_markdown(manifest: dict[str, Any]) -> str:
     ]
     for category, count in manifest["categories"].items():
         lines.append(f"| {category} | {count} |")
-    lines.extend([
-        "",
-        "| kind | count |",
-        "| --- | --- |",
-    ])
+    lines.extend(
+        [
+            "",
+            "| kind | count |",
+            "| --- | --- |",
+        ]
+    )
     for kind, count in manifest["kinds"].items():
         lines.append(f"| {kind} | {count} |")
     by_category: dict[str, list[dict[str, Any]]] = {}
     for entry in entries:
         by_category.setdefault(entry["category"], []).append(entry)
     for category in sorted(by_category):
-        lines.extend(["", f"## {category} ({len(by_category[category])})", "",
-                      "| id | ref | what it is |", "| --- | --- | --- |"])
+        lines.extend(
+            [
+                "",
+                f"## {category} ({len(by_category[category])})",
+                "",
+                "| id | ref | what it is |",
+                "| --- | --- | --- |",
+            ]
+        )
         for entry in by_category[category]:
             title = entry["title"].replace("|", "\\|")
             lines.append(f"| {entry['id']} | `{entry['ref']}` | {title} |")
@@ -629,8 +719,10 @@ def write_manifest(*, check: bool = False) -> int:
     """Write both files (or verify they are current) and return an exit code."""
     manifest = build_manifest()
     if manifest["total"] < MINIMUM_IMPROVEMENTS:
-        print(f"error: only {manifest['total']} improvements found, "
-              f"{MINIMUM_IMPROVEMENTS} expected", file=sys.stderr)
+        print(
+            f"error: only {manifest['total']} improvements found, {MINIMUM_IMPROVEMENTS} expected",
+            file=sys.stderr,
+        )
         return 1
     payload = json.dumps(manifest, indent=1, sort_keys=False) + "\n"
     markdown = render_markdown(manifest)
@@ -641,8 +733,11 @@ def write_manifest(*, check: bool = False) -> int:
         if not DOC_PATH.is_file() or DOC_PATH.read_text(encoding="utf-8") != markdown:
             stale.append(str(DOC_PATH.name))
         if stale:
-            print(f"error: {', '.join(stale)} is out of date; run "
-                  f"`python scripts/build_improvements.py`", file=sys.stderr)
+            print(
+                f"error: {', '.join(stale)} is out of date; run "
+                f"`python scripts/build_improvements.py`",
+                file=sys.stderr,
+            )
             return 1
         print(f"up to date: {manifest['total']} improvements")
         return 0
@@ -657,8 +752,9 @@ def write_manifest(*, check: bool = False) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     """Command line entry point."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true",
-                        help="fail if the generated files are out of date")
+    parser.add_argument(
+        "--check", action="store_true", help="fail if the generated files are out of date"
+    )
     args = parser.parse_args(argv)
     return write_manifest(check=args.check)
 

@@ -14,9 +14,10 @@ context builder can compress like any other.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..errors import SkillNotFoundError
 from ..logging_ import get_logger
@@ -233,15 +234,24 @@ class SkillMatch:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the match."""
-        return {"skill": self.skill.name, "score": round(self.score, 4),
-                "reasons": list(self.reasons)}
+        return {
+            "skill": self.skill.name,
+            "score": round(self.score, 4),
+            "reasons": list(self.reasons),
+        }
 
 
 class SkillLibrary:
     """A collection of skills with lookup, matching and prompt rendering."""
 
-    def __init__(self, skills: Iterable[Skill] = (), *, include_builtins: bool = True,
-                 directory: str | Path | None = None, use_triggers: bool = True) -> None:
+    def __init__(
+        self,
+        skills: Iterable[Skill] = (),
+        *,
+        include_builtins: bool = True,
+        directory: str | Path | None = None,
+        use_triggers: bool = True,
+    ) -> None:
         """Build a library.
 
         Args:
@@ -294,8 +304,7 @@ class SkillLibrary:
         key = str(name).strip().lower().replace(" ", "-")
         if key in self.skills:
             return self.skills[key]
-        raise SkillNotFoundError(f"unknown skill {name!r}",
-                                 details={"known": self.names()})
+        raise SkillNotFoundError(f"unknown skill {name!r}", details={"known": self.names()})
 
     def has(self, name: str) -> bool:
         """True when a skill exists."""
@@ -335,13 +344,15 @@ class SkillLibrary:
         matches.sort(key=lambda item: (-item.score, -item.skill.priority, item.skill.name))
         return matches[: max(1, limit)]
 
-    def for_task(self, task: str, *, limit: int = MAX_SKILLS_IN_PROMPT,
-                 min_score: float = 0.24) -> list[Skill]:
+    def for_task(
+        self, task: str, *, limit: int = MAX_SKILLS_IN_PROMPT, min_score: float = 0.24
+    ) -> list[Skill]:
         """Return the skills that apply to a task, highest scoring first."""
         if not self.use_triggers or not task.strip():
             return []
-        matches = [match for match in self.search(task, limit=limit * 3)
-                   if match.score >= min_score]
+        matches = [
+            match for match in self.search(task, limit=limit * 3) if match.score >= min_score
+        ]
         chosen: list[Skill] = []
         for match in matches:
             chosen.append(match.skill)
@@ -361,7 +372,7 @@ class SkillLibrary:
             try:
                 self.add(load_skill(path), replace=replace)
                 loaded += 1
-            except Exception as exc:  # noqa: BLE001 - one bad file must not stop the load
+            except Exception as exc:
                 self.load_errors.append(f"{path}: {exc}")
                 LOGGER.warning("skill %s failed to load: %s", path, exc)
         return loaded
@@ -381,8 +392,13 @@ class SkillLibrary:
 
     # -- rendering -----------------------------------------------------------
 
-    def render(self, skills: Sequence[Skill] | None = None, *, style: str = "heading",
-               max_chars: int = 6_000) -> str:
+    def render(
+        self,
+        skills: Sequence[Skill] | None = None,
+        *,
+        style: str = "heading",
+        max_chars: int = 6_000,
+    ) -> str:
         """Render skills as prompt text."""
         chosen = list(skills if skills is not None else self.skills.values())
         if not chosen:
@@ -390,14 +406,21 @@ class SkillLibrary:
         body = "\n\n".join(skill.render(style=style) for skill in chosen if not skill.is_empty)
         return ellipsize(body, max_chars)
 
-    def prompt_block(self, task: str, *, limit: int = MAX_SKILLS_IN_PROMPT,
-                     style: str = "heading", max_chars: int = 4_000) -> str:
+    def prompt_block(
+        self,
+        task: str,
+        *,
+        limit: int = MAX_SKILLS_IN_PROMPT,
+        style: str = "heading",
+        max_chars: int = 4_000,
+    ) -> str:
         """Return instructions for whichever skills match a task (may be empty)."""
         chosen = self.for_task(task, limit=limit)
         if not chosen:
             return ""
-        header = ("Procedures that apply to this task - follow them unless the user asks "
-                  "otherwise:\n")
+        header = (
+            "Procedures that apply to this task - follow them unless the user asks otherwise:\n"
+        )
         return header + self.render(chosen, style=style, max_chars=max_chars)
 
     def combined(self, names: Sequence[str], *, name: str = "combined") -> Skill:
@@ -412,8 +435,9 @@ class SkillLibrary:
         return {
             "skills": len(skills),
             "builtins": len(BUILTIN_SKILLS),
-            "custom": sum(1 for skill in skills
-                          if skill.name not in {item.name for item in BUILTIN_SKILLS}),
+            "custom": sum(
+                1 for skill in skills if skill.name not in {item.name for item in BUILTIN_SKILLS}
+            ),
             "disabled": sum(1 for skill in skills if not skill.enabled),
             "tags": len(self.tags()),
             "words": sum(skill.words for skill in skills),
@@ -424,14 +448,20 @@ class SkillLibrary:
     def describe(self) -> str:
         """One-paragraph description of the library."""
         info = self.stats()
-        return (f"{info['skills']} skills ({info['builtins']} built-in, {info['custom']} custom), "
-                f"{info['words']} words of instructions")
+        return (
+            f"{info['skills']} skills ({info['builtins']} built-in, {info['custom']} custom), "
+            f"{info['words']} words of instructions"
+        )
 
     def to_dict(self, *, include_body: bool = False) -> dict[str, Any]:
         """Serialise the library."""
-        return {"skills": {name: skill.to_dict(include_body=include_body)
-                           for name, skill in sorted(self.skills.items())},
-                "stats": self.stats()}
+        return {
+            "skills": {
+                name: skill.to_dict(include_body=include_body)
+                for name, skill in sorted(self.skills.items())
+            },
+            "stats": self.stats(),
+        }
 
     def __len__(self) -> int:
         """Number of skills."""
@@ -478,8 +508,9 @@ def get_library(*, reload: bool = False, directory: str | Path | None = None) ->
     return _LIBRARY
 
 
-def build_library(config: Any = None, *, workspace: str | Path | None = None,
-                  include_builtins: bool = True) -> SkillLibrary:
+def build_library(
+    config: Any = None, *, workspace: str | Path | None = None, include_builtins: bool = True
+) -> SkillLibrary:
     """Build a library for a configuration and workspace.
 
     Skills are looked up in ``.magent/skills``, ``skills`` and ``docs/skills``
@@ -500,8 +531,10 @@ def build_library(config: Any = None, *, workspace: str | Path | None = None,
 def skill_table(library: SkillLibrary | None = None) -> list[tuple[str, str, str, str]]:
     """Rows of ``(name, priority, tags, description)`` for CLI tables."""
     lib = library or get_library()
-    return [(skill.name, str(skill.priority), ",".join(skill.tags[:3]), skill.description)
-            for skill in lib]
+    return [
+        (skill.name, str(skill.priority), ",".join(skill.tags[:3]), skill.description)
+        for skill in lib
+    ]
 
 
 def render_skill_prompt(skills: Sequence[Skill], *, style: str = "heading") -> str:

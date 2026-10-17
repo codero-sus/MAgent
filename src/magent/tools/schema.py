@@ -40,7 +40,9 @@ TYPE_CHECKS: dict[str, tuple[type, ...]] = {
 FORMATS: dict[str, re.Pattern[str] | None] = {
     "email": re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
     "uri": None,
-    "uuid": re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    "uuid": re.compile(
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    ),
     "date": re.compile(r"^\d{4}-\d{2}-\d{2}$"),
     "date-time": re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"),
     "ipv4": None,
@@ -167,11 +169,25 @@ class SchemaValidator:
             if current is _INVALID:
                 return value
         if "const" in schema and current != schema["const"]:
-            errors.append(ValidationError(path, f"must equal {_safe(schema['const'])}", "const",
-                                          schema["const"], current))
-        if "enum" in schema and isinstance(schema["enum"], Sequence) and current not in schema["enum"]:
-            errors.append(ValidationError(path, f"must be one of {list(schema['enum'])}", "enum",
-                                          list(schema["enum"]), current))
+            errors.append(
+                ValidationError(
+                    path, f"must equal {_safe(schema['const'])}", "const", schema["const"], current
+                )
+            )
+        if (
+            "enum" in schema
+            and isinstance(schema["enum"], Sequence)
+            and current not in schema["enum"]
+        ):
+            errors.append(
+                ValidationError(
+                    path,
+                    f"must be one of {list(schema['enum'])}",
+                    "enum",
+                    list(schema["enum"]),
+                    current,
+                )
+            )
         for combiner in ("allOf", "anyOf", "oneOf"):
             sub_schemas = schema.get(combiner)
             if isinstance(sub_schemas, Sequence) and sub_schemas:
@@ -193,8 +209,14 @@ class SchemaValidator:
             current = self._check_object(current, schema, path, errors)
         return current
 
-    def _check_type(self, value: Any, declared: Any, path: str, errors: list[ValidationError],
-                    schema: Mapping[str, Any]) -> Any:
+    def _check_type(
+        self,
+        value: Any,
+        declared: Any,
+        path: str,
+        errors: list[ValidationError],
+        schema: Mapping[str, Any],
+    ) -> Any:
         """Verify (and optionally coerce) the declared type."""
         names = [declared] if isinstance(declared, str) else list(declared)
         for name in names:
@@ -210,13 +232,24 @@ class SchemaValidator:
             if coerced is not _INVALID:
                 return coerced
         errors.append(
-            ValidationError(path, f"expected type {'/'.join(map(str, names))}, got {type(value).__name__}",
-                            "type", names, type(value).__name__)
+            ValidationError(
+                path,
+                f"expected type {'/'.join(map(str, names))}, got {type(value).__name__}",
+                "type",
+                names,
+                type(value).__name__,
+            )
         )
         return _INVALID
 
-    def _check_combiner(self, combiner: str, value: Any, schemas: Sequence[Any], path: str,
-                        errors: list[ValidationError]) -> None:
+    def _check_combiner(
+        self,
+        combiner: str,
+        value: Any,
+        schemas: Sequence[Any],
+        path: str,
+        errors: list[ValidationError],
+    ) -> None:
         """Validate ``allOf`` / ``anyOf`` / ``oneOf`` branches."""
         matches = 0
         for sub_schema in schemas:
@@ -229,26 +262,49 @@ class SchemaValidator:
         if combiner == "allOf" and matches != len([s for s in schemas if isinstance(s, Mapping)]):
             errors.append(ValidationError(path, "must satisfy every 'allOf' branch", combiner))
         elif combiner == "anyOf" and matches == 0:
-            errors.append(ValidationError(path, "must satisfy at least one 'anyOf' branch", combiner))
+            errors.append(
+                ValidationError(path, "must satisfy at least one 'anyOf' branch", combiner)
+            )
         elif combiner == "oneOf" and matches != 1:
-            errors.append(ValidationError(path, f"must satisfy exactly one 'oneOf' branch (matched {matches})",
-                                          combiner))
+            errors.append(
+                ValidationError(
+                    path, f"must satisfy exactly one 'oneOf' branch (matched {matches})", combiner
+                )
+            )
 
-    def _check_string(self, value: str, schema: Mapping[str, Any], path: str,
-                      errors: list[ValidationError]) -> None:
+    def _check_string(
+        self, value: str, schema: Mapping[str, Any], path: str, errors: list[ValidationError]
+    ) -> None:
         """Validate string constraints."""
         if "minLength" in schema and len(value) < int(schema["minLength"]):
-            errors.append(ValidationError(path, f"must be at least {schema['minLength']} characters",
-                                          "minLength", schema["minLength"], len(value)))
+            errors.append(
+                ValidationError(
+                    path,
+                    f"must be at least {schema['minLength']} characters",
+                    "minLength",
+                    schema["minLength"],
+                    len(value),
+                )
+            )
         if "maxLength" in schema and len(value) > int(schema["maxLength"]):
-            errors.append(ValidationError(path, f"must be at most {schema['maxLength']} characters",
-                                          "maxLength", schema["maxLength"], len(value)))
+            errors.append(
+                ValidationError(
+                    path,
+                    f"must be at most {schema['maxLength']} characters",
+                    "maxLength",
+                    schema["maxLength"],
+                    len(value),
+                )
+            )
         pattern = schema.get("pattern")
         if pattern:
             try:
                 if not re.search(str(pattern), value):
-                    errors.append(ValidationError(path, f"must match pattern {pattern!r}", "pattern",
-                                                  pattern, value))
+                    errors.append(
+                        ValidationError(
+                            path, f"must match pattern {pattern!r}", "pattern", pattern, value
+                        )
+                    )
             except re.error as exc:
                 errors.append(ValidationError(path, f"invalid pattern in schema: {exc}", "pattern"))
         fmt = schema.get("format")
@@ -256,36 +312,75 @@ class SchemaValidator:
             if not _check_format(value, str(fmt)):
                 errors.append(ValidationError(path, f"must be a valid {fmt}", "format", fmt, value))
 
-    def _check_number(self, value: float, schema: Mapping[str, Any], path: str,
-                      errors: list[ValidationError]) -> None:
+    def _check_number(
+        self, value: float, schema: Mapping[str, Any], path: str, errors: list[ValidationError]
+    ) -> None:
         """Validate numeric constraints."""
         if "minimum" in schema and value < schema["minimum"]:
-            errors.append(ValidationError(path, f"must be >= {schema['minimum']}", "minimum",
-                                          schema["minimum"], value))
+            errors.append(
+                ValidationError(
+                    path, f"must be >= {schema['minimum']}", "minimum", schema["minimum"], value
+                )
+            )
         if "maximum" in schema and value > schema["maximum"]:
-            errors.append(ValidationError(path, f"must be <= {schema['maximum']}", "maximum",
-                                          schema["maximum"], value))
+            errors.append(
+                ValidationError(
+                    path, f"must be <= {schema['maximum']}", "maximum", schema["maximum"], value
+                )
+            )
         if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
-            errors.append(ValidationError(path, f"must be > {schema['exclusiveMinimum']}",
-                                          "exclusiveMinimum", schema["exclusiveMinimum"], value))
+            errors.append(
+                ValidationError(
+                    path,
+                    f"must be > {schema['exclusiveMinimum']}",
+                    "exclusiveMinimum",
+                    schema["exclusiveMinimum"],
+                    value,
+                )
+            )
         if "exclusiveMaximum" in schema and value >= schema["exclusiveMaximum"]:
-            errors.append(ValidationError(path, f"must be < {schema['exclusiveMaximum']}",
-                                          "exclusiveMaximum", schema["exclusiveMaximum"], value))
-        if "multipleOf" in schema and schema["multipleOf"]:
+            errors.append(
+                ValidationError(
+                    path,
+                    f"must be < {schema['exclusiveMaximum']}",
+                    "exclusiveMaximum",
+                    schema["exclusiveMaximum"],
+                    value,
+                )
+            )
+        if schema.get("multipleOf"):
             divisor = float(schema["multipleOf"])
             if divisor and abs((value / divisor) - round(value / divisor)) > 1e-9:
-                errors.append(ValidationError(path, f"must be a multiple of {divisor}", "multipleOf",
-                                              divisor, value))
+                errors.append(
+                    ValidationError(
+                        path, f"must be a multiple of {divisor}", "multipleOf", divisor, value
+                    )
+                )
 
-    def _check_array(self, value: list, schema: Mapping[str, Any], path: str,
-                     errors: list[ValidationError]) -> list:
+    def _check_array(
+        self, value: list, schema: Mapping[str, Any], path: str, errors: list[ValidationError]
+    ) -> list:
         """Validate array constraints and each item."""
         if "minItems" in schema and len(value) < int(schema["minItems"]):
-            errors.append(ValidationError(path, f"must have at least {schema['minItems']} items",
-                                          "minItems", schema["minItems"], len(value)))
+            errors.append(
+                ValidationError(
+                    path,
+                    f"must have at least {schema['minItems']} items",
+                    "minItems",
+                    schema["minItems"],
+                    len(value),
+                )
+            )
         if "maxItems" in schema and len(value) > int(schema["maxItems"]):
-            errors.append(ValidationError(path, f"must have at most {schema['maxItems']} items",
-                                          "maxItems", schema["maxItems"], len(value)))
+            errors.append(
+                ValidationError(
+                    path,
+                    f"must have at most {schema['maxItems']} items",
+                    "maxItems",
+                    schema["maxItems"],
+                    len(value),
+                )
+            )
         if schema.get("uniqueItems"):
             seen: list[str] = []
             for item in value:
@@ -308,8 +403,9 @@ class SchemaValidator:
             return out
         return value
 
-    def _check_object(self, value: dict, schema: Mapping[str, Any], path: str,
-                      errors: list[ValidationError]) -> dict:
+    def _check_object(
+        self, value: dict, schema: Mapping[str, Any], path: str, errors: list[ValidationError]
+    ) -> dict:
         """Validate object constraints and each declared property."""
         properties = schema.get("properties") or {}
         required = schema.get("required") or []
@@ -317,31 +413,46 @@ class SchemaValidator:
         if isinstance(properties, Mapping):
             for key, sub_schema in properties.items():
                 if key in out and isinstance(sub_schema, Mapping):
-                    out[key] = self._validate(out[key], sub_schema, f"{path}.{key}" if path else key, errors)
+                    out[key] = self._validate(
+                        out[key], sub_schema, f"{path}.{key}" if path else key, errors
+                    )
                 elif key not in out and isinstance(sub_schema, Mapping) and "default" in sub_schema:
                     out[key] = sub_schema["default"]
         if isinstance(required, Sequence):
             for key in required:
                 if key not in value or value[key] is None:
-                    errors.append(ValidationError(
-                        f"{path}.{key}" if path else str(key),
-                        f"missing required property '{key}'",
-                        "required",
-                        list(required),
-                        sorted(value),
-                    ))
+                    errors.append(
+                        ValidationError(
+                            f"{path}.{key}" if path else str(key),
+                            f"missing required property '{key}'",
+                            "required",
+                            list(required),
+                            sorted(value),
+                        )
+                    )
         additional = schema.get("additionalProperties")
         if additional is False and isinstance(properties, Mapping):
             extras = sorted(set(value) - set(properties))
             if extras:
-                errors.append(ValidationError(path, f"unexpected properties: {extras}",
-                                              "additionalProperties"))
+                errors.append(
+                    ValidationError(
+                        path, f"unexpected properties: {extras}", "additionalProperties"
+                    )
+                )
         if "minProperties" in schema and len(value) < int(schema["minProperties"]):
-            errors.append(ValidationError(path, f"must have at least {schema['minProperties']} properties",
-                                          "minProperties"))
+            errors.append(
+                ValidationError(
+                    path,
+                    f"must have at least {schema['minProperties']} properties",
+                    "minProperties",
+                )
+            )
         if "maxProperties" in schema and len(value) > int(schema["maxProperties"]):
-            errors.append(ValidationError(path, f"must have at most {schema['maxProperties']} properties",
-                                          "maxProperties"))
+            errors.append(
+                ValidationError(
+                    path, f"must have at most {schema['maxProperties']} properties", "maxProperties"
+                )
+            )
         pattern_properties = schema.get("patternProperties")
         if isinstance(pattern_properties, Mapping):
             for pattern, sub_schema in pattern_properties.items():
@@ -353,8 +464,9 @@ class SchemaValidator:
                     continue
                 for key in list(out):
                     if matcher.search(key):
-                        out[key] = self._validate(out[key], sub_schema,
-                                                  f"{path}.{key}" if path else key, errors)
+                        out[key] = self._validate(
+                            out[key], sub_schema, f"{path}.{key}" if path else key, errors
+                        )
         return out
 
 
@@ -453,11 +565,15 @@ def is_valid(value: Any, schema: Mapping[str, Any] | None) -> bool:
     return SchemaValidator().is_valid(value, schema)
 
 
-def object_schema(properties: dict[str, Any], required: list[str] | None = None,
-                  *, additional: bool = False) -> dict[str, Any]:
+def object_schema(
+    properties: dict[str, Any], required: list[str] | None = None, *, additional: bool = False
+) -> dict[str, Any]:
     """Build an object schema dictionary from a property map."""
-    schema: dict[str, Any] = {"type": "object", "properties": properties,
-                              "additionalProperties": additional}
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": additional,
+    }
     if required:
         schema["required"] = list(required)
     return schema
@@ -518,8 +634,8 @@ def enum_schema(values: Sequence[Any], description: str = "") -> dict[str, Any]:
 
 __all__ = [
     "FORMATS",
-    "SchemaValidator",
     "TYPE_CHECKS",
+    "SchemaValidator",
     "ValidationError",
     "ValidationResult",
     "array_schema",

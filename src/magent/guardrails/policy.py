@@ -16,14 +16,22 @@ import re
 import threading
 import time
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any
 from urllib.parse import urlsplit
 
 from ..utils.urls import is_local_url, is_private_host, redact_url
 from .verdict import Finding, Verdict
 
-RULE_KINDS: tuple[str, ...] = ("block_pattern", "max_chars", "url", "tool", "rate", "require_pattern")
+RULE_KINDS: tuple[str, ...] = (
+    "block_pattern",
+    "max_chars",
+    "url",
+    "tool",
+    "rate",
+    "require_pattern",
+)
 """Kinds of policy rule the engine understands."""
 
 
@@ -48,7 +56,9 @@ class Rule:
         if self.kind not in RULE_KINDS:
             raise ValueError(f"Unknown policy rule kind {self.kind!r}")
         if self.action not in {"block", "warn", "allow"}:
-            raise ValueError(f"Policy rule action must be block, warn, or allow, not {self.action!r}")
+            raise ValueError(
+                f"Policy rule action must be block, warn, or allow, not {self.action!r}"
+            )
         if self.pattern and self.kind in {"block_pattern", "require_pattern"}:
             self.compiled = re.compile(self.pattern, re.IGNORECASE)
 
@@ -79,9 +89,15 @@ class Rule:
     def to_dict(self) -> dict[str, Any]:
         """Serialize the rule."""
         return {
-            "name": self.name, "kind": self.kind, "pattern": self.pattern,
-            "action": self.action, "severity": self.severity, "reason": self.reason,
-            "limit": self.limit, "applies_to": self.applies_to, "enabled": self.enabled,
+            "name": self.name,
+            "kind": self.kind,
+            "pattern": self.pattern,
+            "action": self.action,
+            "severity": self.severity,
+            "reason": self.reason,
+            "limit": self.limit,
+            "applies_to": self.applies_to,
+            "enabled": self.enabled,
         }
 
 
@@ -153,15 +169,25 @@ class RateLimiter:
         """Return limiter telemetry."""
         with self._lock:
             keys = len(self._events)
-        return {"per_minute": self.per_minute, "burst": self.burst, "keys": keys,
-                "allowed": self.allowed, "throttled": self.throttled}
+        return {
+            "per_minute": self.per_minute,
+            "burst": self.burst,
+            "keys": keys,
+            "allowed": self.allowed,
+            "throttled": self.throttled,
+        }
 
 
 class PolicyEngine:
     """Evaluate declared rules against text, tools, and URLs."""
 
-    def __init__(self, rules: Iterable[Rule] = (), *, config: Any = None,
-                 rate_limiter: RateLimiter | None = None) -> None:
+    def __init__(
+        self,
+        rules: Iterable[Rule] = (),
+        *,
+        config: Any = None,
+        rate_limiter: RateLimiter | None = None,
+    ) -> None:
         """Build an engine from explicit rules and/or a configuration object.
 
         Args:
@@ -187,7 +213,9 @@ class PolicyEngine:
         self.allowed_domains = [
             str(item).lower() for item in (getattr(config, "allow_domains", []) or [])
         ]
-        self.denied_domains = [str(item).lower() for item in (getattr(config, "deny_domains", []) or [])]
+        self.denied_domains = [
+            str(item).lower() for item in (getattr(config, "deny_domains", []) or [])
+        ]
 
     # -- rule management -----------------------------------------------------
 
@@ -209,7 +237,8 @@ class PolicyEngine:
         with self._lock:
             items = list(self._rules.values())
         return [
-            rule for rule in items
+            rule
+            for rule in items
             if (not kind or rule.kind == kind) and (rule.enabled or not enabled_only)
         ]
 
@@ -230,12 +259,18 @@ class PolicyEngine:
             if not rule.enabled or not rule.applies(stage):
                 continue
             if rule.kind == "max_chars" and rule.limit > 0 and len(source) > rule.limit:
-                findings.append(Finding(
-                    rule=f"policy:{rule.name}", severity=rule.severity, category="policy",
-                    reason=rule.reason or f"text is {len(source)} chars, above the {int(rule.limit)} limit",
-                    score=0.7, matched="",
-                    metadata={"kind": "max_chars", "chars": len(source), "action": rule.action},
-                ))
+                findings.append(
+                    Finding(
+                        rule=f"policy:{rule.name}",
+                        severity=rule.severity,
+                        category="policy",
+                        reason=rule.reason
+                        or f"text is {len(source)} chars, above the {int(rule.limit)} limit",
+                        score=0.7,
+                        matched="",
+                        metadata={"kind": "max_chars", "chars": len(source), "action": rule.action},
+                    )
+                )
             elif rule.kind == "block_pattern":
                 match = rule.matches(source)
                 if match:
@@ -244,11 +279,17 @@ class PolicyEngine:
                     findings.append(finding)
             elif rule.kind == "require_pattern":
                 if not rule.matches(source):
-                    findings.append(Finding(
-                        rule=f"policy:{rule.name}", severity=rule.severity, category="policy",
-                        reason=rule.reason or f"text is missing the required pattern {rule.pattern!r}",
-                        score=0.6, metadata={"kind": "require_pattern", "action": rule.action},
-                    ))
+                    findings.append(
+                        Finding(
+                            rule=f"policy:{rule.name}",
+                            severity=rule.severity,
+                            category="policy",
+                            reason=rule.reason
+                            or f"text is missing the required pattern {rule.pattern!r}",
+                            score=0.6,
+                            metadata={"kind": "require_pattern", "action": rule.action},
+                        )
+                    )
         blocked = any(finding.metadata.get("action") == "block" for finding in findings)
         if findings and not blocked:
             action = "warn"
@@ -257,8 +298,14 @@ class PolicyEngine:
             action = "block"
             self.blocks += 1
             top = max(findings, key=lambda item: item.severity_rank)
-            return Verdict.block(top.reason, rule=top.rule, severity=top.severity, stage=stage,
-                                 findings=findings, text=source)
+            return Verdict.block(
+                top.reason,
+                rule=top.rule,
+                severity=top.severity,
+                stage=stage,
+                findings=findings,
+                text=source,
+            )
         verdict = Verdict.allow(source, stage=stage)
         verdict.findings = findings
         verdict.action = action
@@ -277,17 +324,27 @@ class PolicyEngine:
             if not rule.enabled:
                 continue
             if fnmatch.fnmatch(name, rule.pattern) or fnmatch.fnmatch(rendered, rule.pattern):
-                findings.append(Finding(
-                    rule=f"policy:{rule.name}", severity=rule.severity, category="tool",
-                    reason=rule.reason or f"tool call matches denied pattern {rule.pattern!r}",
-                    score=0.9, matched=redact_url(name),
-                    metadata={"kind": "tool", "action": rule.action, "tool": name},
-                ))
+                findings.append(
+                    Finding(
+                        rule=f"policy:{rule.name}",
+                        severity=rule.severity,
+                        category="tool",
+                        reason=rule.reason or f"tool call matches denied pattern {rule.pattern!r}",
+                        score=0.9,
+                        matched=redact_url(name),
+                        metadata={"kind": "tool", "action": rule.action, "tool": name},
+                    )
+                )
         blocked = any(finding.metadata.get("action") == "block" for finding in findings)
         if blocked:
             self.blocks += 1
-            return Verdict.block(findings[0].reason, rule=findings[0].rule,
-                                 severity=findings[0].severity, stage="tool", findings=findings)
+            return Verdict.block(
+                findings[0].reason,
+                rule=findings[0].rule,
+                severity=findings[0].severity,
+                stage="tool",
+                findings=findings,
+            )
         verdict = Verdict.allow(name, stage="tool")
         verdict.findings = findings
         if findings:
@@ -303,28 +360,51 @@ class PolicyEngine:
         parts = urlsplit(url or "")
         host = (parts.hostname or "").lower()
         if self.url_allowlist_only and not self._domain_allowed(host):
-            findings.append(Finding(
-                rule="policy:url_allowlist", severity="high", category="url",
-                reason=f"host {host or '(none)'} is not on the allowlist",
-                score=0.9, matched=redact_url(url), metadata={"host": host},
-            ))
+            findings.append(
+                Finding(
+                    rule="policy:url_allowlist",
+                    severity="high",
+                    category="url",
+                    reason=f"host {host or '(none)'} is not on the allowlist",
+                    score=0.9,
+                    matched=redact_url(url),
+                    metadata={"host": host},
+                )
+            )
         if host and any(fnmatch.fnmatch(host, pattern) for pattern in self.denied_domains):
-            findings.append(Finding(
-                rule="policy:url_denylist", severity="high", category="url",
-                reason=f"host {host} is explicitly denied", score=0.95,
-                matched=redact_url(url), metadata={"host": host},
-            ))
+            findings.append(
+                Finding(
+                    rule="policy:url_denylist",
+                    severity="high",
+                    category="url",
+                    reason=f"host {host} is explicitly denied",
+                    score=0.95,
+                    matched=redact_url(url),
+                    metadata={"host": host},
+                )
+            )
         if parts.scheme and parts.scheme not in {"http", "https"}:
-            findings.append(Finding(
-                rule="policy:url_scheme", severity="medium", category="url",
-                reason=f"unsupported URL scheme {parts.scheme!r}", score=0.6,
-                matched=redact_url(url), metadata={"scheme": parts.scheme},
-            ))
+            findings.append(
+                Finding(
+                    rule="policy:url_scheme",
+                    severity="medium",
+                    category="url",
+                    reason=f"unsupported URL scheme {parts.scheme!r}",
+                    score=0.6,
+                    matched=redact_url(url),
+                    metadata={"scheme": parts.scheme},
+                )
+            )
         if findings:
             self.blocks += 1
-            return Verdict.block(findings[0].reason, rule=findings[0].rule,
-                                 severity=findings[0].severity, stage="url", findings=findings,
-                                 text=redact_url(url))
+            return Verdict.block(
+                findings[0].reason,
+                rule=findings[0].rule,
+                severity=findings[0].severity,
+                stage="url",
+                findings=findings,
+                text=redact_url(url),
+            )
         return Verdict.allow(redact_url(url), stage="url")
 
     def _domain_allowed(self, host: str) -> bool:
@@ -333,8 +413,10 @@ class PolicyEngine:
             return False
         if not self.allowed_domains:
             return is_local_url(f"http://{host}") or is_private_host(host)
-        return any(host == item or host.endswith("." + item.lstrip(".")) or
-                   fnmatch.fnmatch(host, item) for item in self.allowed_domains)
+        return any(
+            host == item or host.endswith("." + item.lstrip(".")) or fnmatch.fnmatch(host, item)
+            for item in self.allowed_domains
+        )
 
     def check_rate(self, key: str = "default") -> Verdict:
         """Apply the rate limit to one caller."""
@@ -345,10 +427,19 @@ class PolicyEngine:
         self.blocks += 1
         return Verdict.block(
             f"rate limit exceeded for {key!r}; retry in {wait:.1f}s",
-            rule="policy:rate_limit", severity="medium", stage="rate",
-            findings=[Finding(rule="policy:rate_limit", severity="medium", category="rate",
-                              reason="requests per minute exceeded", score=0.8,
-                              metadata={"key": key, "retry_after": wait})],
+            rule="policy:rate_limit",
+            severity="medium",
+            stage="rate",
+            findings=[
+                Finding(
+                    rule="policy:rate_limit",
+                    severity="medium",
+                    category="rate",
+                    reason="requests per minute exceeded",
+                    score=0.8,
+                    metadata={"key": key, "retry_after": wait},
+                )
+            ],
             metadata={"retry_after": wait},
         )
 
@@ -371,8 +462,10 @@ class PolicyEngine:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the engine's rules for the config export and the API."""
-        return {"rules": [rule.to_dict() for rule in self.rules(enabled_only=False)],
-                "stats": self.stats()}
+        return {
+            "rules": [rule.to_dict() for rule in self.rules(enabled_only=False)],
+            "stats": self.stats(),
+        }
 
 
 def rules_from_config(config: Any) -> list[Rule]:
@@ -380,32 +473,68 @@ def rules_from_config(config: Any) -> list[Rule]:
     rules: list[Rule] = []
     max_prompt = int(getattr(config, "max_prompt_chars", 0) or 0)
     if max_prompt > 0:
-        rules.append(Rule(name="max_prompt_chars", kind="max_chars", limit=max_prompt,
-                          applies_to="prompt", action="block", severity="medium",
-                          reason=f"prompt exceeds {max_prompt} characters"))
+        rules.append(
+            Rule(
+                name="max_prompt_chars",
+                kind="max_chars",
+                limit=max_prompt,
+                applies_to="prompt",
+                action="block",
+                severity="medium",
+                reason=f"prompt exceeds {max_prompt} characters",
+            )
+        )
     max_output = int(getattr(config, "max_output_chars", 0) or 0)
     if max_output > 0:
-        rules.append(Rule(name="max_output_chars", kind="max_chars", limit=max_output,
-                          applies_to="output", action="block", severity="medium",
-                          reason=f"output exceeds {max_output} characters"))
+        rules.append(
+            Rule(
+                name="max_output_chars",
+                kind="max_chars",
+                limit=max_output,
+                applies_to="output",
+                action="block",
+                severity="medium",
+                reason=f"output exceeds {max_output} characters",
+            )
+        )
     for index, pattern in enumerate(getattr(config, "block_patterns", []) or [], start=1):
         if str(pattern).strip():
-            rules.append(Rule(name=f"block_pattern_{index}", kind="block_pattern",
-                              pattern=str(pattern), action="block", severity="high",
-                              reason=f"matches configured block pattern {index}"))
+            rules.append(
+                Rule(
+                    name=f"block_pattern_{index}",
+                    kind="block_pattern",
+                    pattern=str(pattern),
+                    action="block",
+                    severity="high",
+                    reason=f"matches configured block pattern {index}",
+                )
+            )
     for index, pattern in enumerate(getattr(config, "allow_patterns", []) or [], start=1):
         if str(pattern).strip():
-            rules.append(Rule(name=f"require_pattern_{index}", kind="require_pattern",
-                              pattern=str(pattern), action="warn", severity="low",
-                              applies_to="prompt",
-                              reason=f"does not match configured allow pattern {index}"))
+            rules.append(
+                Rule(
+                    name=f"require_pattern_{index}",
+                    kind="require_pattern",
+                    pattern=str(pattern),
+                    action="warn",
+                    severity="low",
+                    applies_to="prompt",
+                    reason=f"does not match configured allow pattern {index}",
+                )
+            )
     return rules
 
 
 def deny_tool_rule(pattern: str, *, reason: str = "") -> Rule:
     """Build a rule denying tool calls whose name matches a glob."""
-    return Rule(name=f"deny_tool:{pattern}", kind="tool", pattern=pattern, action="block",
-                severity="high", reason=reason or f"tool {pattern!r} is denied by policy")
+    return Rule(
+        name=f"deny_tool:{pattern}",
+        kind="tool",
+        pattern=pattern,
+        action="block",
+        severity="high",
+        reason=reason or f"tool {pattern!r} is denied by policy",
+    )
 
 
 __all__ = [

@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 import os
 import unittest
-from pathlib import Path
 
-from tests.support import MagentTestCase
+from tests.support import MAgentTestCase
 
 
-class CliTest(MagentTestCase):
+class CliTest(MAgentTestCase):
     """Each command is exercised through the real argument parser."""
 
     def setUp(self) -> None:
@@ -161,8 +160,9 @@ class CliTest(MagentTestCase):
 
     def test_config_set_then_get(self) -> None:
         target = self.home.path / "magent.toml"
-        code, out, _ = self.run_cli("config", "set", "output.format", "json",
-                                    "--config", str(target))
+        code, out, _ = self.run_cli(
+            "config", "set", "output.format", "json", "--config", str(target)
+        )
         self.assertEqual(code, 0)
         self.assertTrue(target.exists())
         self.assertIn("format", target.read_text(encoding="utf-8"))
@@ -202,7 +202,9 @@ class CliTest(MagentTestCase):
         self.assertEqual(code, 0)
         self.assertTrue((self.workspace / "magent.toml").exists())
         self.assertTrue((self.workspace / ".magent" / "skills" / "house-style.md").exists())
-        self.assertTrue((self.workspace / ".magent" / "plugins" / "example" / "plugin.json").exists())
+        self.assertTrue(
+            (self.workspace / ".magent" / "plugins" / "example" / "plugin.json").exists()
+        )
 
     # -- agent ---------------------------------------------------------------
 
@@ -277,20 +279,38 @@ class CliTest(MagentTestCase):
         self.assertIn("read_file", target.read_text(encoding="utf-8"))
 
 
-class ReplTest(MagentTestCase):
+class ReplTest(MAgentTestCase):
     """The REPL dispatches slash commands and messages."""
 
     def _repl(self) -> object:
-        from magent.cli.repl import Repl
-        from magent.cli import CliContext
         import argparse
 
-        args = argparse.Namespace(quiet=True, verbose=False, format="text", no_color=True,
-                                 color=None, ascii=True, width=0, json=False, jsonl=False,
-                                 yaml=False, set=[], profile="", config="",
-                                 workspace=str(self.workspace), model="", backend="",
-                                 offline=True, persona="", loop_mode="", output_file="",
-                                 no_skills=False)
+        from magent.cli import CliContext
+        from magent.cli.repl import Repl
+
+        args = argparse.Namespace(
+            quiet=True,
+            verbose=False,
+            format="text",
+            no_color=True,
+            color=None,
+            ascii=True,
+            width=0,
+            json=False,
+            jsonl=False,
+            yaml=False,
+            set=[],
+            profile="",
+            config="",
+            workspace=str(self.workspace),
+            model="",
+            backend="",
+            offline=True,
+            persona="",
+            loop_mode="",
+            output_file="",
+            no_skills=False,
+        )
         context = CliContext.build(args, config=self.config())
         return Repl(context, stream=False)
 

@@ -18,8 +18,9 @@ import re
 import threading
 import time
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any
 
 from ..errors import MemoryError_, StoreError
 from ..logging_ import get_logger
@@ -37,7 +38,9 @@ LOGGER = get_logger("memory")
 ENTITY_PATTERNS: dict[str, re.Pattern[str]] = {
     "email": re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
     "url": re.compile(r"https?://[^\s)\"'<>]+"),
-    "path": re.compile(r"(?:~|\.{1,2}|[A-Za-z]:)?/(?:[\w.-]+/)*[\w.-]+|(?:[\w.-]+/)+[\w.-]+\.[A-Za-z0-9]{1,8}"),
+    "path": re.compile(
+        r"(?:~|\.{1,2}|[A-Za-z]:)?/(?:[\w.-]+/)*[\w.-]+|(?:[\w.-]+/)+[\w.-]+\.[A-Za-z0-9]{1,8}"
+    ),
     "identifier": re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b"),
     "number": re.compile(r"\b\d+(?:\.\d+)?\b"),
 }
@@ -93,15 +96,19 @@ class MemoryStore:
             self.autosave = bool(autosave and getattr(memory_config, "persistence", True))
         else:
             self.autosave = bool(autosave)
-        self.dedupe = bool(dedupe if memory_config is None else getattr(memory_config, "dedupe", dedupe))
+        self.dedupe = bool(
+            dedupe if memory_config is None else getattr(memory_config, "dedupe", dedupe)
+        )
         self.entity_tracking = bool(
-            entity_tracking if memory_config is None
+            entity_tracking
+            if memory_config is None
             else getattr(memory_config, "entity_tracking", entity_tracking)
         )
         self.retrieval_mode = str(getattr(memory_config, "retrieval_mode", "hybrid") or "hybrid")
         self.top_k = int(getattr(memory_config, "retrieval_top_k", 5) or 5)
         self.embedder = embedder or build_embedder(
-            backend, model=embedding_model or str(getattr(memory_config, "summary_model", "") or ""),
+            backend,
+            model=embedding_model or str(getattr(memory_config, "summary_model", "") or ""),
             dim=int(getattr(memory_config, "vector_dim", 0) or 256),
             cache=bool(getattr(memory_config, "cache_embeddings", True)),
             batch_size=int(getattr(memory_config, "embedding_batch_size", 16) or 16),
@@ -126,7 +133,9 @@ class MemoryStore:
     # -- construction --------------------------------------------------------
 
     @classmethod
-    def from_config(cls, config: Any, *, backend: Any = None, root: str | Path | None = None) -> MemoryStore:
+    def from_config(
+        cls, config: Any, *, backend: Any = None, root: str | Path | None = None
+    ) -> MemoryStore:
         """Build a store from a loaded MAgent configuration.
 
         Args:
@@ -147,9 +156,18 @@ class MemoryStore:
 
     # -- writes --------------------------------------------------------------
 
-    def add(self, content: str, *, kind: str = DEFAULT_KIND, tags: Sequence[str] = (),
-            importance: float = 0.5, source: str = "", metadata: dict[str, Any] | None = None,
-            entry_id: str = "", embedding: Sequence[float] | None = None) -> MemoryEntry:
+    def add(
+        self,
+        content: str,
+        *,
+        kind: str = DEFAULT_KIND,
+        tags: Sequence[str] = (),
+        importance: float = 0.5,
+        source: str = "",
+        metadata: dict[str, Any] | None = None,
+        entry_id: str = "",
+        embedding: Sequence[float] | None = None,
+    ) -> MemoryEntry:
         """Store one memory, embedding it when an embedder is available.
 
         Args:
@@ -198,8 +216,14 @@ class MemoryStore:
             self._append(entry)
         return entry
 
-    def add_many(self, items: Iterable[dict[str, Any] | str], *, kind: str = DEFAULT_KIND,
-                 importance: float = 0.5, source: str = "") -> list[MemoryEntry]:
+    def add_many(
+        self,
+        items: Iterable[dict[str, Any] | str],
+        *,
+        kind: str = DEFAULT_KIND,
+        importance: float = 0.5,
+        source: str = "",
+    ) -> list[MemoryEntry]:
         """Store several memories, embedding them in one batch."""
         payloads: list[dict[str, Any]] = []
         for item in items:
@@ -219,19 +243,28 @@ class MemoryStore:
             if text.strip():
                 vector = vectors[cursor] if cursor < len(vectors) else None
                 cursor += 1
-            stored.append(self.add(
-                text,
-                kind=str(payload.get("kind", kind)),
-                tags=list(payload.get("tags") or ()),
-                importance=float(payload.get("importance", importance)),
-                source=str(payload.get("source", source)),
-                metadata=dict(payload.get("metadata") or {}),
-                embedding=vector,
-            ))
+            stored.append(
+                self.add(
+                    text,
+                    kind=str(payload.get("kind", kind)),
+                    tags=list(payload.get("tags") or ()),
+                    importance=float(payload.get("importance", importance)),
+                    source=str(payload.get("source", source)),
+                    metadata=dict(payload.get("metadata") or {}),
+                    embedding=vector,
+                )
+            )
         return stored
 
-    def update(self, entry_id: str, *, content: str | None = None, importance: float | None = None,
-               tags: Sequence[str] | None = None, metadata: dict[str, Any] | None = None) -> MemoryEntry:
+    def update(
+        self,
+        entry_id: str,
+        *,
+        content: str | None = None,
+        importance: float | None = None,
+        tags: Sequence[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> MemoryEntry:
         """Update an existing entry and re-embed it when the content changed."""
         with self._lock:
             entry = self._entries.get(entry_id)
@@ -262,7 +295,7 @@ class MemoryStore:
             return [[] for _ in texts]
         try:
             return self.embedder.embed(list(texts))
-        except Exception as exc:  # noqa: BLE001 - retrieval must survive a dead model
+        except Exception as exc:
             LOGGER.warning("embedding failed, falling back to lexical search: %s", exc)
             return [[] for _ in texts]
 
@@ -273,10 +306,20 @@ class MemoryStore:
         with self._lock:
             return self._entries.get(entry_id)
 
-    def search(self, query: str = "", *, limit: int | None = None, kind: str = "",
-               tags: Sequence[str] | None = None, semantic: bool = True,
-               min_score: float = 0.0, mode: str = "", before: float = 0.0,
-               after: float = 0.0, touch: bool = True) -> list[MemoryEntry]:
+    def search(
+        self,
+        query: str = "",
+        *,
+        limit: int | None = None,
+        kind: str = "",
+        tags: Sequence[str] | None = None,
+        semantic: bool = True,
+        min_score: float = 0.0,
+        mode: str = "",
+        before: float = 0.0,
+        after: float = 0.0,
+        touch: bool = True,
+    ) -> list[MemoryEntry]:
         """Rank stored memories against a query.
 
         Args:
@@ -298,15 +341,21 @@ class MemoryStore:
         wanted = [str(tag) for tag in (tags or ()) if str(tag).strip()]
         with self._lock:
             candidates = [
-                entry for entry in (self._entries[key] for key in self._order)
+                entry
+                for entry in (self._entries[key] for key in self._order)
                 if (not kind or entry.kind == kind.lower())
                 and entry.matches_tags(wanted)
                 and (not before or entry.created_at <= before)
                 and (not after or entry.created_at >= after)
             ]
             ranked = rank_entries(
-                candidates, query, embedder=self.embedder if active_mode in {"hybrid", "vector"} else None,
-                weights=self.weights, decay=self.decay, tags=wanted, mode=active_mode,
+                candidates,
+                query,
+                embedder=self.embedder if active_mode in {"hybrid", "vector"} else None,
+                weights=self.weights,
+                decay=self.decay,
+                tags=wanted,
+                mode=active_mode,
             )
             top = [entry for entry in ranked if entry.score >= min_score][: (limit or self.top_k)]
             if touch:
@@ -332,8 +381,9 @@ class MemoryStore:
                 results.append(candidate)
         return results[:limit]
 
-    def list_entries(self, *, limit: int = 50, kind: str = "", order: str = "recent",
-                     tag: str = "") -> list[MemoryEntry]:
+    def list_entries(
+        self, *, limit: int = 50, kind: str = "", order: str = "recent", tag: str = ""
+    ) -> list[MemoryEntry]:
         """List entries without running a search.
 
         Args:
@@ -344,7 +394,8 @@ class MemoryStore:
         """
         with self._lock:
             items = [
-                entry for entry in (self._entries[key] for key in self._order)
+                entry
+                for entry in (self._entries[key] for key in self._order)
                 if (not kind or entry.kind == kind.lower()) and (not tag or entry.has_tag(tag))
             ]
         if order == "oldest":
@@ -380,8 +431,10 @@ class MemoryStore:
         for entry in self.list_entries(limit=100000, kind=kind):
             for name, values in (entry.metadata.get("entities") or {}).items():
                 grouped[name].update(values)
-        return {name: [value for value, _ in counter.most_common(limit)]
-                for name, counter in grouped.items()}
+        return {
+            name: [value for value, _ in counter.most_common(limit)]
+            for name, counter in grouped.items()
+        }
 
     # -- deletion ------------------------------------------------------------
 
@@ -398,8 +451,9 @@ class MemoryStore:
         self.save()
         return True
 
-    def delete_matching(self, query: str, *, kind: str = "", min_score: float = 0.25,
-                        limit: int = 100) -> int:
+    def delete_matching(
+        self, query: str, *, kind: str = "", min_score: float = 0.25, limit: int = 100
+    ) -> int:
         """Delete entries matching a query above a score threshold.
 
         Deliberately conservative: a low threshold would let a vague query wipe
@@ -416,7 +470,8 @@ class MemoryStore:
         """Delete entries older than ``seconds``, preserving important ones."""
         cutoff = time.time() - max(0.0, seconds)
         victims = [
-            entry.id for entry in self.list_entries(limit=100000, kind=kind, order="oldest")
+            entry.id
+            for entry in self.list_entries(limit=100000, kind=kind, order="oldest")
             if entry.created_at < cutoff and entry.importance < 0.8
         ]
         return sum(1 for entry_id in victims if self.delete(entry_id))
@@ -435,7 +490,9 @@ class MemoryStore:
             atomic_write_text(self.path, "")
         return count
 
-    def compact(self, *, kind: str = "", keep: int = 50, dedupe_threshold: float = 0.95) -> dict[str, Any]:
+    def compact(
+        self, *, kind: str = "", keep: int = 50, dedupe_threshold: float = 0.95
+    ) -> dict[str, Any]:
         """Merge near-duplicates and drop the weakest entries per kind.
 
         Args:
@@ -443,23 +500,31 @@ class MemoryStore:
             keep: maximum entries to retain per kind
             dedupe_threshold: text similarity above which two entries merge
         """
-        report: dict[str, Any] = {"before": len(self._entries), "merged": 0, "dropped": 0, "after": 0}
+        report: dict[str, Any] = {
+            "before": len(self._entries),
+            "merged": 0,
+            "dropped": 0,
+            "after": 0,
+        }
         kinds = [kind.lower()] if kind else sorted(self.by_kind())
         for active in kinds:
             entries = self.list_entries(limit=100000, kind=active, order="importance")
             survivors: list[MemoryEntry] = []
             for entry in entries:
                 duplicate_of = next(
-                    (other for other in survivors
-                     if similarity(other.content, entry.content) >= dedupe_threshold),
+                    (
+                        other
+                        for other in survivors
+                        if similarity(other.content, entry.content) >= dedupe_threshold
+                    ),
                     None,
                 )
                 if duplicate_of is not None:
                     duplicate_of.importance = max(duplicate_of.importance, entry.importance)
                     duplicate_of.access_count += entry.access_count
-                    duplicate_of.metadata["merged_ids"] = (
-                        list(duplicate_of.metadata.get("merged_ids") or []) + [entry.id]
-                    )
+                    duplicate_of.metadata["merged_ids"] = list(
+                        duplicate_of.metadata.get("merged_ids") or []
+                    ) + [entry.id]
                     for tag in entry.tags:
                         if tag not in duplicate_of.tags:
                             duplicate_of.tags.append(tag)
@@ -495,7 +560,9 @@ class MemoryStore:
         try:
             ensure_dir(self.path.parent)
             with self._lock:
-                lines = [self._entries[key].to_json() for key in self._order if key in self._entries]
+                lines = [
+                    self._entries[key].to_json() for key in self._order if key in self._entries
+                ]
             atomic_write_text(self.path, "".join(line + "\n" for line in lines))
         except OSError as exc:
             raise StoreError(f"could not write memory store {self.path}: {exc}") from exc
@@ -552,7 +619,8 @@ class MemoryStore:
         with self._lock:
             lines = [
                 self._entries[key].to_json(include_embedding=include_embeddings)
-                for key in self._order if key in self._entries
+                for key in self._order
+                if key in self._entries
             ]
         atomic_write_text(target, "".join(line + "\n" for line in lines))
         return target
@@ -573,9 +641,16 @@ class MemoryStore:
             except json.JSONDecodeError:
                 continue
             entry = MemoryEntry.from_dict(raw)
-            self.add(entry.content, kind=entry.kind, tags=entry.tags, importance=entry.importance,
-                     source=entry.source, metadata=entry.metadata, entry_id=entry.id,
-                     embedding=entry.embedding or None)
+            self.add(
+                entry.content,
+                kind=entry.kind,
+                tags=entry.tags,
+                importance=entry.importance,
+                source=entry.source,
+                metadata=entry.metadata,
+                entry_id=entry.id,
+                embedding=entry.embedding or None,
+            )
             count += 1
         return count
 
@@ -610,8 +685,12 @@ class MemoryStore:
             "top_tags": dict(tag_counter.most_common(10)),
             "embedded": embedded,
             "embedding_coverage": round(embedded / total, 4) if total else 0.0,
-            "average_importance": round(sum(entry.importance for entry in entries) / total, 4) if total else 0.0,
-            "oldest_seconds": round(max((entry.age_seconds() for entry in entries), default=0.0), 1),
+            "average_importance": round(sum(entry.importance for entry in entries) / total, 4)
+            if total
+            else 0.0,
+            "oldest_seconds": round(
+                max((entry.age_seconds() for entry in entries), default=0.0), 1
+            ),
             "added": self.added,
             "duplicates_skipped": self.duplicates_skipped,
             "deleted": self.deleted,
@@ -626,8 +705,9 @@ class MemoryStore:
         """Serialize the store summary plus a page of entries."""
         return {
             "stats": self.stats(),
-            "entries": [entry.to_dict(include_embedding=False)
-                        for entry in self.list_entries(limit=limit)],
+            "entries": [
+                entry.to_dict(include_embedding=False) for entry in self.list_entries(limit=limit)
+            ],
         }
 
     def summary_text(self, *, limit: int = 8, max_chars: int = 1200) -> str:
@@ -687,8 +767,13 @@ def extract_entities(text: str, *, limit: int = MAX_ENTITIES_PER_ENTRY) -> dict[
     return found
 
 
-def build_store(config: Any = None, *, backend: Any = None, path: str | Path | None = None,
-                root: str | Path | None = None) -> MemoryStore:
+def build_store(
+    config: Any = None,
+    *,
+    backend: Any = None,
+    path: str | Path | None = None,
+    root: str | Path | None = None,
+) -> MemoryStore:
     """Build a :class:`MemoryStore` from configuration, or a sensible default."""
     memory_config = getattr(config, "memory", config)
     if path is not None:

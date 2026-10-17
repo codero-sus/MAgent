@@ -18,8 +18,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
-import weakref
-from collections import Counter, defaultdict
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -52,8 +51,11 @@ class Subscription:
         kind = event.kind.value if isinstance(event.kind, EventKind) else str(event.kind)
         if kind in self.kinds:
             return True
-        return any(kind.startswith(f"{pattern}.") or pattern.endswith("*") and kind.startswith(pattern[:-1])
-                   for pattern in self.kinds)
+        return any(
+            kind.startswith(f"{pattern}.")
+            or (pattern.endswith("*") and kind.startswith(pattern[:-1]))
+            for pattern in self.kinds
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize subscription metadata (never the handler)."""
@@ -171,7 +173,9 @@ class EventBus:
                 self.unsubscribe(subscription)
         return delivered
 
-    def emit(self, kind: EventKind | str, *, agent: str = "main", run_id: str = "", **data: Any) -> int:
+    def emit(
+        self, kind: EventKind | str, *, agent: str = "main", run_id: str = "", **data: Any
+    ) -> int:
         """Build and publish an event in one call."""
         parsed = kind if isinstance(kind, EventKind) else EventKind(str(kind))
         return self.publish(AgentEvent(kind=parsed, data=data, agent=agent, run_id=run_id))
@@ -181,12 +185,12 @@ class EventBus:
         try:
             subscription.handler(event)
             subscription.delivered += 1
-        except Exception as exc:  # noqa: BLE001 - one bad listener must not kill the bus
+        except Exception as exc:
             subscription.errors += 1
             if self.on_error is not None:
                 try:
                     self.on_error(exc, subscription, event)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
 
     def _ensure_workers(self) -> None:
@@ -213,7 +217,9 @@ class EventBus:
 
     # -- inspection ----------------------------------------------------------
 
-    def history(self, *, kinds: Iterable[str | EventKind] = (), limit: int | None = None) -> list[AgentEvent]:
+    def history(
+        self, *, kinds: Iterable[str | EventKind] = (), limit: int | None = None
+    ) -> list[AgentEvent]:
         """Return recorded events, optionally filtered by kind."""
         wanted = {item.value if isinstance(item, EventKind) else str(item) for item in kinds}
         with self._lock:
@@ -222,7 +228,8 @@ class EventBus:
             events = [
                 event
                 for event in events
-                if (event.kind.value if isinstance(event.kind, EventKind) else str(event.kind)) in wanted
+                if (event.kind.value if isinstance(event.kind, EventKind) else str(event.kind))
+                in wanted
             ]
         if limit is not None and limit >= 0:
             events = events[-limit:]
@@ -251,7 +258,9 @@ class EventBus:
                 "uptime_seconds": round(time.time() - self.started_at, 2),
             }
 
-    def wait_for(self, predicate: Callable[[AgentEvent], bool], *, timeout: float = 5.0) -> AgentEvent | None:
+    def wait_for(
+        self, predicate: Callable[[AgentEvent], bool], *, timeout: float = 5.0
+    ) -> AgentEvent | None:
         """Block until a matching event is published, or the timeout elapses.
 
         Events already in the history are checked first, so a caller that waited
@@ -307,7 +316,9 @@ class EventBus:
 class EventRecorder:
     """Subscriber that stores events into a bounded list, for transcripts."""
 
-    def __init__(self, bus: EventBus, *, kinds: Iterable[str | EventKind] = (), limit: int = 2000) -> None:
+    def __init__(
+        self, bus: EventBus, *, kinds: Iterable[str | EventKind] = (), limit: int = 2000
+    ) -> None:
         self.events: list[AgentEvent] = []
         self.limit = limit
         self.kinds = frozenset(

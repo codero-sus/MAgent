@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from ..utils.numbers import mean, percentile
 
@@ -62,8 +63,15 @@ class Metric:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the metric."""
-        return {"name": self.name, "kind": self.kind, "help": self.help, "unit": self.unit,
-                "labels": dict(self.labels), "key": self.key, "value": self.value()}
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "help": self.help,
+            "unit": self.unit,
+            "labels": dict(self.labels),
+            "key": self.key,
+            "value": self.value(),
+        }
 
     def prometheus_lines(self) -> list[str]:
         """Lines in the Prometheus text exposition format."""
@@ -77,8 +85,9 @@ class Metric:
 class Counter(Metric):
     """A value that only ever goes up."""
 
-    def __init__(self, name: str, help: str = "", *, unit: str = "",
-                 labels: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self, name: str, help: str = "", *, unit: str = "", labels: Mapping[str, str] | None = None
+    ) -> None:
         """Create a counter at zero."""
         super().__init__(name=name, help=help, unit=unit, labels=dict(labels or {}))
         self._value = 0.0
@@ -110,8 +119,9 @@ class Counter(Metric):
 class Gauge(Metric):
     """A value that goes up and down."""
 
-    def __init__(self, name: str, help: str = "", *, unit: str = "",
-                 labels: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self, name: str, help: str = "", *, unit: str = "", labels: Mapping[str, str] | None = None
+    ) -> None:
         """Create a gauge at zero."""
         super().__init__(name=name, help=help, unit=unit, labels=dict(labels or {}))
         self._value = 0.0
@@ -158,8 +168,12 @@ class Gauge(Metric):
 
     def stats(self) -> dict[str, Any]:
         """Value plus min/max/sample count."""
-        return {"value": self._value, "min": self.minimum, "max": self.maximum,
-                "samples": self._samples}
+        return {
+            "value": self._value,
+            "min": self.minimum,
+            "max": self.maximum,
+            "samples": self._samples,
+        }
 
     def reset(self) -> None:
         """Return the gauge to zero and forget extremes."""
@@ -173,9 +187,15 @@ class Gauge(Metric):
 class Histogram(Metric):
     """Latency-style observations with buckets and percentiles."""
 
-    def __init__(self, name: str, help: str = "", *, unit: str = "ms",
-                 buckets: Sequence[float] = DEFAULT_BUCKETS,
-                 labels: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        help: str = "",
+        *,
+        unit: str = "ms",
+        buckets: Sequence[float] = DEFAULT_BUCKETS,
+        labels: Mapping[str, str] | None = None,
+    ) -> None:
         """Create an empty histogram."""
         super().__init__(name=name, help=help, unit=unit, labels=dict(labels or {}))
         self.buckets = tuple(sorted(float(item) for item in buckets))
@@ -259,8 +279,9 @@ class Histogram(Metric):
         """Serialise the histogram with its bucket counts."""
         payload = super().to_dict()
         payload["stats"] = self.stats()
-        payload["buckets"] = {str(edge): count for edge, count in
-                              zip(self.buckets, self._counts[:-1], strict=False)}
+        payload["buckets"] = {
+            str(edge): count for edge, count in zip(self.buckets, self._counts[:-1], strict=False)
+        }
         payload["overflow"] = self._counts[-1]
         return payload
 
@@ -272,10 +293,11 @@ class Histogram(Metric):
         cumulative = 0
         for edge, count in zip(self.buckets, self._counts[:-1], strict=False):
             cumulative += count
-            lines.append(f'{base}_bucket{_label_text({**self.labels, "le": str(edge)})} '
-                         f'{cumulative}')
+            lines.append(
+                f"{base}_bucket{_label_text({**self.labels, 'le': str(edge)})} {cumulative}"
+            )
         cumulative += self._counts[-1]
-        lines.append(f'{base}_bucket{_label_text({**self.labels, "le": "+Inf"})} {cumulative}')
+        lines.append(f"{base}_bucket{_label_text({**self.labels, 'le': '+Inf'})} {cumulative}")
         lines.append(f"{base}_sum{plain} {self._sum}")
         lines.append(f"{base}_count{plain} {self.count}")
         return lines
@@ -322,8 +344,9 @@ class MetricsRegistry:
         """Namespaced metric name."""
         return f"{self.prefix}_{name}" if self.prefix and not name.startswith(self.prefix) else name
 
-    def counter(self, name: str, help: str = "", *, unit: str = "",
-                labels: Mapping[str, str] | None = None) -> Counter:
+    def counter(
+        self, name: str, help: str = "", *, unit: str = "", labels: Mapping[str, str] | None = None
+    ) -> Counter:
         """Return an existing counter or create one."""
         key = self._key(name, labels)
         with self._lock:
@@ -334,8 +357,9 @@ class MetricsRegistry:
             self._metrics[key] = created
             return created
 
-    def gauge(self, name: str, help: str = "", *, unit: str = "",
-              labels: Mapping[str, str] | None = None) -> Gauge:
+    def gauge(
+        self, name: str, help: str = "", *, unit: str = "", labels: Mapping[str, str] | None = None
+    ) -> Gauge:
         """Return an existing gauge or create one."""
         key = self._key(name, labels)
         with self._lock:
@@ -346,9 +370,15 @@ class MetricsRegistry:
             self._metrics[key] = created
             return created
 
-    def histogram(self, name: str, help: str = "", *, unit: str = "ms",
-                  buckets: Sequence[float] = DEFAULT_BUCKETS,
-                  labels: Mapping[str, str] | None = None) -> Histogram:
+    def histogram(
+        self,
+        name: str,
+        help: str = "",
+        *,
+        unit: str = "ms",
+        buckets: Sequence[float] = DEFAULT_BUCKETS,
+        labels: Mapping[str, str] | None = None,
+    ) -> Histogram:
         """Return an existing histogram or create one."""
         key = self._key(name, labels)
         with self._lock:
@@ -359,12 +389,15 @@ class MetricsRegistry:
             self._metrics[key] = created
             return created
 
-    def inc(self, name: str, amount: float = 1.0, *, labels: Mapping[str, str] | None = None) -> float:
+    def inc(
+        self, name: str, amount: float = 1.0, *, labels: Mapping[str, str] | None = None
+    ) -> float:
         """Increment a counter in one call."""
         return self.counter(name, labels=labels).inc(amount)
 
-    def observe(self, name: str, amount: float, *, unit: str = "ms",
-                labels: Mapping[str, str] | None = None) -> None:
+    def observe(
+        self, name: str, amount: float, *, unit: str = "ms", labels: Mapping[str, str] | None = None
+    ) -> None:
         """Record a histogram observation in one call."""
         self.histogram(name, unit=unit, labels=labels).observe(amount)
 
@@ -421,8 +454,7 @@ class MetricsRegistry:
         rows: list[tuple[str, str, str]] = []
         for metric in self.metrics()[:limit]:
             if isinstance(metric, Histogram):
-                value = (f"n={metric.count} mean={metric.value()}{metric.unit} "
-                         f"p95={metric.p95}")
+                value = f"n={metric.count} mean={metric.value()}{metric.unit} p95={metric.p95}"
             elif isinstance(metric, Gauge):
                 value = f"{metric.value():g} (min {metric.minimum:g}, max {metric.maximum:g})"
             else:
@@ -441,15 +473,22 @@ class MetricsRegistry:
         merged = 0
         for metric in other.metrics():
             if isinstance(metric, Counter):
-                self.counter(metric.name, metric.help, unit=metric.unit,
-                             labels=metric.labels).inc(metric.value())
+                self.counter(metric.name, metric.help, unit=metric.unit, labels=metric.labels).inc(
+                    metric.value()
+                )
             elif isinstance(metric, Gauge):
-                self.gauge(metric.name, metric.help, unit=metric.unit,
-                           labels=metric.labels).set(metric.value())
+                self.gauge(metric.name, metric.help, unit=metric.unit, labels=metric.labels).set(
+                    metric.value()
+                )
             elif isinstance(metric, Histogram):
-                target = self.histogram(metric.name, metric.help, unit=metric.unit,
-                                        buckets=metric.buckets, labels=metric.labels)
-                for sample in metric._samples:  # noqa: SLF001 - same class, deliberate
+                target = self.histogram(
+                    metric.name,
+                    metric.help,
+                    unit=metric.unit,
+                    buckets=metric.buckets,
+                    labels=metric.labels,
+                )
+                for sample in metric._samples:
                     target.observe(sample)
             merged += 1
         return merged
@@ -477,8 +516,10 @@ def record_run(registry: MetricsRegistry, result: Any) -> MetricsRegistry:
     """
     labels = {"model": str(getattr(result, "model", "") or "unknown")}
     registry.inc("runs_total", labels=labels)
-    stop = str(getattr(getattr(result, "stop_reason", ""), "value",
-                       getattr(result, "stop_reason", "")) or "unknown")
+    stop = str(
+        getattr(getattr(result, "stop_reason", ""), "value", getattr(result, "stop_reason", ""))
+        or "unknown"
+    )
     registry.inc("runs_by_stop_reason", labels={**labels, "reason": stop})
     if getattr(result, "succeeded", False):
         registry.inc("runs_succeeded_total", labels=labels)
@@ -488,15 +529,18 @@ def record_run(registry: MetricsRegistry, result: Any) -> MetricsRegistry:
     usage = getattr(result, "usage", None)
     if usage is not None:
         registry.inc("prompt_tokens_total", getattr(usage, "prompt_tokens", 0), labels=labels)
-        registry.inc("completion_tokens_total", getattr(usage, "completion_tokens", 0),
-                     labels=labels)
+        registry.inc(
+            "completion_tokens_total", getattr(usage, "completion_tokens", 0), labels=labels
+        )
         registry.inc("tokens_total", getattr(usage, "total_tokens", 0), labels=labels)
         if getattr(usage, "cached_tokens", 0):
             registry.inc("cached_tokens_total", usage.cached_tokens, labels=labels)
     cost = getattr(result, "cost", None)
     total = getattr(cost, "total", 0.0) or 0.0
     if total:
-        registry.inc("cost_total", total, labels={**labels, "unit": getattr(cost, "currency", "USD")})
+        registry.inc(
+            "cost_total", total, labels={**labels, "unit": getattr(cost, "currency", "USD")}
+        )
     steps = getattr(result, "steps", []) or []
     registry.gauge("last_run_steps", labels=labels).set(len(steps))
     for step in steps:

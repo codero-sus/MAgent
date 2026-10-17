@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..errors import SessionError
 from ..logging_ import get_logger
@@ -59,15 +60,24 @@ class SessionInfo:
         return format_relative(self.updated_at) if self.updated_at else "unknown"
 
     @classmethod
-    def from_record(cls, record: SessionRecord, *, path: str | Path = "",
-                    size: int = 0) -> SessionInfo:
+    def from_record(
+        cls, record: SessionRecord, *, path: str | Path = "", size: int = 0
+    ) -> SessionInfo:
         """Build the summary from a full record."""
         return cls(
-            id=record.id, title=record.title, updated_at=record.updated_at,
-            created_at=record.created_at, messages=len(record.messages),
-            turns=len(record.turns), tokens=record.usage.total_tokens, cost=record.cost,
-            model=record.model, tags=list(record.tags), preview=record.preview(80),
-            size=size or len(record.to_json()), path=str(path),
+            id=record.id,
+            title=record.title,
+            updated_at=record.updated_at,
+            created_at=record.created_at,
+            messages=len(record.messages),
+            turns=len(record.turns),
+            tokens=record.usage.total_tokens,
+            cost=record.cost,
+            model=record.model,
+            tags=list(record.tags),
+            preview=record.preview(80),
+            size=size or len(record.to_json()),
+            path=str(path),
         )
 
     @classmethod
@@ -78,8 +88,13 @@ class SessionInfo:
             raw = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             LOGGER.debug("unreadable session %s: %s", target, exc)
-            return cls(id=target.stem, title="(unreadable)", path=str(target),
-                       size=target.stat().st_size if target.exists() else 0, error=str(exc))
+            return cls(
+                id=target.stem,
+                title="(unreadable)",
+                path=str(target),
+                size=target.stat().st_size if target.exists() else 0,
+                error=str(exc),
+            )
         info = cls(
             id=str(raw.get("id", target.stem)),
             title=str(raw.get("title", "") or "")[:MAX_TITLE_CHARS],
@@ -126,8 +141,15 @@ class SessionInfo:
 class SessionStore:
     """Persist and query session records."""
 
-    def __init__(self, directory: str | Path, *, redact: bool = True, max_bytes: int = 0,
-                 keep_last: int = 0, indent: int = 2) -> None:
+    def __init__(
+        self,
+        directory: str | Path,
+        *,
+        redact: bool = True,
+        max_bytes: int = 0,
+        keep_last: int = 0,
+        indent: int = 2,
+    ) -> None:
         """Open a store.
 
         Args:
@@ -147,8 +169,13 @@ class SessionStore:
         self.errors = 0
 
     @classmethod
-    def from_config(cls, config: Any = None, *, directory: str | Path | None = None,
-                    data_dir: str | Path | None = None) -> SessionStore:
+    def from_config(
+        cls,
+        config: Any = None,
+        *,
+        directory: str | Path | None = None,
+        data_dir: str | Path | None = None,
+    ) -> SessionStore:
         """Build a store from configuration.
 
         Args:
@@ -161,9 +188,12 @@ class SessionStore:
         if not root:
             base = data_dir or getattr(config, "data_dir", "")
             root = Path(base or Path.home() / ".local/share/magent") / DEFAULT_DIRNAME
-        return cls(root, redact=bool(getattr(session, "redact_secrets", True)),
-                   max_bytes=int(getattr(session, "max_session_bytes", 0) or 0),
-                   keep_last=int(getattr(session, "keep_last", 0) or 0))
+        return cls(
+            root,
+            redact=bool(getattr(session, "redact_secrets", True)),
+            max_bytes=int(getattr(session, "max_session_bytes", 0) or 0),
+            keep_last=int(getattr(session, "keep_last", 0) or 0),
+        )
 
     # -- paths ---------------------------------------------------------------
 
@@ -181,8 +211,11 @@ class SessionStore:
         """All session files, newest first."""
         if not self.directory.is_dir():
             return []
-        return sorted(self.directory.glob("*.json"),
-                      key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
+        return sorted(
+            self.directory.glob("*.json"),
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+            reverse=True,
+        )
 
     # -- writing -------------------------------------------------------------
 
@@ -209,8 +242,9 @@ class SessionStore:
             atomic_write_text(target, text)
         except OSError as exc:
             self.errors += 1
-            raise SessionError(f"cannot write session {record.id}: {exc}",
-                               details={"path": str(target)}) from exc
+            raise SessionError(
+                f"cannot write session {record.id}: {exc}", details={"path": str(target)}
+            ) from exc
         self.writes += 1
         if self.keep_last:
             self.prune(self.keep_last)
@@ -229,8 +263,9 @@ class SessionStore:
             target.unlink()
         except OSError as exc:
             self.errors += 1
-            raise SessionError(f"cannot delete session {session_id}: {exc}",
-                               details={"path": str(target)}) from exc
+            raise SessionError(
+                f"cannot delete session {session_id}: {exc}", details={"path": str(target)}
+            ) from exc
         return True
 
     def prune(self, keep_last: int) -> int:
@@ -280,8 +315,9 @@ class SessionStore:
             raw = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             self.errors += 1
-            raise SessionError(f"cannot read session {session_id}: {exc}",
-                               details={"path": str(target)}) from exc
+            raise SessionError(
+                f"cannot read session {session_id}: {exc}", details={"path": str(target)}
+            ) from exc
         self.reads += 1
         record = SessionRecord.from_dict(raw)
         if not record.id:
@@ -292,8 +328,10 @@ class SessionStore:
         """Load one session, raising when it does not exist."""
         record = self.load(session_id)
         if record is None:
-            raise SessionError(f"unknown session {session_id!r}",
-                               details={"known": [info.id for info in self.list(limit=10)]})
+            raise SessionError(
+                f"unknown session {session_id!r}",
+                details={"known": [info.id for info in self.list(limit=10)]},
+            )
         return record
 
     def _fuzzy_path(self, session_id: str) -> Path | None:
@@ -319,9 +357,13 @@ class SessionStore:
             infos = [info for info in infos if tag in info.tags]
         if query:
             needle = query.lower()
-            infos = [info for info in infos
-                     if needle in info.id.lower() or needle in info.title.lower()
-                     or needle in info.preview.lower()]
+            infos = [
+                info
+                for info in infos
+                if needle in info.id.lower()
+                or needle in info.title.lower()
+                or needle in info.preview.lower()
+            ]
         infos.sort(key=lambda info: -(info.updated_at or 0.0))
         return infos[: max(1, limit)]
 
@@ -363,8 +405,9 @@ class SessionStore:
                 break
         return results
 
-    def export(self, session_id: str, path: str | Path, *, fmt: str = "json",
-               redact: bool | None = None) -> Path:
+    def export(
+        self, session_id: str, path: str | Path, *, fmt: str = "json", redact: bool | None = None
+    ) -> Path:
         """Export one session to a file in ``json`` or ``markdown``."""
         from .transcript import render_transcript
 
@@ -377,7 +420,9 @@ class SessionStore:
                 payload = _redact_payload(payload)
             text = json.dumps(payload, indent=self.indent, default=str, ensure_ascii=False)
         else:
-            text = render_transcript(record, fmt=fmt, redact=bool(self.redact if redact is None else redact))
+            text = render_transcript(
+                record, fmt=fmt, redact=bool(self.redact if redact is None else redact)
+            )
         return atomic_write_text(target, text)
 
     def import_file(self, path: str | Path, *, session_id: str = "") -> SessionRecord:
@@ -388,8 +433,9 @@ class SessionStore:
         try:
             raw = json.loads(source.read_text(encoding="utf-8"))
         except ValueError as exc:
-            raise SessionError(f"invalid session JSON in {source}: {exc}",
-                               details={"path": str(source)}) from exc
+            raise SessionError(
+                f"invalid session JSON in {source}: {exc}", details={"path": str(source)}
+            ) from exc
         record = SessionRecord.from_dict(raw)
         if session_id:
             record.id = session_id
@@ -421,8 +467,10 @@ class SessionStore:
     def describe(self) -> str:
         """Human-readable one-paragraph description of the store."""
         info = self.stats()
-        return (f"{info['sessions']} sessions in {info['directory']} "
-                f"({info['size']}, {info['messages']} messages, {info['tokens']} tokens)")
+        return (
+            f"{info['sessions']} sessions in {info['directory']} "
+            f"({info['size']}, {info['messages']} messages, {info['tokens']} tokens)"
+        )
 
     def __len__(self) -> int:
         """Number of stored sessions."""

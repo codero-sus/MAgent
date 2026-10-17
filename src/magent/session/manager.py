@@ -11,9 +11,10 @@ context another agent needs to continue the work.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..logging_ import get_logger
 from ..types import Message, RunResult, ToolResult
@@ -58,10 +59,19 @@ class SessionStats:
 class SessionManager:
     """Own the current session and its persistence."""
 
-    def __init__(self, *, store: SessionStore | None = None, config: Any = None,
-                 short_term: Any = None, autosave: bool = True, redact_secrets: bool = True,
-                 resume_last: bool = False, enabled: bool = True,
-                 transcript_format: str = "markdown", directory: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        store: SessionStore | None = None,
+        config: Any = None,
+        short_term: Any = None,
+        autosave: bool = True,
+        redact_secrets: bool = True,
+        resume_last: bool = False,
+        enabled: bool = True,
+        transcript_format: str = "markdown",
+        directory: str | Path | None = None,
+    ) -> None:
         """Configure the manager.
 
         Args:
@@ -79,40 +89,66 @@ class SessionManager:
         self.config = config
         self.enabled = bool(enabled if config is None else getattr(session, "enabled", enabled))
         self.autosave = bool(autosave if config is None else getattr(session, "autosave", autosave))
-        self.redact_secrets = bool(redact_secrets if config is None
-                                   else getattr(session, "redact_secrets", redact_secrets))
-        self.resume_last = bool(resume_last if config is None
-                                else getattr(session, "resume_last", resume_last))
+        self.redact_secrets = bool(
+            redact_secrets if config is None else getattr(session, "redact_secrets", redact_secrets)
+        )
+        self.resume_last = bool(
+            resume_last if config is None else getattr(session, "resume_last", resume_last)
+        )
         self.keep_last = int(getattr(session, "keep_last", 0) or 0)
-        self.transcript_format = str(getattr(session, "transcript_format", transcript_format)
-                                     or transcript_format)
+        self.transcript_format = str(
+            getattr(session, "transcript_format", transcript_format) or transcript_format
+        )
         # ``SessionStore`` defines __len__, so an empty store is falsy: test for None.
-        self.store = store if store is not None else SessionStore.from_config(config,
-                                                                              directory=directory)
+        self.store = (
+            store if store is not None else SessionStore.from_config(config, directory=directory)
+        )
         self.short_term = short_term
         self.current: SessionRecord | None = None
         self.stats = SessionStats()
         self._started_at = time.time()
 
     @classmethod
-    def from_config(cls, config: Any = None, *, store: SessionStore | None = None,
-                    short_term: Any = None, directory: str | Path | None = None) -> SessionManager:
+    def from_config(
+        cls,
+        config: Any = None,
+        *,
+        store: SessionStore | None = None,
+        short_term: Any = None,
+        directory: str | Path | None = None,
+    ) -> SessionManager:
         """Build a manager from configuration."""
         session = getattr(config, "session", None)
-        return cls(config=config, store=store, short_term=short_term, directory=directory,
-                   autosave=bool(getattr(session, "autosave", True)),
-                   redact_secrets=bool(getattr(session, "redact_secrets", True)),
-                   resume_last=bool(getattr(session, "resume_last", False)),
-                   enabled=bool(getattr(session, "enabled", True)),
-                   transcript_format=str(getattr(session, "transcript_format", "markdown")))
+        return cls(
+            config=config,
+            store=store,
+            short_term=short_term,
+            directory=directory,
+            autosave=bool(getattr(session, "autosave", True)),
+            redact_secrets=bool(getattr(session, "redact_secrets", True)),
+            resume_last=bool(getattr(session, "resume_last", False)),
+            enabled=bool(getattr(session, "enabled", True)),
+            transcript_format=str(getattr(session, "transcript_format", "markdown")),
+        )
 
     # -- lifecycle -----------------------------------------------------------
 
-    def start(self, *, session_id: str = "", title: str = "", workspace: str | Path = "",
-              model: str = "", tags: Sequence[str] = ()) -> SessionRecord:
+    def start(
+        self,
+        *,
+        session_id: str = "",
+        title: str = "",
+        workspace: str | Path = "",
+        model: str = "",
+        tags: Sequence[str] = (),
+    ) -> SessionRecord:
         """Begin a new session, making it current."""
-        record = SessionRecord(id=session_id or new_session_id(), title=title,
-                               workspace=str(workspace or ""), model=model)
+        record = SessionRecord(
+            id=session_id or new_session_id(),
+            title=title,
+            workspace=str(workspace or ""),
+            model=model,
+        )
         record.tag(*tags)
         self.current = record
         self.stats.started += 1
@@ -159,7 +195,7 @@ class SessionManager:
             return None
         try:
             path = self.store.save(self.current, redact=self.redact_secrets)
-        except Exception as exc:  # noqa: BLE001 - a failed save must not abort a run
+        except Exception as exc:
             self.stats.failed_saves += 1
             LOGGER.warning("session save failed: %s", exc)
             return None
@@ -186,7 +222,7 @@ class SessionManager:
         if self.short_term is not None:
             try:
                 self.short_term.add(message, session_id=record.id)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 LOGGER.debug("short-term add failed: %s", exc)
         return message
 
@@ -206,7 +242,12 @@ class SessionManager:
             session_id: session to record into; the current one when empty
             prompt: the user's text, derived from the run when omitted
         """
-        if session_id and self.current is not None and self.current.id != session_id                 and session_id != "default":
+        if (
+            session_id
+            and self.current is not None
+            and self.current.id != session_id
+            and session_id != "default"
+        ):
             stored = self.store.load(session_id)
             if stored is not None:
                 self.current = stored
@@ -219,15 +260,19 @@ class SessionManager:
                     break
         tools = sorted({call.name for step in result.steps for call in step.tool_calls})
         turn = record.add_turn(
-            question, result.output,
+            question,
+            result.output,
             started_at=result.started_at,
             seconds=round(result.duration_ms / 1000, 4),
             tools=tools,
             tokens=result.usage.total_tokens,
             ok=bool(result.succeeded),
             error=result.error or "",
-            metadata={"run_id": result.run_id, "stop_reason": str(result.stop_reason),
-                      "model": result.model},
+            metadata={
+                "run_id": result.run_id,
+                "stop_reason": str(result.stop_reason),
+                "model": result.model,
+            },
         )
         record.add_messages(result.messages or [])
         if not record.messages:
@@ -257,7 +302,8 @@ class SessionManager:
                 turn.tools.append(item.name)
             if not item.ok:
                 turn.metadata.setdefault("tool_errors", []).append(
-                    f"{item.name}: {item.error or item.error_code or 'failed'}")
+                    f"{item.name}: {item.error or item.error_code or 'failed'}"
+                )
 
     def set_title(self, title: str) -> str:
         """Rename the current session."""
@@ -290,7 +336,7 @@ class SessionManager:
         if self.short_term is not None:
             try:
                 return self.short_term.messages(record.id, include_summary=include_summary)[-limit:]
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 LOGGER.debug("short-term history failed: %s", exc)
         return record.messages[-limit:]
 
@@ -299,8 +345,11 @@ class SessionManager:
         record = self.current
         if record is None:
             return ""
-        return render_transcript(record, fmt=fmt or self.transcript_format,
-                                 redact=self.redact_secrets if redact is None else redact)
+        return render_transcript(
+            record,
+            fmt=fmt or self.transcript_format,
+            redact=self.redact_secrets if redact is None else redact,
+        )
 
     def handoff_block(self, *, max_chars: int = HANDOFF_MAX_CHARS, turns: int = 3) -> str:
         """Build the context another agent needs to continue this session."""
@@ -310,19 +359,25 @@ class SessionManager:
         parts: list[str] = [f"Session {record.id}: {record.title or '(untitled)'}"]
         if record.summary:
             parts.append(f"Summary: {record.summary}")
-        dialogue = [message for message in record.messages
-                    if str(getattr(message.role, "value", message.role)) != "system"]
+        dialogue = [
+            message
+            for message in record.messages
+            if str(getattr(message.role, "value", message.role)) != "system"
+        ]
         if dialogue:
-            parts.append("Recent exchange:\n" + messages_to_transcript(dialogue[-turns * 2:]))
+            parts.append("Recent exchange:\n" + messages_to_transcript(dialogue[-turns * 2 :]))
         elif record.turns:
             recent_turns = record.turns[-turns:]
-            rendered = "\n".join(f"user: {item.prompt}\nassistant: {item.answer}"
-                                 for item in recent_turns)
+            rendered = "\n".join(
+                f"user: {item.prompt}\nassistant: {item.answer}" for item in recent_turns
+            )
             parts.append("Recent exchange:\n" + rendered)
         tools = record.tool_usage()
         if tools:
-            parts.append("Tools used: " + ", ".join(f"{name}×{count}"
-                                                    for name, count in list(tools.items())[:8]))
+            parts.append(
+                "Tools used: "
+                + ", ".join(f"{name}×{count}" for name, count in list(tools.items())[:8])
+            )
         return ellipsize("\n\n".join(parts), max_chars)
 
     def list(self, *, limit: int = 25, tag: str = "", query: str = "") -> list[SessionInfo]:
@@ -379,7 +434,7 @@ class SessionManager:
                 window = self.short_term.window(record.id)
                 if window.summary and not record.summary:
                     record.summary = window.summary
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             LOGGER.debug("short-term sync failed: %s", exc)
 
     def __repr__(self) -> str:
@@ -388,8 +443,9 @@ class SessionManager:
         return f"SessionManager(current={current!r}, dir={str(self.store.directory)!r})"
 
 
-def build_session_manager(config: Any = None, *, short_term: Any = None,
-                          store: SessionStore | None = None) -> SessionManager:
+def build_session_manager(
+    config: Any = None, *, short_term: Any = None, store: SessionStore | None = None
+) -> SessionManager:
     """Construct a manager from configuration in one call."""
     return SessionManager.from_config(config, store=store, short_term=short_term)
 

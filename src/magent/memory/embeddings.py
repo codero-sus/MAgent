@@ -23,7 +23,8 @@ import hashlib
 import math
 import threading
 from collections import OrderedDict
-from typing import Any, Protocol, Sequence
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 from ..utils.hashing import content_hash
 from ..utils.numbers import cosine_similarity, l2_normalize
@@ -56,8 +57,14 @@ class HashingEmbedder:
     layer work on a fresh interpreter.
     """
 
-    def __init__(self, *, dim: int = DEFAULT_DIM, ngram_range: tuple[int, int] = NGRAM_RANGE,
-                 word_weight: float = 1.5, normalize: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        dim: int = DEFAULT_DIM,
+        ngram_range: tuple[int, int] = NGRAM_RANGE,
+        word_weight: float = 1.5,
+        normalize: bool = True,
+    ) -> None:
         """Configure the vector width and the features that are hashed.
 
         Args:
@@ -80,7 +87,7 @@ class HashingEmbedder:
         minimum, maximum = self.ngram_range
         for size in range(minimum, maximum + 1):
             for index in range(0, max(0, len(lowered) - size + 1)):
-                features.append((f"c{size}:{lowered[index:index + size]}", 1.0))
+                features.append((f"c{size}:{lowered[index : index + size]}", 1.0))
         for word in lowered.replace("\n", " ").split():
             cleaned = "".join(char for char in word if char.isalnum())
             if cleaned:
@@ -112,15 +119,26 @@ class HashingEmbedder:
 
     def stats(self) -> dict[str, Any]:
         """Return embedder telemetry."""
-        return {"name": self.name, "dim": self.dim, "embedded": self.embedded,
-                "ngram_range": list(self.ngram_range)}
+        return {
+            "name": self.name,
+            "dim": self.dim,
+            "embedded": self.embedded,
+            "ngram_range": list(self.ngram_range),
+        }
 
 
 class BackendEmbedder:
     """Embed through an LLM backend's embeddings route (Cortex in production)."""
 
-    def __init__(self, backend: Any, *, model: str = "", dim: int = 0, batch_size: int = 16,
-                 timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        backend: Any,
+        *,
+        model: str = "",
+        dim: int = 0,
+        batch_size: int = 16,
+        timeout: float = 60.0,
+    ) -> None:
         """Wrap a backend that exposes ``embed``.
 
         Args:
@@ -149,7 +167,7 @@ class BackendEmbedder:
             vectors = self.backend.embed(items, model=self.model, batch_size=self.batch_size)
         except TypeError:
             vectors = self.backend.embed(items)
-        except Exception:  # noqa: BLE001 - callers fall back to lexical search
+        except Exception:
             self.failures += 1
             raise
         self.embedded += len(vectors)
@@ -161,8 +179,13 @@ class BackendEmbedder:
 
     def stats(self) -> dict[str, Any]:
         """Return embedder telemetry."""
-        return {"name": self.name, "model": self.model, "dim": self._resolved_dim,
-                "embedded": self.embedded, "failures": self.failures}
+        return {
+            "name": self.name,
+            "model": self.model,
+            "dim": self._resolved_dim,
+            "embedded": self.embedded,
+            "failures": self.failures,
+        }
 
 
 def _fit(vector: Sequence[float], dim: int) -> list[float]:
@@ -216,7 +239,9 @@ class CachingEmbedder:
                     missing.setdefault(key, []).append(index)
         if missing:
             unique_keys = list(missing)
-            unique_texts = [texts[positions[0]] for positions in (missing[key] for key in unique_keys)]
+            unique_texts = [
+                texts[positions[0]] for positions in (missing[key] for key in unique_keys)
+            ]
             computed = self.inner.embed(unique_texts)
             with self._lock:
                 for key, vector in zip(unique_keys, computed, strict=False):
@@ -241,15 +266,26 @@ class CachingEmbedder:
             size = len(self._cache)
         total = self.hits + self.misses
         inner_stats = self.inner.stats() if hasattr(self.inner, "stats") else {}
-        return {"name": self.name, "entries": size, "max_entries": self.max_entries,
-                "hits": self.hits, "misses": self.misses,
-                "hit_rate": round(self.hits / total, 4) if total else 0.0,
-                "inner": inner_stats}
+        return {
+            "name": self.name,
+            "entries": size,
+            "max_entries": self.max_entries,
+            "hits": self.hits,
+            "misses": self.misses,
+            "hit_rate": round(self.hits / total, 4) if total else 0.0,
+            "inner": inner_stats,
+        }
 
 
-def build_embedder(backend: Any = None, *, model: str = "", dim: int = DEFAULT_DIM,
-                   cache: bool = True, max_entries: int = 4096,
-                   batch_size: int = 16) -> Embedder:
+def build_embedder(
+    backend: Any = None,
+    *,
+    model: str = "",
+    dim: int = DEFAULT_DIM,
+    cache: bool = True,
+    max_entries: int = 4096,
+    batch_size: int = 16,
+) -> Embedder:
     """Return the best available embedder for the current environment.
 
     Args:

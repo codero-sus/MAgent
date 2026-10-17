@@ -9,17 +9,45 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..utils.numbers import cosine_similarity
 from .entry import MemoryEntry
 
-STOPWORDS: frozenset[str] = frozenset({
-    "the", "and", "for", "with", "that", "this", "from", "are", "was", "were",
-    "have", "has", "had", "will", "would", "can", "could", "should", "not",
-    "but", "you", "your", "our", "its", "their", "them", "then", "than",
-})
+STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "are",
+        "was",
+        "were",
+        "have",
+        "has",
+        "had",
+        "will",
+        "would",
+        "can",
+        "could",
+        "should",
+        "not",
+        "but",
+        "you",
+        "your",
+        "our",
+        "its",
+        "their",
+        "them",
+        "then",
+        "than",
+    }
+)
 """Words excluded from the lexical signal."""
 
 
@@ -28,7 +56,8 @@ def tokenize(text: str) -> list[str]:
     import re
 
     return [
-        token for token in re.findall(r"[a-z0-9_]+", (text or "").lower())
+        token
+        for token in re.findall(r"[a-z0-9_]+", (text or "").lower())
         if len(token) > 1 and token not in STOPWORDS
     ]
 
@@ -48,7 +77,7 @@ def entry_text(item: Any) -> str:
         if callable(value):
             try:
                 called = value()
-            except Exception:  # noqa: BLE001 - fall through to the next attribute
+            except Exception:
                 continue
             if isinstance(called, str) and called:
                 return called
@@ -73,7 +102,9 @@ class DecayPolicy:
         if self.half_life_days <= 0:
             return 1.0
         idle_days = entry.idle_seconds(now=now) / 86400.0
-        effective_half_life = self.half_life_days * (1.0 + self.importance_weight * entry.importance)
+        effective_half_life = self.half_life_days * (
+            1.0 + self.importance_weight * entry.importance
+        )
         decayed = 0.5 ** (idle_days / effective_half_life)
         return max(self.min_score, min(1.0, decayed))
 
@@ -87,7 +118,7 @@ class RankingWeights:
     importance: float = 0.12
     recency: float = 0.08
 
-    def normalized(self) -> "RankingWeights":
+    def normalized(self) -> RankingWeights:
         """Return a copy whose weights sum to 1."""
         total = self.lexical + self.semantic + self.importance + self.recency
         if total <= 0:
@@ -101,8 +132,12 @@ class RankingWeights:
 
     def to_dict(self) -> dict[str, float]:
         """Serialize the weights."""
-        return {"lexical": self.lexical, "semantic": self.semantic,
-                "importance": self.importance, "recency": self.recency}
+        return {
+            "lexical": self.lexical,
+            "semantic": self.semantic,
+            "importance": self.importance,
+            "recency": self.recency,
+        }
 
 
 class BM25Scorer:
@@ -164,9 +199,15 @@ class BM25Scorer:
         return sorted(term for term in set(tokenize(query)) if counter.get(term))
 
 
-def hybrid_score(*, lexical: float = 0.0, semantic: float = 0.0, importance: float = 0.0,
-                 recency: float = 1.0, tag_bonus: float = 0.0,
-                 weights: RankingWeights | None = None) -> float:
+def hybrid_score(
+    *,
+    lexical: float = 0.0,
+    semantic: float = 0.0,
+    importance: float = 0.0,
+    recency: float = 1.0,
+    tag_bonus: float = 0.0,
+    weights: RankingWeights | None = None,
+) -> float:
     """Blend the retrieval signals into one score in ``0..1``.
 
     Args:
@@ -188,10 +229,17 @@ def hybrid_score(*, lexical: float = 0.0, semantic: float = 0.0, importance: flo
     return round(max(0.0, min(1.0, total)), 6)
 
 
-def rank_entries(entries: Iterable[MemoryEntry], query: str, *, embedder: Any = None,
-                 weights: RankingWeights | None = None, decay: DecayPolicy | None = None,
-                 tags: Sequence[str] | None = None, mode: str = "hybrid",
-                 now: float | None = None) -> list[MemoryEntry]:
+def rank_entries(
+    entries: Iterable[MemoryEntry],
+    query: str,
+    *,
+    embedder: Any = None,
+    weights: RankingWeights | None = None,
+    decay: DecayPolicy | None = None,
+    tags: Sequence[str] | None = None,
+    mode: str = "hybrid",
+    now: float | None = None,
+) -> list[MemoryEntry]:
     """Score and sort entries for a query, filling ``entry.score``.
 
     Args:
@@ -219,7 +267,7 @@ def rank_entries(entries: Iterable[MemoryEntry], query: str, *, embedder: Any = 
             if vectors and len(vectors) == len(items):
                 query_vector = embedder.embed([query])[0]
                 semantic_scores = [cosine_similarity(query_vector, vector) for vector in vectors]
-        except Exception:  # noqa: BLE001 - semantic ranking is best effort
+        except Exception:
             semantic_scores = [0.0] * len(items)
     wanted = {str(tag).strip().lower() for tag in (tags or ()) if str(tag).strip()}
     for index, entry in enumerate(items):
@@ -240,11 +288,11 @@ def rank_entries(entries: Iterable[MemoryEntry], query: str, *, embedder: Any = 
 
 
 __all__ = [
+    "STOPWORDS",
     "BM25Scorer",
-    "entry_text",
     "DecayPolicy",
     "RankingWeights",
-    "STOPWORDS",
+    "entry_text",
     "hybrid_score",
     "rank_entries",
     "tokenize",

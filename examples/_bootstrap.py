@@ -12,9 +12,10 @@ import os
 import shutil
 import sys
 import tempfile
-from pathlib import Path
-from typing import Any, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 if str(SRC) not in sys.path:
@@ -81,6 +82,7 @@ def cleanup() -> Iterator[None]:
 
 def main_guard(fn: Any) -> Any:
     """Wrap an example body so the temporary state is always cleaned up."""
+
     def runner() -> int:
         try:
             fn()

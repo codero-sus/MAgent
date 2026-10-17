@@ -15,8 +15,9 @@ window, and it has a hard budget. This module owns that budget:
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..llm.tokens import TokenEstimator, trim_messages
 from ..logging_ import get_logger
@@ -179,23 +180,30 @@ class ConversationWindow:
 
     def __repr__(self) -> str:
         """Show the session, message count, and summary length."""
-        return (f"<ConversationWindow session={self.session_id!r} messages={len(self.messages)} "
-                f"summary_chars={len(self.summary)}>")
+        return (
+            f"<ConversationWindow session={self.session_id!r} messages={len(self.messages)} "
+            f"summary_chars={len(self.summary)}>"
+        )
 
 
 class ShortTermMemory:
     """Per-session conversation windows with token-aware trimming."""
 
-    def __init__(self, *, config: Any = None, backend: Any = None,
-                 estimator: TokenEstimator | None = None,
-                 max_messages: int = DEFAULT_MAX_MESSAGES,
-                 max_tokens: int = DEFAULT_MAX_TOKENS,
-                 trim_strategy: str = "middle",
-                 summarize: bool = True,
-                 summary_threshold: int = 24,
-                 summary_model: str = "",
-                 keep_last: int = 6,
-                 summary_batch: int = 4) -> None:
+    def __init__(
+        self,
+        *,
+        config: Any = None,
+        backend: Any = None,
+        estimator: TokenEstimator | None = None,
+        max_messages: int = DEFAULT_MAX_MESSAGES,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        trim_strategy: str = "middle",
+        summarize: bool = True,
+        summary_threshold: int = 24,
+        summary_model: str = "",
+        keep_last: int = 6,
+        summary_batch: int = 4,
+    ) -> None:
         """Configure the window policy.
 
         Args:
@@ -218,7 +226,9 @@ class ShortTermMemory:
         self.max_tokens = int(getattr(config, "max_context_tokens", max_tokens) or max_tokens)
         self.trim_strategy = str(getattr(config, "trim_strategy", trim_strategy) or trim_strategy)
         self.summarize_enabled = bool(getattr(config, "summarize", summarize))
-        self.summary_threshold = int(getattr(config, "summary_threshold", summary_threshold) or summary_threshold)
+        self.summary_threshold = int(
+            getattr(config, "summary_threshold", summary_threshold) or summary_threshold
+        )
         self.summary_model = str(getattr(config, "summary_model", summary_model) or summary_model)
         self.keep_last = max(2, int(keep_last))
         self.summary_batch = max(1, int(summary_batch))
@@ -250,14 +260,18 @@ class ShortTermMemory:
         self.enforce(session_id)
         return window
 
-    def extend(self, messages: Sequence[Message], *, session_id: str = "default") -> ConversationWindow:
+    def extend(
+        self, messages: Sequence[Message], *, session_id: str = "default"
+    ) -> ConversationWindow:
         """Append several messages and apply the window policy once."""
         window = self.window(session_id)
         window.extend(messages)
         self.enforce(session_id)
         return window
 
-    def messages(self, session_id: str = "default", *, include_summary: bool = True) -> list[Message]:
+    def messages(
+        self, session_id: str = "default", *, include_summary: bool = True
+    ) -> list[Message]:
         """Return the messages to send for a session."""
         return self.window(session_id).visible(include_summary=include_summary)
 
@@ -284,8 +298,13 @@ class ShortTermMemory:
         ``--verbose`` and the HTTP API exposes for debugging.
         """
         window = self.window(session_id)
-        report: dict[str, Any] = {"session_id": session_id, "trimmed": 0, "summarized": False,
-                                  "messages": len(window), "tokens": 0}
+        report: dict[str, Any] = {
+            "session_id": session_id,
+            "trimmed": 0,
+            "summarized": False,
+            "messages": len(window),
+            "tokens": 0,
+        }
         if len(window) > max(self.keep_last, self.max_messages):
             report.update(self._trim_by_count(window))
         if self.max_tokens > 0:
@@ -300,8 +319,12 @@ class ShortTermMemory:
         overflow = len(window.messages) - limit
         if overflow <= 0:
             return {"trimmed": 0, "summarized": False}
-        head = window.messages[:1] if window.messages and window.messages[0].role is Role.SYSTEM else []
-        body = window.messages[len(head):]
+        head = (
+            window.messages[:1]
+            if window.messages and window.messages[0].role is Role.SYSTEM
+            else []
+        )
+        body = window.messages[len(head) :]
         evicted = body[:overflow]
         kept = body[overflow:]
         summarized = False
@@ -335,8 +358,12 @@ class ShortTermMemory:
             window.messages = trimmed
             window.trims += 1
             self.messages_trimmed += dropped
-        return {"trimmed": dropped, "tokens_before": report.get("tokens_before", 0),
-                "tokens_after": report.get("tokens_after", 0), "strategy": report.get("strategy", "")}
+        return {
+            "trimmed": dropped,
+            "tokens_before": report.get("tokens_before", 0),
+            "tokens_after": report.get("tokens_after", 0),
+            "strategy": report.get("strategy", ""),
+        }
 
     def _maybe_summarize(self, window: ConversationWindow) -> bool:
         """Summarize the eviction buffer once it is large enough to be worth it."""
@@ -351,8 +378,9 @@ class ShortTermMemory:
         self.summaries_written += 1
         return True
 
-    def write_summary_text(self, lines: Sequence[str], *, existing: str = "",
-                           max_words: int = 300) -> str:
+    def write_summary_text(
+        self, lines: Sequence[str], *, existing: str = "", max_words: int = 300
+    ) -> str:
         """Summarize buffered transcript lines into the rolling summary.
 
         The previous summary is included so the new one supersedes it, but it is
@@ -362,22 +390,25 @@ class ShortTermMemory:
         transcript = "\n".join(line.strip() for line in lines if line.strip())
         if not transcript:
             return existing
-        prompt = SUMMARIZE_PROMPT.render(transcript=ellipsize(transcript, 12000),
-                                        max_words=str(max_words))
+        prompt = SUMMARIZE_PROMPT.render(
+            transcript=ellipsize(transcript, 12000), max_words=str(max_words)
+        )
         if existing:
             prompt = f"Previous summary (supersede it, do not repeat it):\n{ellipsize(existing, 1200)}\n\n{prompt}"
         return self._call_summarizer(prompt, existing, max_words)
 
-    def write_summary(self, messages: Sequence[Message], *, existing: str = "",
-                      max_words: int = 300) -> str:
+    def write_summary(
+        self, messages: Sequence[Message], *, existing: str = "", max_words: int = 300
+    ) -> str:
         """Summarize evicted turns into the rolling summary."""
         transcript = "\n".join(
             f"{message.role.value}: {ellipsize(message.text(), 500)}" for message in messages
         ).strip()
         if not transcript:
             return existing
-        prompt = SUMMARIZE_PROMPT.render(transcript=ellipsize(transcript, 12000),
-                                        max_words=str(max_words))
+        prompt = SUMMARIZE_PROMPT.render(
+            transcript=ellipsize(transcript, 12000), max_words=str(max_words)
+        )
         if existing:
             prompt = f"Previous summary (supersede it, do not repeat it):\n{ellipsize(existing, 1200)}\n\n{prompt}"
         return self._call_summarizer(prompt, existing, max_words)
@@ -389,13 +420,15 @@ class ShortTermMemory:
         try:
             from ..llm.base import CompletionRequest
 
-            response = self.backend.complete(CompletionRequest(
-                messages=[Message.user(prompt)],
-                model=self.summary_model,
-                temperature=0.2,
-                max_tokens=max_words * 2,
-            ))
-        except Exception as exc:  # noqa: BLE001 - summarizing must never break a run
+            response = self.backend.complete(
+                CompletionRequest(
+                    messages=[Message.user(prompt)],
+                    model=self.summary_model,
+                    temperature=0.2,
+                    max_tokens=max_words * 2,
+                )
+            )
+        except Exception as exc:
             LOGGER.warning("summarization failed, keeping the old summary: %s", exc)
             return existing
         text = (getattr(response, "text", "") or "").strip()
@@ -407,8 +440,10 @@ class ShortTermMemory:
         """Serialize every window."""
         with self._lock:
             return {
-                "sessions": {key: window.to_dict(include_messages=include_messages)
-                             for key, window in self._windows.items()},
+                "sessions": {
+                    key: window.to_dict(include_messages=include_messages)
+                    for key, window in self._windows.items()
+                },
                 "policy": {
                     "max_messages": self.max_messages,
                     "max_tokens": self.max_tokens,
@@ -454,8 +489,10 @@ class ShortTermMemory:
 
     def __repr__(self) -> str:
         """Show session count and policy."""
-        return (f"<ShortTermMemory sessions={len(self._windows)} "
-                f"max_messages={self.max_messages} max_tokens={self.max_tokens}>")
+        return (
+            f"<ShortTermMemory sessions={len(self._windows)} "
+            f"max_messages={self.max_messages} max_tokens={self.max_tokens}>"
+        )
 
 
 __all__ = [

@@ -12,7 +12,6 @@ import base64
 import hashlib
 import json
 import re
-import unicodedata
 from typing import Any
 
 from ...errors import ToolExecutionError
@@ -39,8 +38,14 @@ from ...utils.text import (
 
 
 @tool(category="text", risk="safe", tags=["regex", "search"])
-def regex_find(pattern: str, text: str, ignore_case: bool = False, multiline: bool = False,
-               max_results: int = 100, group: int = 0) -> dict[str, Any]:
+def regex_find(
+    pattern: str,
+    text: str,
+    ignore_case: bool = False,
+    multiline: bool = False,
+    max_results: int = 100,
+    group: int = 0,
+) -> dict[str, Any]:
     """Find every match of a regular expression in a string.
 
     Args:
@@ -64,22 +69,33 @@ def regex_find(pattern: str, text: str, ignore_case: bool = False, multiline: bo
     for index, match in enumerate(matcher.finditer(text)):
         if index >= max_results:
             break
-        matches.append({
-            "index": index,
-            "start": match.start(),
-            "end": match.end(),
-            "match": ellipsize(match.group(0), 500),
-            "groups": [ellipsize(item or "", 200) for item in match.groups()],
-            "named": {key: ellipsize(value or "", 200) for key, value in match.groupdict().items()},
-            "selected": ellipsize(match.group(group) if group <= len(match.groups()) else match.group(0), 500),
-        })
-    return {"pattern": pattern, "count": len(matches), "matches": matches,
-            "truncated": len(matches) >= max_results}
+        matches.append(
+            {
+                "index": index,
+                "start": match.start(),
+                "end": match.end(),
+                "match": ellipsize(match.group(0), 500),
+                "groups": [ellipsize(item or "", 200) for item in match.groups()],
+                "named": {
+                    key: ellipsize(value or "", 200) for key, value in match.groupdict().items()
+                },
+                "selected": ellipsize(
+                    match.group(group) if group <= len(match.groups()) else match.group(0), 500
+                ),
+            }
+        )
+    return {
+        "pattern": pattern,
+        "count": len(matches),
+        "matches": matches,
+        "truncated": len(matches) >= max_results,
+    }
 
 
 @tool(category="text", risk="safe", tags=["regex", "replace"])
-def regex_replace(pattern: str, replacement: str, text: str, count: int = 0,
-                  ignore_case: bool = False) -> dict[str, Any]:
+def regex_replace(
+    pattern: str, replacement: str, text: str, count: int = 0, ignore_case: bool = False
+) -> dict[str, Any]:
     """Replace regular expression matches in a string.
 
     Args:
@@ -94,8 +110,13 @@ def regex_replace(pattern: str, replacement: str, text: str, count: int = 0,
         updated, replaced = re.subn(pattern, replacement, text, count=count, flags=flags)
     except re.error as exc:
         raise ToolExecutionError(f"Invalid regular expression: {exc}") from exc
-    return {"replacements": replaced, "text": updated, "changed": replaced > 0,
-            "before_chars": len(text), "after_chars": len(updated)}
+    return {
+        "replacements": replaced,
+        "text": updated,
+        "changed": replaced > 0,
+        "before_chars": len(text),
+        "after_chars": len(updated),
+    }
 
 
 @tool(category="text", risk="safe", tags=["stats", "count"])
@@ -114,10 +135,13 @@ def text_stats(text: str) -> dict[str, Any]:
         "chars_no_whitespace": len(re.sub(r"\s", "", text)),
         "words": len(words),
         "unique_words": len(unique),
-        "lines": normalized.count("\n") + (1 if normalized and not normalized.endswith("\n") else 0),
+        "lines": normalized.count("\n")
+        + (1 if normalized and not normalized.endswith("\n") else 0),
         "sentences": len(sentences),
         "paragraphs": len([part for part in normalized.split("\n\n") if part.strip()]),
-        "avg_word_length": round(sum(len(word) for word in words) / len(words), 2) if words else 0.0,
+        "avg_word_length": round(sum(len(word) for word in words) / len(words), 2)
+        if words
+        else 0.0,
         "avg_sentence_length": round(len(words) / len(sentences), 2) if sentences else 0.0,
         "estimated_tokens": max(1, len(text) // 4),
         "longest_word": max(words, key=len) if words else "",
@@ -128,12 +152,76 @@ def text_stats(text: str) -> dict[str, Any]:
 def _top_words(words: list[str], limit: int) -> list[dict[str, Any]]:
     """Return the most frequent non-stopword tokens."""
     stopwords = {
-        "the", "a", "an", "and", "or", "but", "if", "then", "else", "when", "at", "by", "for",
-        "with", "about", "against", "between", "into", "through", "during", "before", "after",
-        "above", "below", "to", "from", "up", "down", "in", "out", "on", "off", "over", "under",
-        "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does",
-        "did", "doing", "of", "it", "its", "this", "that", "these", "those", "i", "you", "he",
-        "she", "we", "they", "as", "not", "so", "than", "too", "very", "can", "will", "just",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "else",
+        "when",
+        "at",
+        "by",
+        "for",
+        "with",
+        "about",
+        "against",
+        "between",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "to",
+        "from",
+        "up",
+        "down",
+        "in",
+        "out",
+        "on",
+        "off",
+        "over",
+        "under",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "of",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
+        "i",
+        "you",
+        "he",
+        "she",
+        "we",
+        "they",
+        "as",
+        "not",
+        "so",
+        "than",
+        "too",
+        "very",
+        "can",
+        "will",
+        "just",
     }
     counts: dict[str, int] = {}
     for word in words:
@@ -188,7 +276,12 @@ def transform_text(text: str, operation: str = "strip", width: int = 80) -> dict
     result = operations[operation](text)
     if isinstance(result, list):
         result = "\n".join(result)
-    return {"operation": operation, "before_chars": len(text), "after_chars": len(result), "text": result}
+    return {
+        "operation": operation,
+        "before_chars": len(text),
+        "after_chars": len(result),
+        "text": result,
+    }
 
 
 @tool(category="text", risk="safe", tags=["compare", "similarity"])
@@ -214,8 +307,14 @@ def compare_text(left: str, right: str) -> dict[str, Any]:
 
 
 @tool(category="text", risk="safe", tags=["truncate", "extract"])
-def extract_lines(text: str, start: int = 1, end: int = 0, grep: str = "",
-                  ignore_case: bool = True, max_lines: int = 500) -> dict[str, Any]:
+def extract_lines(
+    text: str,
+    start: int = 1,
+    end: int = 0,
+    grep: str = "",
+    ignore_case: bool = True,
+    max_lines: int = 500,
+) -> dict[str, Any]:
     """Slice or filter lines out of a larger string.
 
     Args:
@@ -273,12 +372,22 @@ def encode_text(text: str, operation: str = "base64_encode") -> dict[str, Any]:
             raise ToolExecutionError(f"Unknown operation {operation!r}")
     except (ValueError, TypeError) as exc:
         raise ToolExecutionError(f"{operation} failed: {exc}") from exc
-    return {"operation": operation, "before_chars": len(text), "after_chars": len(result), "text": result}
+    return {
+        "operation": operation,
+        "before_chars": len(text),
+        "after_chars": len(result),
+        "text": result,
+    }
 
 
 @tool(category="text", risk="safe", tags=["join", "split"])
-def split_text(text: str, separator: str = "\n", max_parts: int = 100,
-               strip: bool = True, drop_empty: bool = True) -> dict[str, Any]:
+def split_text(
+    text: str,
+    separator: str = "\n",
+    max_parts: int = 100,
+    strip: bool = True,
+    drop_empty: bool = True,
+) -> dict[str, Any]:
     """Split a string into parts.
 
     Args:
@@ -294,8 +403,13 @@ def split_text(text: str, separator: str = "\n", max_parts: int = 100,
     if drop_empty:
         parts = [part for part in parts if part]
     total = len(parts)
-    return {"parts": parts[:max_parts], "count": total, "returned": min(total, max_parts),
-            "truncated": total > max_parts, "separator": separator or "\\n"}
+    return {
+        "parts": parts[:max_parts],
+        "count": total,
+        "returned": min(total, max_parts),
+        "truncated": total > max_parts,
+        "separator": separator or "\\n",
+    }
 
 
 @tool(category="text", risk="safe", tags=["json", "extract"])
@@ -365,8 +479,16 @@ def extractive_summary(text: str, sentences: int = 3) -> dict[str, Any]:
 
 
 TOOLS: list[Any] = [
-    regex_find, regex_replace, text_stats, transform_text, compare_text,
-    extract_lines, encode_text, split_text, extract_json_from_text, extractive_summary,
+    regex_find,
+    regex_replace,
+    text_stats,
+    transform_text,
+    compare_text,
+    extract_lines,
+    encode_text,
+    split_text,
+    extract_json_from_text,
+    extractive_summary,
 ]
 """Every tool defined in this module."""
 

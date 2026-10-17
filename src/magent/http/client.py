@@ -121,6 +121,15 @@ class HTTPResponse:
         """Look up a response header case-insensitively."""
         return self.headers.get(name.lower(), default)
 
+    def safe_url(self) -> str:
+        """Return the response URL with embedded credentials removed.
+
+        Error messages and ``HTTPError`` details include the response URL. This
+        method mirrors :meth:`HTTPRequest.safe_url`; without it, every non-2xx
+        response was masked by ``AttributeError`` inside ``raise_for_status``.
+        """
+        return redact_url(self.url)
+
     def retry_after(self) -> float | None:
         """Parse a ``Retry-After`` header into seconds, if present."""
         raw = self.header("retry-after")
@@ -293,18 +302,22 @@ def with_suppressed_close(connection: http.client.HTTPConnection) -> None:
     """Close a connection, ignoring errors from an already-dead socket."""
     try:
         connection.close()
-    except Exception:  # noqa: BLE001 - best effort cleanup
+    except Exception:
         pass
 
 
-def _build_connection(url: str, *, timeout: float, context: ssl.SSLContext | None = None) -> http.client.HTTPConnection:
+def _build_connection(
+    url: str, *, timeout: float, context: ssl.SSLContext | None = None
+) -> http.client.HTTPConnection:
     """Create a fresh :mod:`http.client` connection for ``url``."""
     parts = urlsplit(url)
     scheme = (parts.scheme or "http").lower()
     host = parts.hostname or "127.0.0.1"
     if scheme == "https":
         ssl_context = context or ssl.create_default_context()
-        return http.client.HTTPSConnection(host, parts.port or 443, timeout=timeout, context=ssl_context)
+        return http.client.HTTPSConnection(
+            host, parts.port or 443, timeout=timeout, context=ssl_context
+        )
     return http.client.HTTPConnection(host, parts.port or 80, timeout=timeout)
 
 
@@ -411,7 +424,11 @@ class StdlibTransport(HTTPTransport):
                 )
                 self.pool.release(request.url, connection, reusable=keep_alive)
                 return result
-            except (http.client.BadStatusLine, http.client.RemoteDisconnected, BrokenPipeError) as exc:
+            except (
+                http.client.BadStatusLine,
+                http.client.RemoteDisconnected,
+                BrokenPipeError,
+            ) as exc:
                 self.pool.discard(request.url, connection)
                 self.errors += 1
                 if attempt == 0 and reused:
@@ -419,7 +436,7 @@ class StdlibTransport(HTTPTransport):
                 raise ConnectionError_(
                     f"Connection to {request.safe_url()} was dropped: {exc}", url=request.safe_url()
                 ) from exc
-            except socket.timeout as exc:
+            except TimeoutError as exc:
                 self.pool.discard(request.url, connection)
                 self.errors += 1
                 raise TimeoutError_(
@@ -481,7 +498,7 @@ class StdlibTransport(HTTPTransport):
                 if tail:
                     yield tail
             reusable = response.will_close is False
-        except socket.timeout as exc:
+        except TimeoutError as exc:
             raise TimeoutError_(f"Stream timed out from {request.safe_url()}") from exc
         except OSError as exc:
             if not isinstance(exc, socket.timeout):
@@ -544,12 +561,16 @@ class RetryPolicy:
         if retry_after is not None and self.honor_retry_after:
             return min(self.backoff_cap, max(0.0, retry_after))
         generator = random.Random(self.seed if self.seed is not None else None)
-        delay = min(self.backoff_cap, self.backoff_base * (self.backoff_factor ** max(0, attempt - 1)))
+        delay = min(
+            self.backoff_cap, self.backoff_base * (self.backoff_factor ** max(0, attempt - 1))
+        )
         if self.jitter > 0:
             delay *= 1.0 + generator.uniform(-self.jitter, self.jitter)
         return max(0.0, delay)
 
-    def should_retry(self, attempt: int, error: BaseException | None = None, status: int | None = None) -> bool:
+    def should_retry(
+        self, attempt: int, error: BaseException | None = None, status: int | None = None
+    ) -> bool:
         """Decide whether another attempt is allowed."""
         if attempt >= self.max_attempts:
             return False
@@ -640,7 +661,9 @@ class HTTPClient:
                 target = f"{target}{'&' if '?' in target else '?'}{query}"
         return self.request("GET", target, **kwargs)
 
-    def post(self, url: str, *, json_body: Any = None, body: bytes | None = None, **kwargs: Any) -> HTTPResponse:
+    def post(
+        self, url: str, *, json_body: Any = None, body: bytes | None = None, **kwargs: Any
+    ) -> HTTPResponse:
         """Issue a POST request with a JSON or raw body."""
         return self.request("POST", self.resolve_url(url), json_body=json_body, body=body, **kwargs)
 
@@ -685,7 +708,6 @@ class HTTPClient:
             else self.retry
         )
         attempt = 0
-        last_exception: BaseException | None = None
         while True:
             attempt += 1
             self.attempts_total += 1
@@ -700,7 +722,6 @@ class HTTPClient:
             try:
                 response = self.transport.send(payload)
             except (ConnectionError_, TimeoutError_, ServerError) as exc:
-                last_exception = exc
                 self.last_error = str(exc)
                 if policy.should_retry(attempt, error=exc):
                     delay = policy.delay_for(attempt)
@@ -710,7 +731,10 @@ class HTTPClient:
                     time.sleep(delay)
                     continue
                 raise
-            if policy.should_retry(attempt, status=response.status) and attempt < policy.max_attempts:
+            if (
+                policy.should_retry(attempt, status=response.status)
+                and attempt < policy.max_attempts
+            ):
                 delay = policy.delay_for(attempt, response.retry_after())
                 self.retries_total += 1
                 self.last_error = f"HTTP {response.status}"
@@ -794,12 +818,12 @@ def ping(url: str, *, timeout: float = 2.0) -> tuple[bool, str]:
 __all__ = [
     "DEFAULT_HEADERS",
     "DEFAULT_MAX_BODY_BYTES",
+    "RETRYABLE_STATUS",
     "HTTPClient",
     "HTTPPool",
     "HTTPRequest",
     "HTTPResponse",
     "HTTPTransport",
-    "RETRYABLE_STATUS",
     "RetryPolicy",
     "StdlibTransport",
     "ping",

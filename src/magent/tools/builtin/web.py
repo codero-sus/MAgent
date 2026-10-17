@@ -15,9 +15,8 @@ from __future__ import annotations
 import html
 import json
 import re
-from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 from ..._version import __version__
 from ...errors import ToolExecutionError
@@ -27,10 +26,14 @@ from ...utils.files import atomic_write_bytes, ensure_dir, human_size
 from ...utils.mime import guess_mime, is_text_mime
 from ...utils.text import collapse_whitespace, ellipsize, normalize_newlines
 
-_SCRIPT_STYLE = re.compile(r"<(script|style|noscript|template|svg|iframe)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_SCRIPT_STYLE = re.compile(
+    r"<(script|style|noscript|template|svg|iframe)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE
+)
 _COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _HEAD_BLOCK = re.compile(r"<head\b[^>]*>.*?</head>", re.DOTALL | re.IGNORECASE)
-_NAV_BLOCK = re.compile(r"<(nav|footer|aside|header|form)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_NAV_BLOCK = re.compile(
+    r"<(nav|footer|aside|header|form)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE
+)
 _TAG = re.compile(r"<[^>]+>")
 _MULTI_BLANK = re.compile(r"\n{3,}")
 
@@ -55,9 +58,15 @@ def _check_network(context: ToolContext, url: str) -> None:
 
 
 @tool(category="web", risk="network", network=True, timeout=60.0, tags=["http", "get"])
-def http_get(url: str, headers: str = "", timeout: float = 30.0, max_bytes: int = 200000,
-             follow_redirects: bool = True, as_text: bool = True,
-             context: ToolContext | None = None) -> dict[str, Any]:
+def http_get(
+    url: str,
+    headers: str = "",
+    timeout: float = 30.0,
+    max_bytes: int = 200000,
+    follow_redirects: bool = True,
+    as_text: bool = True,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Fetch a URL with GET and return the response.
 
     Args:
@@ -73,16 +82,25 @@ def http_get(url: str, headers: str = "", timeout: float = 30.0, max_bytes: int 
     parsed_headers = _parse_headers(headers)
     client = _client(ctx, timeout)
     try:
-        response = _request_with_redirects(client, "GET", url, parsed_headers, timeout, follow_redirects)
+        response = _request_with_redirects(
+            client, "GET", url, parsed_headers, timeout, follow_redirects
+        )
     finally:
         client.close()
     return _format_response(response, max_bytes, as_text)
 
 
 @tool(category="web", risk="network", network=True, timeout=60.0, tags=["http", "post"])
-def http_post(url: str, body: str = "", headers: str = "", content_type: str = "application/json",
-              timeout: float = 30.0, max_bytes: int = 200000, method: str = "POST",
-              context: ToolContext | None = None) -> dict[str, Any]:
+def http_post(
+    url: str,
+    body: str = "",
+    headers: str = "",
+    content_type: str = "application/json",
+    timeout: float = 30.0,
+    max_bytes: int = 200000,
+    method: str = "POST",
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Send a request with a body and return the response.
 
     Args:
@@ -103,8 +121,14 @@ def http_post(url: str, body: str = "", headers: str = "", content_type: str = "
     parsed_headers.setdefault("Content-Type", content_type)
     client = _client(ctx, timeout)
     try:
-        response = client.request(method.upper(), url, headers=parsed_headers,
-                                  body=body.encode("utf-8"), timeout=timeout, raise_for_status=False)
+        response = client.request(
+            method.upper(),
+            url,
+            headers=parsed_headers,
+            body=body.encode("utf-8"),
+            timeout=timeout,
+            raise_for_status=False,
+        )
     finally:
         client.close()
     return _format_response(response, max_bytes, True)
@@ -122,11 +146,20 @@ def _parse_headers(text: str) -> dict[str, str]:
     return out
 
 
-def _request_with_redirects(client: HTTPClient, method: str, url: str, headers: dict[str, str],
-                            timeout: float, follow: bool, max_hops: int = 5) -> HTTPResponse:
+def _request_with_redirects(
+    client: HTTPClient,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    timeout: float,
+    follow: bool,
+    max_hops: int = 5,
+) -> HTTPResponse:
     """Follow redirects manually so each hop goes through the network policy."""
     current = url
-    response = client.request(method, current, headers=headers, timeout=timeout, raise_for_status=False)
+    response = client.request(
+        method, current, headers=headers, timeout=timeout, raise_for_status=False
+    )
     hops = 0
     while follow and response.status in {301, 302, 303, 307, 308} and hops < max_hops:
         location = response.header("location")
@@ -134,8 +167,13 @@ def _request_with_redirects(client: HTTPClient, method: str, url: str, headers: 
             break
         current = urljoin(current, location)
         hops += 1
-        response = client.request(method if response.status in {307, 308} else "GET", current,
-                                  headers=headers, timeout=timeout, raise_for_status=False)
+        response = client.request(
+            method if response.status in {307, 308} else "GET",
+            current,
+            headers=headers,
+            timeout=timeout,
+            raise_for_status=False,
+        )
     return response
 
 
@@ -171,9 +209,14 @@ def _format_response(response: HTTPResponse, max_bytes: int, as_text: bool) -> d
 
 
 @tool(category="web", risk="network", network=True, timeout=60.0, tags=["scrape", "markdown"])
-def fetch_page(url: str, timeout: float = 30.0, max_chars: int = 40000,
-               keep_links: bool = True, extract_main: bool = True,
-               context: ToolContext | None = None) -> dict[str, Any]:
+def fetch_page(
+    url: str,
+    timeout: float = 30.0,
+    max_chars: int = 40000,
+    keep_links: bool = True,
+    extract_main: bool = True,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Fetch an HTML page and convert it to clean Markdown.
 
     Args:
@@ -193,8 +236,9 @@ def fetch_page(url: str, timeout: float = 30.0, max_chars: int = 40000,
     if not response.ok:
         raise ToolExecutionError(f"HTTP {response.status} fetching {url}")
     raw = response.text()
-    markdown, meta = html_to_markdown(raw, base_url=response.url or url, keep_links=keep_links,
-                                      extract_main=extract_main)
+    markdown, meta = html_to_markdown(
+        raw, base_url=response.url or url, keep_links=keep_links, extract_main=extract_main
+    )
     return {
         "url": response.url,
         "status": response.status,
@@ -208,8 +252,9 @@ def fetch_page(url: str, timeout: float = 30.0, max_chars: int = 40000,
     }
 
 
-def html_to_markdown(markup: str, *, base_url: str = "", keep_links: bool = True,
-                     extract_main: bool = True) -> tuple[str, dict[str, Any]]:
+def html_to_markdown(
+    markup: str, *, base_url: str = "", keep_links: bool = True, extract_main: bool = True
+) -> tuple[str, dict[str, Any]]:
     """Convert an HTML document into Markdown plus extracted metadata.
 
     Returns ``(markdown, meta)`` where ``meta`` carries the title, description,
@@ -229,8 +274,9 @@ def html_to_markdown(markup: str, *, base_url: str = "", keep_links: bool = True
         meta["description"] = html.unescape(description.group(1)).strip()
 
     links: list[dict[str, str]] = []
-    for match in re.finditer(r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", text,
-                             re.DOTALL | re.IGNORECASE):
+    for match in re.finditer(
+        r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", text, re.DOTALL | re.IGNORECASE
+    ):
         href, label = match.group(1), _TAG.sub("", match.group(2))
         label = html.unescape(collapse_whitespace(label)).strip()
         absolute = urljoin(base_url, href) if base_url else href
@@ -277,8 +323,10 @@ def html_to_markdown(markup: str, *, base_url: str = "", keep_links: bool = True
     if keep_links:
         cleaned = re.sub(
             r"(?is)<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>",
-            lambda match: f"[{collapse_whitespace(_TAG.sub('', match.group(2))).strip()}]"
-                          f"({urljoin(base_url, match.group(1)) if base_url else match.group(1)})",
+            lambda match: (
+                f"[{collapse_whitespace(_TAG.sub('', match.group(2))).strip()}]"
+                f"({urljoin(base_url, match.group(1)) if base_url else match.group(1)})"
+            ),
             cleaned,
         )
     else:
@@ -292,8 +340,14 @@ def html_to_markdown(markup: str, *, base_url: str = "", keep_links: bool = True
 
 
 @tool(category="web", risk="network", network=True, timeout=120.0, tags=["download"])
-def download_file(url: str, destination: str, timeout: float = 60.0, max_bytes: int = 104857600,
-                  overwrite: bool = False, context: ToolContext | None = None) -> dict[str, Any]:
+def download_file(
+    url: str,
+    destination: str,
+    timeout: float = 60.0,
+    max_bytes: int = 104857600,
+    overwrite: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Download a URL to a file inside the workspace.
 
     Args:
@@ -318,9 +372,16 @@ def download_file(url: str, destination: str, timeout: float = 60.0, max_bytes: 
     if not response.ok:
         raise ToolExecutionError(f"HTTP {response.status} downloading {url}")
     if len(response.body) > max_bytes:
-        raise ToolExecutionError(f"Download is {len(response.body)} bytes, above the {max_bytes} limit")
+        raise ToolExecutionError(
+            f"Download is {len(response.body)} bytes, above the {max_bytes} limit"
+        )
     if ctx.dry_run:
-        return {"url": url, "destination": str(target), "dry_run": True, "bytes": len(response.body)}
+        return {
+            "url": url,
+            "destination": str(target),
+            "dry_run": True,
+            "bytes": len(response.body),
+        }
     ensure_dir(target.parent)
     atomic_write_bytes(target, response.body)
     return {

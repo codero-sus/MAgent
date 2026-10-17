@@ -38,9 +38,7 @@ from typing import Any, Literal, get_args, get_origin, get_type_hints
 
 from ..errors import (
     ToolError,
-    ToolExecutionError,
     ToolNotFoundError,
-    ToolTimeoutError,
     ToolValidationError,
 )
 from ..logging_ import get_logger
@@ -49,10 +47,7 @@ from ..utils.text import ellipsize, snake_case
 from .schema import (
     SchemaValidator,
     array_schema,
-    boolean_schema,
     enum_schema,
-    integer_schema,
-    number_schema,
     object_schema,
     string_schema,
 )
@@ -231,7 +226,7 @@ class ToolContext:
         if self.events is not None:
             try:
                 self.events.emit(kind, **data)
-            except Exception:  # noqa: BLE001 - telemetry must not break tools
+            except Exception:
                 pass
 
     def sub(self, **overrides: Any) -> ToolContext:
@@ -367,7 +362,9 @@ class Tool:
         coerced = result.coerced
         return dict(coerced) if isinstance(coerced, dict) else payload
 
-    def run(self, arguments: Mapping[str, Any] | None = None, context: ToolContext | None = None) -> ToolResult:
+    def run(
+        self, arguments: Mapping[str, Any] | None = None, context: ToolContext | None = None
+    ) -> ToolResult:
         """Validate, execute, time, and package one tool call."""
         call_id = (context.call_id if context else "") or new_id("call")
         ctx = context or ToolContext(tool_name=self.name)
@@ -376,7 +373,7 @@ class Tool:
             parsed = self.validate_arguments(arguments or {})
         except ToolValidationError as exc:
             return self._record_failure(call_id, exc, started, code=exc.code)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return self._record_failure(call_id, exc, started, code="tool_validation_error")
         ctx.tool_name = self.name
         if ctx.dry_run:
@@ -392,7 +389,7 @@ class Tool:
             outcome = self._invoke(parsed, ctx)
         except ToolError as exc:
             return self._record_failure(call_id, exc, started, code=exc.code)
-        except Exception as exc:  # noqa: BLE001 - tools may raise anything
+        except Exception as exc:
             LOGGER.debug("tool %s raised %s", self.name, exc)
             return self._record_failure(call_id, exc, started, code="tool_execution_error")
         duration = (time.perf_counter() - started) * 1000.0
@@ -426,7 +423,9 @@ class Tool:
         allowed = {key: value for key, value in arguments.items() if key in parameters}
         return self.handler(**allowed)
 
-    def _record_failure(self, call_id: str, exc: BaseException, started: float, *, code: str) -> ToolResult:
+    def _record_failure(
+        self, call_id: str, exc: BaseException, started: float, *, code: str
+    ) -> ToolResult:
         """Build a failure result and update error counters."""
         duration = (time.perf_counter() - started) * 1000.0
         with self._lock:
@@ -558,7 +557,7 @@ def schema_from_function(fn: ToolHandler) -> tuple[dict[str, Any], str, dict[str
     signature = inspect.signature(fn)
     try:
         hints = get_type_hints(fn)
-    except Exception:  # noqa: BLE001 - forward refs that cannot resolve
+    except Exception:
         hints = {}
     summary, arg_docs, _ = parse_docstring(fn.__doc__ or "")
     properties: dict[str, Any] = {}
@@ -594,12 +593,17 @@ def tool_spec_from_function(fn: ToolHandler, **overrides: Any) -> ToolSpec:
         hint = None
         try:
             hint = get_type_hints(fn).get("return")
-        except Exception:  # noqa: BLE001
+        except Exception:
             hint = None
         returns = _json_type(hint).get("type", "any") if hint else "any"
-    return ToolSpec(name=name, description=description, parameters=parameters,
-                    returns=returns, metadata={"arg_docs": arg_docs, "module": fn.__module__ or ""},
-                    **overrides)
+    return ToolSpec(
+        name=name,
+        description=description,
+        parameters=parameters,
+        returns=returns,
+        metadata={"arg_docs": arg_docs, "module": fn.__module__ or ""},
+        **overrides,
+    )
 
 
 def tool(
@@ -698,7 +702,9 @@ class ToolRegistry:
                 self._aliases[alias] = instance.name
         return instance
 
-    def register_all(self, items: Iterable[Tool | ToolHandler], *, replace: bool = True) -> list[Tool]:
+    def register_all(
+        self, items: Iterable[Tool | ToolHandler], *, replace: bool = True
+    ) -> list[Tool]:
         """Register many tools at once."""
         return [self.register(item, replace=replace) for item in items]
 
@@ -867,7 +873,11 @@ class ToolRegistry:
                 continue
             if ceiling is not None and RISK_LEVELS.index(spec.risk) > ceiling:
                 continue
-            if needle and needle not in spec.name.lower() and needle not in spec.description.lower():
+            if (
+                needle
+                and needle not in spec.name.lower()
+                and needle not in spec.description.lower()
+            ):
                 continue
             if haystack:
                 corpus = " ".join([spec.name, spec.description, spec.category, *spec.tags]).lower()
@@ -957,9 +967,12 @@ class ToolRegistry:
                 ),
                 error_code="tool_not_found",
             )
-        ctx = (context or ToolContext()).sub(call_id=call.id, tool_name=instance.name,
-                                             timeout=instance.spec.timeout,
-                                             output_limit=instance.spec.output_limit)
+        ctx = (context or ToolContext()).sub(
+            call_id=call.id,
+            tool_name=instance.name,
+            timeout=instance.spec.timeout,
+            output_limit=instance.spec.output_limit,
+        )
         result = instance.run(call.arguments, ctx)
         if not result.ok:
             self.dispatch_errors += 1
@@ -991,7 +1004,9 @@ class ToolRegistry:
         if use_parallel:
             import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(calls))) as pool:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(max_workers, len(calls))
+            ) as pool:
                 futures = {
                     pool.submit(
                         self.dispatch,
@@ -1009,7 +1024,9 @@ class ToolRegistry:
             results.sort(key=lambda item: order.get(item.call_id, len(order)))
             return results
         for index, call in enumerate(calls):
-            result = self.dispatch(call, base.sub(call_id=call.id, tool_name=call.name, step_index=index))
+            result = self.dispatch(
+                call, base.sub(call_id=call.id, tool_name=call.name, step_index=index)
+            )
             results.append(result)
             if on_result is not None:
                 on_result(result)
@@ -1044,7 +1061,6 @@ class ToolRegistry:
     def to_dict(self) -> dict[str, Any]:
         """Serialize every tool specification."""
         return {name: instance.to_dict() for name, instance in sorted(self._tools.items())}
-
 
 
 def default_registry() -> ToolRegistry:

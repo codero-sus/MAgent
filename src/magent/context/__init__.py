@@ -1,73 +1,81 @@
-"""Context window management: budgeting, assembly, and compression.
+"""Context assembly: what the model sees besides the conversation.
 
-The public surface is small on purpose:
+Public API:
 
-- :class:`ContextPolicy` says how a window is divided.
-- :class:`ContextBuilder` collects sections and fits them, plus history.
-- :func:`compress_messages` shrinks a conversation by trimming, truncating,
-  windowing, or summarizing.
-- :func:`extractive_summary` summarizes without a model, so compression works
-  (and can be tested) offline.
+:class:`ContextBlock`
+    one titled, prioritised, token-counted slice of context;
+:class:`ContextBuilder` / :func:`build_context`
+    collect blocks from the workspace, retrieval, memory and the session, then
+    compress them into a token budget;
+:class:`ContextCompressor` / :func:`compress_text`
+    the compression machinery, usable on its own for tool output or transcripts;
+:func:`scan_workspace` / :func:`file_context_blocks`
+    workspace scanning that respects the tool sandbox.
 
-Typical use inside an agent loop::
-
-    builder = ContextBuilder(config=settings)
-    builder.set("system", system_prompt)
-    builder.set("retrieved", rag_context)
-    builder.set("memory", memory_block)
-    build = builder.build(history=messages)
-    response = backend.complete(CompletionRequest(messages=build.messages))
+>>> from magent.context import ContextBuilder, ContextBlock
+>>> builder = ContextBuilder(budget=400)
+>>> _ = builder.add(ContextBlock(title="Task", body="Fix the parser", kind="task", priority=9))
+>>> assembly = builder.build()
+>>> assembly.tokens > 0 and "Fix the parser" in assembly.text
+True
 """
 
 from __future__ import annotations
 
-from .builder import ContextBuild, ContextBuilder, ContextSection, build_context
-from .compressor import (
-    MIN_TRUNCATE_TOKENS,
-    STOPWORDS,
-    SUMMARY_PREFIX,
-    CompressionResult,
-    ModelSummarizer,
-    Summarizer,
-    compress_messages,
-    extractive_summary,
-    summarize_messages,
-)
-from .policy import (
-    DEFAULT_CONTEXT_SIZE,
-    DEFAULT_OUTPUT_RESERVE,
-    DEFAULT_SHARES,
-    REQUIRED_SECTIONS,
-    SECTION_NAMES,
-    STRATEGIES,
-    ContextPolicy,
-    SectionPolicy,
-    default_sections,
-    policy_from_config,
-)
+from .block import (BLOCK_KINDS, DEFAULT_PRIORITY, MAX_PRIORITY, ContextBlock, block, custom_block,
+                    environment_block, files_block, memory_block, rag_block, render_blocks,
+                    session_block, sort_blocks, task_block, total_tokens)
+from .builder import DEFAULT_BUDGET, RESERVE_FOR_PROMPT, ContextAssembly, ContextBuilder, build_context
+from .compression import (MAX_LINE_REPEATS, NOISE_PATTERNS, CompressionReport, ContextCompressor,
+                          compress_messages, compress_text, dedupe_lines, strip_noise, summarize_with)
+from .files import (CONVENTION_FILES, DEFAULT_PATTERNS, MAX_FILE_CHARS, MAX_FILES_SCANNED, SKIP_DIRS,
+                    FileRef, WorkspaceSnapshot, describe_workspace, file_context_blocks,
+                    files_listing_block, open_editor_files, rank_files, read_file_ref, scan_workspace,
+                    touched_recently)
 
 __all__ = [
-    "DEFAULT_CONTEXT_SIZE",
-    "DEFAULT_OUTPUT_RESERVE",
-    "DEFAULT_SHARES",
-    "MIN_TRUNCATE_TOKENS",
-    "REQUIRED_SECTIONS",
-    "SECTION_NAMES",
-    "STOPWORDS",
-    "STRATEGIES",
-    "SUMMARY_PREFIX",
-    "CompressionResult",
-    "ContextBuild",
+    "BLOCK_KINDS",
+    "CONVENTION_FILES",
+    "DEFAULT_BUDGET",
+    "DEFAULT_PATTERNS",
+    "DEFAULT_PRIORITY",
+    "MAX_FILE_CHARS",
+    "MAX_FILES_SCANNED",
+    "MAX_LINE_REPEATS",
+    "MAX_PRIORITY",
+    "NOISE_PATTERNS",
+    "RESERVE_FOR_PROMPT",
+    "SKIP_DIRS",
+    "CompressionReport",
+    "ContextAssembly",
+    "ContextBlock",
     "ContextBuilder",
-    "ContextPolicy",
-    "ContextSection",
-    "ModelSummarizer",
-    "SectionPolicy",
-    "Summarizer",
+    "ContextCompressor",
+    "FileRef",
+    "WorkspaceSnapshot",
+    "block",
     "build_context",
     "compress_messages",
-    "default_sections",
-    "extractive_summary",
-    "policy_from_config",
-    "summarize_messages",
+    "compress_text",
+    "custom_block",
+    "dedupe_lines",
+    "describe_workspace",
+    "environment_block",
+    "file_context_blocks",
+    "files_block",
+    "files_listing_block",
+    "memory_block",
+    "open_editor_files",
+    "rag_block",
+    "rank_files",
+    "read_file_ref",
+    "render_blocks",
+    "scan_workspace",
+    "session_block",
+    "sort_blocks",
+    "strip_noise",
+    "summarize_with",
+    "task_block",
+    "total_tokens",
+    "touched_recently",
 ]

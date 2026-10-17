@@ -1,116 +1,69 @@
-"""Evaluation: score agent behaviour against declared expectations.
+"""Evaluation: datasets, deterministic metrics and batch runners.
 
-Unit tests prove the parts work; evaluation proves the *agent* works. The
-difference matters because an agent's behaviour depends on prompt construction,
-context trimming, tool availability, and guardrails interacting - none of which
-a component test covers.
+Public API:
 
-A dataset is data, not code::
+:class:`EvalCase` / :class:`Dataset`
+    cases with expectations (substrings, regex, JSON, tools, budgets), loaded
+    from JSON, JSONL, Markdown tables or Python literals;
+:func:`score_case` / :data:`METRICS` / :class:`CaseScore`
+    deterministic, model-free scoring with a per-metric reason;
+:class:`EvalRunner` / :func:`run_eval` / :class:`EvalReport`
+    run a dataset against an agent, in parallel, with repeats and reports.
 
-    from magent.eval import EvalCase, EvalDataset, EvalRunner
-
-    dataset = EvalDataset(name="smoke")
-    dataset.add(EvalCase(
-        id="arithmetic",
-        prompt="What is 6 * 7?",
-        expected=["42"],
-        expected_tools=["calculate"],
-        max_seconds=30,
-    ))
-
-    runner = EvalRunner(agent=agent, concurrency=2)
-    report = runner.run(dataset)
-    print(report.render("markdown"))
-    runner.require(report)          # raises EvalThresholdError on regression
-
-Declaring a field activates its metric: ``expected_tools`` is checked for tool
-use, ``check_pii`` scans the answer for personal data, ``max_seconds`` enforces
-a latency budget. A built-in dataset ships with the package so
-``magent eval run`` is useful before anyone writes a case.
+>>> from magent.eval import sample_dataset, metric_names
+>>> len(sample_dataset("demo")) >= 4
+True
+>>> "contains" in metric_names()
+True
 """
 
 from __future__ import annotations
 
-from .cases import (
-    DATASET_SUFFIXES,
-    DEFAULT_THRESHOLD,
-    EvalCase,
-    EvalDataset,
-    builtin_dataset,
-    dataset_from_records,
-    load_dataset,
-    resolve_dataset,
-)
-from .metrics import (
-    DEFAULT_PASS_THRESHOLD,
-    METRIC_NAMES,
-    METRICS,
-    REQUIRED_METRICS,
-    MetricScore,
-    aggregate,
-    contains,
-    exact,
-    json_schema,
-    length_bounds,
-    max_duration,
-    max_tokens,
-    metric_help,
-    no_pii,
-    no_tool,
-    regex,
-    required_for,
-    score,
-    stop_reason,
-    tool_used,
-)
-from .runner import (
-    DEFAULT_CONCURRENCY,
-    DEFAULT_PASS_RATE,
-    CaseOutcome,
-    CaseResult,
-    EvalReport,
-    EvalRunner,
-    describe_metrics,
-    metric_names,
-    run_evaluation,
-)
+from .dataset import (CASE_FIELDS, DATASET_FORMATS, MAX_CASES, Dataset, EvalCase,
+                      build_dataset, load_dataset, merge_datasets, parse_markdown_dataset,
+                      sample_dataset, save_dataset)
+from .metrics import (DEFAULT_METRIC_NAMES, METRICS, MIN_PASS_SCORE, CaseScore, MetricOutcome,
+                      aggregate, contains_all, exact_match, forbids_text, get_metric, json_valid,
+                      metric_names, no_error, regex_match, register_metric, score_case,
+                      similarity_score, step_budget, time_budget, token_budget, tool_usage,
+                      weighted_pass_rate)
+from .runner import EvalReport, EvalRunner, run_eval
 
 __all__ = [
-    "DATASET_SUFFIXES",
-    "DEFAULT_CONCURRENCY",
-    "DEFAULT_PASS_RATE",
-    "DEFAULT_PASS_THRESHOLD",
-    "DEFAULT_THRESHOLD",
-    "METRIC_NAMES",
+    "CASE_FIELDS",
+    "DATASET_FORMATS",
+    "DEFAULT_METRIC_NAMES",
+    "MAX_CASES",
     "METRICS",
-    "REQUIRED_METRICS",
-    "CaseOutcome",
-    "CaseResult",
+    "MIN_PASS_SCORE",
+    "CaseScore",
+    "Dataset",
     "EvalCase",
-    "EvalDataset",
     "EvalReport",
     "EvalRunner",
-    "MetricScore",
+    "MetricOutcome",
     "aggregate",
-    "builtin_dataset",
-    "contains",
-    "dataset_from_records",
-    "describe_metrics",
-    "exact",
-    "json_schema",
-    "length_bounds",
+    "build_dataset",
+    "contains_all",
+    "exact_match",
+    "forbids_text",
+    "get_metric",
+    "json_valid",
     "load_dataset",
-    "max_duration",
-    "max_tokens",
-    "metric_help",
+    "merge_datasets",
     "metric_names",
-    "no_pii",
-    "no_tool",
-    "regex",
-    "required_for",
-    "resolve_dataset",
-    "run_evaluation",
-    "score",
-    "stop_reason",
-    "tool_used",
+    "no_error",
+    "parse_markdown_dataset",
+    "regex_match",
+    "register_metric",
+    "run_eval",
+    "sample_dataset",
+    "save_dataset",
+    "score_case",
+    "similarity_score",
+    "step_budget",
+    "time_budget",
+    "token_budget",
+    "tool_usage",
+    "weighted_pass_rate",
 ]

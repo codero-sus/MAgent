@@ -1,93 +1,55 @@
-"""Plugins: extend MAgent with third-party tools and lifecycle hooks.
+"""Plugins: load third-party tools, hooks, personas, templates and skills.
 
-A plugin is a directory containing ``plugin.json`` and an entry point. The
-manifest declares what the plugin wants - tools, hooks, permissions - and the
-loader grants only what was declared::
+Public API:
 
-    from magent.plugins import PluginLoader, HookRegistry
-    from magent.tools import ToolRegistry
+:class:`PluginManifest` / :func:`manifest_for`
+    metadata, validation and checksums before any code runs;
+:class:`PluginLoader` / :func:`load_plugins`
+    discovery, sandboxed import and registration from plugin directories;
+:class:`HookRegistry` / :func:`attach_to_agent`
+    named extension points (``before_prompt``, ``after_tool``, ...) with ordered,
+    isolated handlers.
 
-    registry = ToolRegistry()
-    loader = PluginLoader(["~/.local/share/magent/plugins"],
-                          registry=registry, hooks=HookRegistry(),
-                          allow_sensitive=["network"])
-    report = loader.load_all()
-    print(report.render())
-
-Nothing here makes third-party code safe. Importing a plugin executes it, so the
-defences are procedural and explicit: discovery only in configured directories,
-deny-by-default on sensitive permissions, refusal of entry points that resolve
-outside the plugin folder, optional SHA-256 integrity checks, and containment of
-failures so one broken plugin does not disable the rest. Only install plugins
-you trust.
+>>> from magent.plugins import HookRegistry
+>>> hooks = HookRegistry()
+>>> _ = hooks.register("after_run", lambda payload, **kw: "noted")
+>>> hooks.apply("after_run", {})
+'noted'
 """
 
 from __future__ import annotations
 
-from .hooks import (
-    TRANSFORM_HOOKS,
-    VETO_HOOKS,
-    HookFn,
-    HookRegistration,
-    HookRegistry,
-    HookResult,
-    collect_hooks,
-    hook,
-    known_hooks,
-    register_decorated,
-)
-from .loader import (
-    DEFAULT_TIMEOUT,
-    PLUGIN_SUFFIXES,
-    LoadReport,
-    LoadedPlugin,
-    PluginLoader,
-    describe_permissions,
-    inspect_plugin,
-    loader_from_config,
-    scaffold,
-    sensitive_permissions,
-    write_manifest_template,
-)
-from .manifest import (
-    HOOK_NAMES,
-    MANIFEST_FILENAME,
-    MANIFEST_VERSION,
-    PERMISSIONS,
-    SENSITIVE_PERMISSIONS,
-    PluginManifest,
-    example_manifest,
-    validate_many,
-)
+from .hooks import (DEFAULT_PRIORITY, MAX_HANDLERS_PER_HOOK, HookHandler, HookRegistry,
+                    attach_to_agent, chain_handlers, describe_hooks, load_hooks_from)
+from .loader import (MAX_ENTRY_BYTES, PLUGIN_DIRS, LoadedPlugin, PluginLoader,
+                     default_plugin_paths, iter_plugin_files, load_plugins, plugin_module)
+from .manifest import (CAPABILITIES, HOOK_POINTS, MANIFEST_NAMES, PluginManifest, find_manifest,
+                       manifest_for, manifests_from, verify_checksum, write_manifest)
 
 __all__ = [
-    "DEFAULT_TIMEOUT",
-    "HOOK_NAMES",
-    "MANIFEST_FILENAME",
-    "MANIFEST_VERSION",
-    "PERMISSIONS",
-    "PLUGIN_SUFFIXES",
-    "SENSITIVE_PERMISSIONS",
-    "TRANSFORM_HOOKS",
-    "VETO_HOOKS",
-    "HookFn",
-    "HookRegistration",
+    "CAPABILITIES",
+    "DEFAULT_PRIORITY",
+    "HOOK_POINTS",
+    "MANIFEST_NAMES",
+    "MAX_ENTRY_BYTES",
+    "MAX_HANDLERS_PER_HOOK",
+    "PLUGIN_DIRS",
+    "HookHandler",
     "HookRegistry",
-    "HookResult",
-    "LoadReport",
     "LoadedPlugin",
     "PluginLoader",
     "PluginManifest",
-    "collect_hooks",
-    "describe_permissions",
-    "example_manifest",
-    "hook",
-    "inspect_plugin",
-    "known_hooks",
-    "loader_from_config",
-    "register_decorated",
-    "scaffold",
-    "sensitive_permissions",
-    "validate_many",
-    "write_manifest_template",
+    "attach_to_agent",
+    "chain_handlers",
+    "default_plugin_paths",
+    "describe_hooks",
+    "find_manifest",
+    "iter_plugin_files",
+    "load_hooks_from",
+    "load_plugins",
+    "manifest_for",
+    "manifests_from",
+    "plugin_module",
+    "verify_checksum",
+    "write_manifest",
 ]

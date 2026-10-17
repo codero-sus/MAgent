@@ -1,166 +1,199 @@
-"""Shared helpers for the MAgent test suite.
+"""Shared helpers for the test suite.
 
-The point of this module is that no test has to reinvent isolation. Every test
-that touches configuration, storage, or the filesystem goes through a helper
-here, so the suite cannot read or write the developer's real home directory and
-cannot be affected by whatever ``~/.config/magent/config.toml`` happens to say.
+The suite runs entirely offline and never touches the user's real directories:
+:class:`IsolatedHome` points ``MAGENT_HOME`` at a temporary directory for the
+duration of a test, so memories, sessions, caches and logs land in a sandbox that
+is deleted afterwards.  Tests that need a live Cortex LLMHoster are skipped
+unless ``MAGENT_TEST_CORTEX_URL`` is set, which keeps `make test` green on a
+machine with no models running.
 """
 
 from __future__ import annotations
 
 import contextlib
+import io
 import os
 import shutil
 import tempfile
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from magent.config import Config, load_config
-from magent.testing import make_backend, offline_backend
+CORTEX_URL_ENV = "MAGENT_TEST_CORTEX_URL"
+"""Set this to run the Cortex integration tests against a live host."""
+
+WORKSPACE_ENV = "MAGENT_TEST_WORKSPACE"
+"""Optional workspace override for the tests."""
 
 
-@contextlib.contextmanager
-def isolated_home() -> Iterator[Path]:
-    """Point the XDG directories at a temporary home for the duration of a block.
+@dataclass
+class IsolatedHome:
+    """A temporary ``MAGENT_HOME`` that also stubs the XDG variables."""
 
-    ``Config`` derives its data, session, memory, log, and plugin paths from
-    ``XDG_DATA_HOME``, so redirecting that one variable is enough to keep a test
-    run off the real filesystem.
-    """
-    root = Path(tempfile.mkdtemp(prefix="magent-test-"))
-    saved = {name: os.environ.get(name) for name in
-             ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "MAGENT_CONFIG")}
-    try:
-        os.environ["XDG_DATA_HOME"] = str(root / "data")
-        os.environ["XDG_CONFIG_HOME"] = str(root / "config")
-        os.environ["XDG_CACHE_HOME"] = str(root / "cache")
-        os.environ.pop("MAGENT_CONFIG", None)
-        yield root
-    finally:
-        for name, value in saved.items():
+    path: Path
+    previous: dict[str, str | None]
+
+    @classmethod
+    def create(cls, *, with_layout: bool = True) -> IsolatedHome:
+        """Create the temporary home and point the environment at it."""
+        path = Path(tempfile.mkdtemp(prefix="magent-test-home-"))
+        keys = ("MAGENT_HOME", "MAGENT_DATA_DIR", "MAGENT_CACHE_DIR", "MAGENT_CONFIG_DIR",
+                "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME")
+        previous = {key: os.environ.get(key) for key in keys}
+        os.environ["MAGENT_HOME"] = str(path)
+        for key in keys[1:]:
+            os.environ.pop(key, None)
+        if with_layout:
+            from magent.paths import ensure_layout
+
+            ensure_layout(with_config=True)
+        return cls(path=path, previous=previous)
+
+    def teardown(self) -> None:
+        """Restore the environment and delete the directory."""
+        for key, value in self.previous.items():
             if value is None:
-                os.environ.pop(name, None)
+                os.environ.pop(key, None)
             else:
-                os.environ[name] = value
-        shutil.rmtree(root, ignore_errors=True)
+                os.environ[key] = value
+        shutil.rmtree(self.path, ignore_errors=True)
+
+    def file(self, relative: str, text: str) -> Path:
+        """Write a file inside the temporary home."""
+        target = self.path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        return target
 
 
-def isolated_config(*, path: str | Path | None = None, profile: str = "",
-                    flat: dict[str, Any] | None = None) -> Config:
-    """Return a validated configuration rooted in a temporary directory.
+class MagentTestCase(unittest.TestCase):
+    """Base class that isolates the environment for every test."""
 
-    Args:
-        path: configuration file to load instead of the discovered ones
-        profile: ``[profiles.<name>]`` table to merge
-        flat: dotted overrides, e.g. ``{"agent.max_iterations": 3}``
-
-    ``load_config`` takes only these keyword arguments, so this helper does not
-    invent others: passing a section dataclass here would fail at call time
-    rather than at parse time.
-    """
-    root = Path(tempfile.mkdtemp(prefix="magent-cfg-"))
-    saved = {name: os.environ.get(name) for name in
-             ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "MAGENT_CONFIG")}
-    os.environ["XDG_DATA_HOME"] = str(root)
-    os.environ["XDG_CONFIG_HOME"] = str(root)
-    os.environ.pop("MAGENT_CONFIG", None)
-    try:
-        config = load_config(path=path, profile=profile, use_env=False,
-                             overrides=dict(flat) if flat else None)
-    finally:
-        for name, value in saved.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
-    config.data_dir = root
-    return config.validate()
-
-
-@contextlib.contextmanager
-def workspace(files: dict[str, str] | None = None) -> Iterator[Path]:
-    """Create a temporary workspace, optionally seeded with files.
-
-    Args:
-        files: mapping of relative path to text content; parent directories are
-            created as needed.
-    """
-    root = Path(tempfile.mkdtemp(prefix="magent-ws-"))
-    try:
-        for relative, content in (files or {}).items():
-            target = root / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
-        yield root
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
-class MAgentTestCase(unittest.TestCase):
-    """Base class that isolates storage and cleans up after itself."""
-
-    maxDiff = None
-    """Show full diffs: truncated assertion output hides the actual mismatch."""
+    home: IsolatedHome
+    workspace: Path
 
     def setUp(self) -> None:
-        """Create a temporary home and point the XDG directories at it."""
-        self._home = Path(tempfile.mkdtemp(prefix="magent-case-"))
-        self._saved_env = {name: os.environ.get(name) for name in
-                           ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
-                            "MAGENT_CONFIG")}
-        os.environ["XDG_DATA_HOME"] = str(self._home / "data")
-        os.environ["XDG_CONFIG_HOME"] = str(self._home / "config")
-        os.environ["XDG_CACHE_HOME"] = str(self._home / "cache")
-        os.environ.pop("MAGENT_CONFIG", None)
-        self._tempdirs: list[Path] = []
+        """Create a temporary home and workspace."""
+        super().setUp()
+        self.home = IsolatedHome.create()
+        self.workspace = Path(tempfile.mkdtemp(prefix="magent-test-ws-"))
 
     def tearDown(self) -> None:
-        """Restore the environment and remove every temporary directory."""
-        for name, value in self._saved_env.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
-        for directory in self._tempdirs:
-            shutil.rmtree(directory, ignore_errors=True)
-        shutil.rmtree(self._home, ignore_errors=True)
+        """Remove both temporary directories."""
+        shutil.rmtree(self.workspace, ignore_errors=True)
+        self.home.teardown()
+        super().tearDown()
 
-    def temp_dir(self, prefix: str = "dir-") -> Path:
-        """Return a temporary directory that tearDown will remove."""
-        path = Path(tempfile.mkdtemp(prefix=prefix, dir=str(self._home)))
-        self._tempdirs.append(path)
-        return path
+    # -- fixtures ------------------------------------------------------------
 
-    def config(self, *, path: str | Path | None = None, profile: str = "",
-               flat: dict[str, Any] | None = None) -> Config:
-        """Return a validated configuration rooted in this test's home."""
-        config = load_config(path=path, profile=profile, use_env=False,
-                             overrides=dict(flat) if flat else None)
-        config.data_dir = self._home / "data"
-        return config.validate()
+    def write(self, relative: str, text: str = "") -> Path:
+        """Write a workspace file."""
+        target = self.workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        return target
 
-    def offline_agent(self, *, registry: Any = None, backend: Any = None,
-                      config: Config | None = None) -> Any:
-        """Return an agent wired to the echo backend, with no network access."""
+    def config(self, **overrides: Any) -> Any:
+        """Build a configuration rooted in the temporary workspace."""
+        from magent.config import default_config
+
+        config = default_config()
+        config.tools.workspace = str(self.workspace)
+        config.data_dir = self.home.path / "data"
+        config.cache_dir = self.home.path / "cache"
+        config.memory.store_path = str(config.data_dir / "memory.db")
+        config.session.directory = str(config.data_dir / "sessions")
+        config.observability.log_file = ""
+        config.observability.trace_file = ""
+        config.guardrails.audit_log = ""
+        for key, value in overrides.items():
+            section, _, leaf = key.partition("__")
+            if not leaf:
+                setattr(config, key, value)
+                continue
+            target = getattr(config, section)
+            setattr(target, leaf, value)
+        return config
+
+    def backend(self, *script: Any) -> Any:
+        """Return an offline backend (echo by default, scripted when given lines)."""
+        from magent.testing import EchoBackend, ScriptedBackend
+
+        if script:
+            return ScriptedBackend(script=list(script))
+        return EchoBackend()
+
+    def agent(self, **kwargs: Any) -> Any:
+        """Build an agent wired to this test's workspace and offline backend."""
         from magent.agent import Agent
 
-        settings = config or self.config()
-        return Agent(backend=backend or offline_backend(), config=settings.agent,
-                     settings=settings, registry=registry)
+        config = kwargs.pop("config", None) or self.config()
+        workspace = kwargs.pop("workspace", None) or self.workspace
+        return Agent(backend=kwargs.pop("backend", None) or self.backend(), settings=config,
+                     workspace=workspace, **kwargs)
 
-    def tool_backend(self, tool_name: str, arguments: dict[str, Any] | None = None,
-                     final_text: str = "done") -> Any:
-        """Return a backend that asks for one tool call, then answers."""
-        return make_backend(tool_name=tool_name, tool_arguments=arguments or {},
-                            final_text=final_text)
+    def registry(self) -> Any:
+        """The default tool registry."""
+        from magent.tools import default_registry
+
+        return default_registry()
+
+    @contextlib.contextmanager
+    def capture(self) -> Iterator[io.StringIO]:
+        """Capture stdout and stderr into one buffer."""
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+            yield buffer
+
+    def run_cli(self, *argv: str) -> tuple[int, str, str]:
+        """Run the CLI offline and return ``(code, stdout, stderr)``."""
+        from magent.cli import main
+
+        out, err = io.StringIO(), io.StringIO()
+        arguments = [*argv, "--offline"]
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = main(arguments)
+        except SystemExit as exc:  # argparse exits on usage errors
+            return int(exc.code or 0), out.getvalue(), err.getvalue()
+        return code, out.getvalue(), err.getvalue()
+
+
+def skip_without_cortex() -> unittest.SkipTest:
+    """Skip a test that needs a live Cortex LLMHoster."""
+    url = os.environ.get(CORTEX_URL_ENV, "")
+    if not url:
+        raise unittest.SkipTest(f"set {CORTEX_URL_ENV} to run Cortex integration tests")
+    return None
+
+
+def cortex_url() -> str:
+    """The Cortex URL to test against."""
+    return os.environ.get(CORTEX_URL_ENV, "")
+
+
+def temp_workspace(files: dict[str, str]) -> Any:
+    """Context manager yielding a temporary directory with ``files`` written."""
+    from magent.testing.fixtures import SampleCorpus
+    from magent.testing.fixtures import temp_workspace as _temp
+
+    return _temp(SampleCorpus(documents=dict(files)))
+
+
+def assert_no_secrets(test: unittest.TestCase, text: str, *, secrets: list[str]) -> None:
+    """Assert that none of the given secret strings appear in the text."""
+    for secret in secrets:
+        test.assertNotIn(secret, text, f"secret leaked into output: {secret[:8]}...")
 
 
 __all__ = [
-    "MAgentTestCase",
-    "isolated_config",
-    "isolated_home",
-    "make_backend",
-    "offline_backend",
-    "workspace",
+    "CORTEX_URL_ENV",
+    "WORKSPACE_ENV",
+    "IsolatedHome",
+    "MagentTestCase",
+    "assert_no_secrets",
+    "cortex_url",
+    "skip_without_cortex",
+    "temp_workspace",
 ]

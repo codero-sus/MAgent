@@ -1,13 +1,10 @@
-"""Metrics: counters, gauges, and histograms with a Prometheus text export.
+"""Metrics: counters, gauges and histograms with a Prometheus text export.
 
-The point of collecting metrics in-process is that an agent run is expensive
-and non-deterministic, so "it felt slow" is not a diagnosis. Latency
-histograms expose percentiles, counters expose retry storms, and gauges expose
-a queue that is growing rather than draining.
-
-Export is plain text in the Prometheus exposition format, which means a run can
-be scraped, diffed between two versions, or pasted into an issue without any
-metrics infrastructure existing at all.
+The agent already emits events; metrics turn that stream into numbers a person
+can compare between runs - requests per model, tool success rate, p95 latency,
+tokens per second, cost per run.  Everything is in-process and dependency-free,
+and :meth:`MetricsRegistry.prometheus` renders the standard text format so the
+same numbers can be scraped when MAgent is served over HTTP.
 """
 
 from __future__ import annotations
@@ -15,615 +12,545 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
-from ..logging_ import get_logger
-from ..utils.files import atomic_write_text, ensure_dir
-from ..utils.timeutil import format_duration
+from ..utils.numbers import mean, percentile
 
-LOGGER = get_logger("observability.metrics")
-"""Logger for metrics collection faults."""
+DEFAULT_BUCKETS: tuple[float, ...] = (1, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000)
+"""Default histogram buckets, in milliseconds."""
 
-DEFAULT_BUCKETS: tuple[float, ...] = (
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
-)
-"""Histogram bucket boundaries in seconds, tuned for request latency."""
-
-METRIC_TYPES: tuple[str, ...] = ("counter", "gauge", "histogram")
-"""Metric kinds this registry understands."""
+METRIC_KINDS: tuple[str, ...] = ("counter", "gauge", "histogram")
+"""Metric types this module implements."""
 
 
 @dataclass(slots=True)
-class MetricMeta:
-    """Name, type, and help text for one metric."""
+class Metric:
+    """Base class for a named metric."""
 
     name: str
-    kind: str = "counter"
     help: str = ""
     unit: str = ""
-
-    def __post_init__(self) -> None:
-        """Normalize the metric kind."""
-        if self.kind not in METRIC_TYPES:
-            self.kind = "counter"
+    labels: dict[str, str] = field(default_factory=dict)
+    created_at: float = field(default_factory=time.time)
 
     @property
-    def prometheus_type(self) -> str:
-        """The type name used in the exposition format."""
-        return self.kind
-
-
-class Counter:
-    """A monotonically increasing value."""
-
-    def __init__(self, name: str, *, help: str = "", unit: str = "") -> None:
-        """Create a counter.
-
-        Args:
-            name: metric name, ``snake_case``
-            help: one-line description used in exports
-            unit: unit label, e.g. ``tokens`` or ``requests``
-        """
-        self.meta = MetricMeta(name=name, kind="counter", help=help, unit=unit)
-        self._values: dict[tuple[tuple[str, str], ...], float] = {}
-        self._lock = threading.Lock()
+    def key(self) -> str:
+        """Registry key: name plus sorted labels."""
+        if not self.labels:
+            return self.name
+        joined = ",".join(f"{key}={self.labels[key]}" for key in sorted(self.labels))
+        return f"{self.name}{{{joined}}}"
 
     @property
-    def name(self) -> str:
-        """Metric name."""
-        return self.meta.name
-
-    def inc(self, amount: float = 1.0, **labels: str) -> float:
-        """Add to the counter, returning the new value.
-
-        Args:
-            amount: increment; negative values are ignored, since a counter
-                that can go down is a gauge
-            labels: dimension values, e.g. ``model="qwen"``
-        """
-        if amount < 0:
-            LOGGER.debug("counter %s ignoring negative increment %s", self.name, amount)
-            return self.value(**labels)
-        key = _label_key(labels)
-        with self._lock:
-            self._values[key] = self._values.get(key, 0.0) + float(amount)
-            return self._values[key]
-
-    def value(self, **labels: str) -> float:
-        """Return the counter's current value for a label set."""
-        with self._lock:
-            return self._values.get(_label_key(labels), 0.0)
-
-    def total(self) -> float:
-        """Return the sum across every label set."""
-        with self._lock:
-            return sum(self._values.values())
-
-    def reset(self) -> None:
-        """Clear every label set."""
-        with self._lock:
-            self._values.clear()
-
-    def series(self) -> list[dict[str, Any]]:
-        """Return one record per label set."""
-        with self._lock:
-            return [{"labels": dict(key), "value": value} for key, value in self._values.items()]
-
-    def __iter__(self) -> Iterator[tuple[dict[str, str], float]]:
-        """Iterate ``(labels, value)`` pairs."""
-        return iter([(dict(key), value) for key, value in self.series_dict().items()])
-
-    def series_dict(self) -> dict[tuple[tuple[str, str], ...], float]:
-        """Return the raw label-keyed values."""
-        with self._lock:
-            return dict(self._values)
-
-
-class Gauge:
-    """A value that can rise and fall."""
-
-    def __init__(self, name: str, *, help: str = "", unit: str = "") -> None:
-        """Create a gauge.
-
-        Args:
-            name: metric name
-            help: one-line description used in exports
-            unit: unit label
-        """
-        self.meta = MetricMeta(name=name, kind="gauge", help=help, unit=unit)
-        self._values: dict[tuple[tuple[str, str], ...], float] = {}
-        self._lock = threading.Lock()
+    def kind(self) -> str:
+        """Metric type name."""
+        return "metric"
 
     @property
-    def name(self) -> str:
-        """Metric name."""
-        return self.meta.name
+    def prometheus_name(self) -> str:
+        """Sample family name, including the unit suffix.
 
-    def set(self, value: float, **labels: str) -> float:
-        """Set the gauge to an absolute value."""
-        key = _label_key(labels)
-        with self._lock:
-            self._values[key] = float(value)
-            return float(value)
-
-    def inc(self, amount: float = 1.0, **labels: str) -> float:
-        """Increase the gauge."""
-        return self._adjust(amount, labels)
-
-    def dec(self, amount: float = 1.0, **labels: str) -> float:
-        """Decrease the gauge."""
-        return self._adjust(-amount, labels)
-
-    def _adjust(self, amount: float, labels: Mapping[str, str]) -> float:
-        """Apply a delta and return the new value."""
-        key = _label_key(dict(labels))
-        with self._lock:
-            self._values[key] = self._values.get(key, 0.0) + float(amount)
-            return self._values[key]
-
-    def value(self, **labels: str) -> float:
-        """Return the current value for a label set."""
-        with self._lock:
-            return self._values.get(_label_key(labels), 0.0)
-
-    def reset(self) -> None:
-        """Clear every label set."""
-        with self._lock:
-            self._values.clear()
-
-    def series(self) -> list[dict[str, Any]]:
-        """Return one record per label set."""
-        with self._lock:
-            return [{"labels": dict(key), "value": value} for key, value in self._values.items()]
-
-
-class Histogram:
-    """A latency or size distribution with fixed buckets and percentiles."""
-
-    def __init__(self, name: str, *, help: str = "", unit: str = "seconds",
-                 buckets: Sequence[float] = DEFAULT_BUCKETS) -> None:
-        """Create a histogram.
-
-        Args:
-            name: metric name
-            help: one-line description used in exports
-            unit: unit label
-            buckets: ascending upper bounds, per label set
+        Prometheus treats ``# TYPE`` and the samples as one family, so a metric
+        recorded with ``unit="ms"`` must be announced as ``name_ms`` - otherwise
+        a scraper rejects the exposition as malformed.
         """
-        self.meta = MetricMeta(name=name, kind="histogram", help=help, unit=unit)
-        self.buckets = tuple(sorted({float(value) for value in buckets})) or DEFAULT_BUCKETS
-        self._observations: dict[tuple[tuple[str, str], ...], list[float]] = {}
-        self._counts: dict[tuple[tuple[str, str], ...], int] = {}
-        self._sums: dict[tuple[tuple[str, str], ...], float] = {}
-        self._lock = threading.Lock()
+        return f"{self.name}_{self.unit}" if self.unit else self.name
 
-    @property
-    def name(self) -> str:
-        """Metric name."""
-        return self.meta.name
-
-    def observe(self, value: float, **labels: str) -> None:
-        """Record one observation."""
-        key = _label_key(labels)
-        number = float(value)
-        with self._lock:
-            self._observations.setdefault(key, []).append(number)
-            self._counts[key] = self._counts.get(key, 0) + 1
-            self._sums[key] = self._sums.get(key, 0.0) + number
-
-    def count(self, **labels: str) -> int:
-        """Return how many observations were recorded."""
-        with self._lock:
-            return self._counts.get(_label_key(labels), 0)
-
-    def sum(self, **labels: str) -> float:
-        """Return the sum of observations."""
-        with self._lock:
-            return self._sums.get(_label_key(labels), 0.0)
-
-    def mean(self, **labels: str) -> float:
-        """Return the arithmetic mean, or 0 when empty."""
-        total = self.count(**labels)
-        return self.sum(**labels) / total if total else 0.0
-
-    def percentile(self, fraction: float, **labels: str) -> float:
-        """Return one percentile of the observations.
-
-        Args:
-            fraction: percentile in ``0..1``, e.g. 0.95 for p95
-        """
-        key = _label_key(labels)
-        with self._lock:
-            values = sorted(self._observations.get(key, []))
-        if not values:
-            return 0.0
-        ratio = min(1.0, max(0.0, float(fraction)))
-        index = min(len(values) - 1, max(0, int(round(ratio * (len(values) - 1)))))
-        return values[index]
-
-    def summary(self, **labels: str) -> dict[str, float]:
-        """Return count, sum, mean, min, max, and common percentiles."""
-        key = _label_key(labels)
-        with self._lock:
-            values = sorted(self._observations.get(key, []))
-        if not values:
-            return {"count": 0, "sum": 0.0, "mean": 0.0, "min": 0.0, "max": 0.0,
-                    "p50": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0}
-        return {
-            "count": len(values),
-            "sum": round(sum(values), 6),
-            "mean": round(sum(values) / len(values), 6),
-            "min": values[0],
-            "max": values[-1],
-            "p50": self.percentile(0.50, **labels),
-            "p90": self.percentile(0.90, **labels),
-            "p95": self.percentile(0.95, **labels),
-            "p99": self.percentile(0.99, **labels),
-        }
-
-    def bucket_counts(self, **labels: str) -> list[tuple[float, int]]:
-        """Return cumulative ``(upper_bound, count)`` pairs for the exposition format."""
-        key = _label_key(labels)
-        with self._lock:
-            values = self._observations.get(key, [])
-        cumulative: list[tuple[float, int]] = []
-        for bound in self.buckets:
-            cumulative.append((bound, sum(1 for value in values if value <= bound)))
-        cumulative.append((float("inf"), len(values)))
-        return cumulative
-
-    def reset(self) -> None:
-        """Clear every observation."""
-        with self._lock:
-            self._observations.clear()
-            self._counts.clear()
-            self._sums.clear()
-
-    def series(self) -> list[dict[str, Any]]:
-        """Return one summary record per label set."""
-        with self._lock:
-            keys = list(self._observations)
-        return [{"labels": dict(key), **self.summary(**dict(key))} for key in keys]
-
-
-class Timer:
-    """Context manager and decorator that observes elapsed seconds."""
-
-    def __init__(self, histogram: Histogram | None = None, *, name: str = "",
-                 registry: MetricsRegistry | None = None, **labels: str) -> None:
-        """Create a timer.
-
-        Args:
-            histogram: target histogram; looked up by ``name`` when omitted
-            name: histogram name to resolve from ``registry``
-            registry: registry providing the histogram
-            labels: dimension values recorded with the observation
-        """
-        self.histogram = histogram
-        self.name = name
-        self.registry = registry
-        self.labels = dict(labels)
-        self.elapsed = 0.0
-        self._started = 0.0
-
-    def _target(self) -> Histogram | None:
-        """Resolve the histogram this timer writes to."""
-        if self.histogram is not None:
-            return self.histogram
-        if self.registry is not None and self.name:
-            metric = self.registry.get(self.name)
-            return metric if isinstance(metric, Histogram) else None
+    def value(self) -> Any:
+        """Current value."""
         return None
 
-    def start(self) -> Timer:
-        """Begin timing."""
-        self._started = time.perf_counter()
-        return self
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise the metric."""
+        return {"name": self.name, "kind": self.kind, "help": self.help, "unit": self.unit,
+                "labels": dict(self.labels), "key": self.key, "value": self.value()}
 
-    def stop(self) -> float:
-        """Stop timing, record the observation, and return the seconds."""
-        self.elapsed = max(0.0, time.perf_counter() - self._started) if self._started else 0.0
-        target = self._target()
-        if target is not None:
-            target.observe(self.elapsed, **self.labels)
-        self._started = 0.0
-        return self.elapsed
+    def prometheus_lines(self) -> list[str]:
+        """Lines in the Prometheus text exposition format."""
+        return [f"{self.prometheus_name}{_label_text(self.labels)} {self._prometheus_value()}"]
 
-    def __enter__(self) -> Timer:
-        """Begin timing."""
-        return self.start()
+    def _prometheus_value(self) -> str:
+        """Value formatted for Prometheus."""
+        return repr(float(self.value() or 0.0))
 
-    def __exit__(self, *_exc: Any) -> None:
-        """Record the elapsed time even when the block raised."""
-        self.stop()
 
-    def __call__(self, fn: Any) -> Any:
-        """Wrap a callable so every invocation is timed."""
-        import functools
+class Counter(Metric):
+    """A value that only ever goes up."""
 
-        @functools.wraps(fn)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            with Timer(self._target(), registry=self.registry, name=self.name, **self.labels):
-                return fn(*args, **kwargs)
+    def __init__(self, name: str, help: str = "", *, unit: str = "",
+                 labels: Mapping[str, str] | None = None) -> None:
+        """Create a counter at zero."""
+        super().__init__(name=name, help=help, unit=unit, labels=dict(labels or {}))
+        self._value = 0.0
+        self._lock = threading.Lock()
 
-        return wrapper
+    @property
+    def kind(self) -> str:
+        """Metric type name."""
+        return "counter"
+
+    def inc(self, amount: float = 1.0) -> float:
+        """Increase the counter; negative amounts are ignored."""
+        if amount < 0:
+            return self._value
+        with self._lock:
+            self._value += float(amount)
+            return self._value
+
+    def value(self) -> float:
+        """Current total."""
+        return self._value
+
+    def reset(self) -> None:
+        """Return the counter to zero."""
+        with self._lock:
+            self._value = 0.0
+
+
+class Gauge(Metric):
+    """A value that goes up and down."""
+
+    def __init__(self, name: str, help: str = "", *, unit: str = "",
+                 labels: Mapping[str, str] | None = None) -> None:
+        """Create a gauge at zero."""
+        super().__init__(name=name, help=help, unit=unit, labels=dict(labels or {}))
+        self._value = 0.0
+        self._minimum = float("inf")
+        self._maximum = float("-inf")
+        self._samples = 0
+        self._lock = threading.Lock()
+
+    @property
+    def kind(self) -> str:
+        """Metric type name."""
+        return "gauge"
+
+    def set(self, amount: float) -> float:
+        """Set the gauge to a value."""
+        with self._lock:
+            self._value = float(amount)
+            self._samples += 1
+            self._minimum = min(self._minimum, self._value)
+            self._maximum = max(self._maximum, self._value)
+            return self._value
+
+    def inc(self, amount: float = 1.0) -> float:
+        """Increase the gauge."""
+        return self.set(self._value + amount)
+
+    def dec(self, amount: float = 1.0) -> float:
+        """Decrease the gauge."""
+        return self.set(self._value - amount)
+
+    def value(self) -> float:
+        """Current value."""
+        return self._value
+
+    @property
+    def minimum(self) -> float:
+        """Lowest value seen."""
+        return 0.0 if self._minimum == float("inf") else self._minimum
+
+    @property
+    def maximum(self) -> float:
+        """Highest value seen."""
+        return 0.0 if self._maximum == float("-inf") else self._maximum
+
+    def stats(self) -> dict[str, Any]:
+        """Value plus min/max/sample count."""
+        return {"value": self._value, "min": self.minimum, "max": self.maximum,
+                "samples": self._samples}
+
+    def reset(self) -> None:
+        """Return the gauge to zero and forget extremes."""
+        with self._lock:
+            self._value = 0.0
+            self._minimum = float("inf")
+            self._maximum = float("-inf")
+            self._samples = 0
+
+
+class Histogram(Metric):
+    """Latency-style observations with buckets and percentiles."""
+
+    def __init__(self, name: str, help: str = "", *, unit: str = "ms",
+                 buckets: Sequence[float] = DEFAULT_BUCKETS,
+                 labels: Mapping[str, str] | None = None) -> None:
+        """Create an empty histogram."""
+        super().__init__(name=name, help=help, unit=unit, labels=dict(labels or {}))
+        self.buckets = tuple(sorted(float(item) for item in buckets))
+        self._counts = [0] * (len(self.buckets) + 1)
+        self._samples: list[float] = []
+        self._sum = 0.0
+        self._max_samples = 2_000
+        self._lock = threading.Lock()
+
+    @property
+    def kind(self) -> str:
+        """Metric type name."""
+        return "histogram"
+
+    def observe(self, amount: float) -> None:
+        """Record one observation."""
+        value = float(amount)
+        with self._lock:
+            self._sum += value
+            placed = False
+            for index, edge in enumerate(self.buckets):
+                if value <= edge:
+                    self._counts[index] += 1
+                    placed = True
+                    break
+            if not placed:
+                self._counts[-1] += 1
+            if len(self._samples) < self._max_samples:
+                self._samples.append(value)
+
+    @property
+    def count(self) -> int:
+        """Number of observations."""
+        return sum(self._counts)
+
+    @property
+    def total(self) -> float:
+        """Sum of all observations."""
+        return self._sum
+
+    def value(self) -> float:
+        """Mean observation; Prometheus exposes buckets separately."""
+        return round(self._sum / self.count, 4) if self.count else 0.0
+
+    def percentile(self, which: float) -> float:
+        """Percentile of the retained samples."""
+        if not self._samples:
+            return 0.0
+        return round(percentile(self._samples, which), 4)
+
+    @property
+    def p50(self) -> float:
+        """Median observation."""
+        return self.percentile(50)
+
+    @property
+    def p95(self) -> float:
+        """95th percentile observation."""
+        return self.percentile(95)
+
+    @property
+    def p99(self) -> float:
+        """99th percentile observation."""
+        return self.percentile(99)
+
+    def stats(self) -> dict[str, Any]:
+        """Summary statistics."""
+        return {
+            "count": self.count,
+            "sum": round(self._sum, 4),
+            "mean": round(mean(self._samples), 4) if self._samples else 0.0,
+            "min": round(min(self._samples), 4) if self._samples else 0.0,
+            "max": round(max(self._samples), 4) if self._samples else 0.0,
+            "p50": self.p50,
+            "p95": self.p95,
+            "p99": self.p99,
+            "unit": self.unit,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise the histogram with its bucket counts."""
+        payload = super().to_dict()
+        payload["stats"] = self.stats()
+        payload["buckets"] = {str(edge): count for edge, count in
+                              zip(self.buckets, self._counts[:-1], strict=False)}
+        payload["overflow"] = self._counts[-1]
+        return payload
+
+    def prometheus_lines(self) -> list[str]:
+        """Emit ``_bucket``, ``_sum`` and ``_count`` lines."""
+        base = self.prometheus_name
+        plain = _label_text(self.labels)
+        lines: list[str] = []
+        cumulative = 0
+        for edge, count in zip(self.buckets, self._counts[:-1], strict=False):
+            cumulative += count
+            lines.append(f'{base}_bucket{_label_text({**self.labels, "le": str(edge)})} '
+                         f'{cumulative}')
+        cumulative += self._counts[-1]
+        lines.append(f'{base}_bucket{_label_text({**self.labels, "le": "+Inf"})} {cumulative}')
+        lines.append(f"{base}_sum{plain} {self._sum}")
+        lines.append(f"{base}_count{plain} {self.count}")
+        return lines
+
+    def reset(self) -> None:
+        """Forget every observation."""
+        with self._lock:
+            self._counts = [0] * (len(self.buckets) + 1)
+            self._samples.clear()
+            self._sum = 0.0
+
+
+def _label_text(labels: Mapping[str, str]) -> str:
+    """Render a label set as Prometheus ``{k="v"}`` text, empty when unlabelled."""
+    if not labels:
+        return ""
+    body = ",".join(f'{key}="{labels[key]}"' for key in sorted(labels))
+    return "{" + body + "}"
 
 
 class MetricsRegistry:
-    """A thread-safe collection of named metrics with export and reset."""
+    """A thread-safe collection of metrics."""
 
-    def __init__(self, *, enabled: bool = True, prefix: str = "magent") -> None:
-        """Create a registry.
+    def __init__(self, *, prefix: str = "magent") -> None:
+        """Create an empty registry.
 
         Args:
-            enabled: when false, every operation is a cheap no-op
-            prefix: prepended to metric names in exports
+            prefix: namespace prepended to every metric name
         """
-        self.enabled = bool(enabled)
-        self.prefix = str(prefix or "").strip()
-        self._metrics: dict[str, Any] = {}
-        self._lock = threading.RLock()
-        self.created_at = time.time()
+        self.prefix = prefix
+        self._metrics: dict[str, Metric] = {}
+        self._lock = threading.Lock()
+        self.started_at = time.time()
 
-    # -- registration --------------------------------------------------------
+    def _key(self, name: str, labels: Mapping[str, str] | None) -> str:
+        """Registry key for a metric plus labels."""
+        full = f"{self.prefix}_{name}" if self.prefix and not name.startswith(self.prefix) else name
+        if not labels:
+            return full
+        joined = ",".join(f"{key}={labels[key]}" for key in sorted(labels))
+        return f"{full}{{{joined}}}"
 
-    def counter(self, name: str, *, help: str = "", unit: str = "") -> Counter:
+    def _full(self, name: str) -> str:
+        """Namespaced metric name."""
+        return f"{self.prefix}_{name}" if self.prefix and not name.startswith(self.prefix) else name
+
+    def counter(self, name: str, help: str = "", *, unit: str = "",
+                labels: Mapping[str, str] | None = None) -> Counter:
         """Return an existing counter or create one."""
-        return self._get_or_create(name, Counter, help=help, unit=unit)
+        key = self._key(name, labels)
+        with self._lock:
+            metric = self._metrics.get(key)
+            if isinstance(metric, Counter):
+                return metric
+            created = Counter(self._full(name), help, unit=unit, labels=labels)
+            self._metrics[key] = created
+            return created
 
-    def gauge(self, name: str, *, help: str = "", unit: str = "") -> Gauge:
+    def gauge(self, name: str, help: str = "", *, unit: str = "",
+              labels: Mapping[str, str] | None = None) -> Gauge:
         """Return an existing gauge or create one."""
-        return self._get_or_create(name, Gauge, help=help, unit=unit)
+        key = self._key(name, labels)
+        with self._lock:
+            metric = self._metrics.get(key)
+            if isinstance(metric, Gauge):
+                return metric
+            created = Gauge(self._full(name), help, unit=unit, labels=labels)
+            self._metrics[key] = created
+            return created
 
-    def histogram(self, name: str, *, help: str = "", unit: str = "seconds",
-                  buckets: Sequence[float] = DEFAULT_BUCKETS) -> Histogram:
+    def histogram(self, name: str, help: str = "", *, unit: str = "ms",
+                  buckets: Sequence[float] = DEFAULT_BUCKETS,
+                  labels: Mapping[str, str] | None = None) -> Histogram:
         """Return an existing histogram or create one."""
-        return self._get_or_create(name, Histogram, help=help, unit=unit, buckets=buckets)
-
-    def register(self, metric: Any) -> Any:
-        """Register a pre-built metric object."""
+        key = self._key(name, labels)
         with self._lock:
-            self._metrics[metric.name] = metric
-        return metric
+            metric = self._metrics.get(key)
+            if isinstance(metric, Histogram):
+                return metric
+            created = Histogram(self._full(name), help, unit=unit, buckets=buckets, labels=labels)
+            self._metrics[key] = created
+            return created
 
-    def _get_or_create(self, name: str, factory: Any, **kwargs: Any) -> Any:
-        """Return the named metric, constructing it on first use."""
-        with self._lock:
-            existing = self._metrics.get(name)
-            if existing is not None:
-                return existing
-            metric = factory(name, **kwargs)
-            self._metrics[name] = metric
-            return metric
+    def inc(self, name: str, amount: float = 1.0, *, labels: Mapping[str, str] | None = None) -> float:
+        """Increment a counter in one call."""
+        return self.counter(name, labels=labels).inc(amount)
 
-    def get(self, name: str) -> Any | None:
-        """Return one metric by name."""
+    def observe(self, name: str, amount: float, *, unit: str = "ms",
+                labels: Mapping[str, str] | None = None) -> None:
+        """Record a histogram observation in one call."""
+        self.histogram(name, unit=unit, labels=labels).observe(amount)
+
+    def set(self, name: str, amount: float, *, labels: Mapping[str, str] | None = None) -> float:
+        """Set a gauge in one call."""
+        return self.gauge(name, labels=labels).set(amount)
+
+    def get(self, name: str, labels: Mapping[str, str] | None = None) -> Metric | None:
+        """Look one metric up."""
         with self._lock:
-            return self._metrics.get(name)
+            return self._metrics.get(self._key(name, labels))
+
+    def metrics(self) -> list[Metric]:
+        """Every registered metric, sorted by key."""
+        with self._lock:
+            return [self._metrics[key] for key in sorted(self._metrics)]
 
     def names(self) -> list[str]:
-        """Return every registered metric name, sorted."""
+        """Distinct metric names."""
         with self._lock:
-            return sorted(self._metrics)
+            return sorted({metric.name for metric in self._metrics.values()})
+
+    def snapshot(self) -> dict[str, Any]:
+        """Serialise every metric."""
+        metrics = self.metrics()
+        return {
+            "prefix": self.prefix,
+            "uptime_seconds": round(time.time() - self.started_at, 3),
+            "metrics": len(metrics),
+            "values": {metric.key: metric.to_dict() for metric in metrics},
+        }
+
+    def flat(self) -> dict[str, Any]:
+        """Flat ``key -> value`` mapping, handy for logs and JSON output."""
+        return {metric.key: metric.value() for metric in self.metrics()}
+
+    def prometheus(self) -> str:
+        """Render all metrics in the Prometheus text exposition format."""
+        lines: list[str] = []
+        seen_help: set[str] = set()
+        for metric in self.metrics():
+            family = metric.prometheus_name
+            if family not in seen_help:
+                if metric.help:
+                    lines.append(f"# HELP {family} {metric.help}")
+                lines.append(f"# TYPE {family} {metric.kind}")
+                seen_help.add(family)
+            lines.extend(metric.prometheus_lines())
+        lines.append(f"{self.prefix}_uptime_seconds {time.time() - self.started_at:.3f}")
+        return "\n".join(lines) + "\n"
+
+    def render_table(self, *, limit: int = 40) -> list[tuple[str, str, str]]:
+        """Rows of ``(key, kind, value)`` for CLI tables."""
+        rows: list[tuple[str, str, str]] = []
+        for metric in self.metrics()[:limit]:
+            if isinstance(metric, Histogram):
+                value = (f"n={metric.count} mean={metric.value()}{metric.unit} "
+                         f"p95={metric.p95}")
+            elif isinstance(metric, Gauge):
+                value = f"{metric.value():g} (min {metric.minimum:g}, max {metric.maximum:g})"
+            else:
+                value = f"{metric.value():g}"
+            rows.append((metric.key, metric.kind, value))
+        return rows
+
+    def reset(self) -> None:
+        """Reset every metric."""
+        for metric in self.metrics():
+            metric.reset()
+        self.started_at = time.time()
+
+    def merge(self, other: MetricsRegistry) -> int:
+        """Merge another registry's counters, gauges and histograms into this one."""
+        merged = 0
+        for metric in other.metrics():
+            if isinstance(metric, Counter):
+                self.counter(metric.name, metric.help, unit=metric.unit,
+                             labels=metric.labels).inc(metric.value())
+            elif isinstance(metric, Gauge):
+                self.gauge(metric.name, metric.help, unit=metric.unit,
+                           labels=metric.labels).set(metric.value())
+            elif isinstance(metric, Histogram):
+                target = self.histogram(metric.name, metric.help, unit=metric.unit,
+                                        buckets=metric.buckets, labels=metric.labels)
+                for sample in metric._samples:  # noqa: SLF001 - same class, deliberate
+                    target.observe(sample)
+            merged += 1
+        return merged
 
     def __len__(self) -> int:
         """Number of registered metrics."""
         with self._lock:
             return len(self._metrics)
 
-    def __contains__(self, name: str) -> bool:
-        """Whether a metric is registered."""
-        with self._lock:
-            return name in self._metrics
+    def __contains__(self, name: object) -> bool:
+        """True when a metric name is registered."""
+        return self.get(str(name)) is not None
 
-    # -- convenience ---------------------------------------------------------
-
-    def incr(self, name: str, amount: float = 1.0, **labels: str) -> float:
-        """Increment a counter, creating it if needed."""
-        if not self.enabled:
-            return 0.0
-        return self.counter(name).inc(amount, **labels)
-
-    def observe(self, name: str, value: float, **labels: str) -> None:
-        """Record a histogram observation, creating it if needed."""
-        if not self.enabled:
-            return
-        self.histogram(name).observe(value, **labels)
-
-    def set_gauge(self, name: str, value: float, **labels: str) -> float:
-        """Set a gauge, creating it if needed."""
-        if not self.enabled:
-            return 0.0
-        return self.gauge(name).set(value, **labels)
-
-    def timer(self, name: str, **labels: str) -> Timer:
-        """Return a :class:`Timer` bound to a histogram of this name."""
-        return Timer(None, name=name, registry=self, **labels)
-
-    def time(self, name: str, **labels: str) -> Timer:
-        """Alias for :meth:`timer`, for use directly in a ``with`` block."""
-        return self.timer(name, **labels)
-
-    # -- export --------------------------------------------------------------
-
-    def snapshot(self) -> dict[str, Any]:
-        """Return every metric as plain data."""
-        with self._lock:
-            metrics = list(self._metrics.values())
-        payload: dict[str, Any] = {
-            "enabled": self.enabled,
-            "prefix": self.prefix,
-            "uptime_seconds": round(time.time() - self.created_at, 3),
-            "metrics": {},
-        }
-        for metric in metrics:
-            if isinstance(metric, Histogram):
-                payload["metrics"][metric.name] = {
-                    "kind": "histogram", "buckets": list(metric.buckets),
-                    "series": metric.series(),
-                }
-            else:
-                payload["metrics"][metric.name] = {"kind": metric.meta.kind,
-                                                   "series": metric.series()}
-        return payload
-
-    def render(self, *, prometheus: bool = True) -> str:
-        """Render metrics as text.
-
-        Args:
-            prometheus: use the exposition format; otherwise a readable summary
-        """
-        with self._lock:
-            metrics = list(self._metrics.values())
-        if prometheus:
-            return self._render_prometheus(metrics)
-        return self._render_text(metrics)
-
-    def _render_prometheus(self, metrics: Iterable[Any]) -> str:
-        """Emit the Prometheus text exposition format."""
-        lines: list[str] = []
-        for metric in metrics:
-            full = f"{self.prefix}_{metric.name}" if self.prefix else metric.name
-            if metric.meta.help:
-                lines.append(f"# HELP {full} {_escape_help(metric.meta.help)}")
-            lines.append(f"# TYPE {full} {metric.meta.prometheus_type}")
-            if isinstance(metric, Histogram):
-                for record in metric.series():
-                    labels = record["labels"]
-                    for bound, count in metric.bucket_counts(**labels):
-                        le = "+Inf" if bound == float("inf") else _format_number(bound)
-                        lines.append(f"{full}_bucket{{{_labels(labels, extra={'le': le})}}} "
-                                     f"{count}")
-                    lines.append(f"{full}_sum{{{_labels(labels)}}} "
-                                 f"{_format_number(record['sum'])}")
-                    lines.append(f"{full}_count{{{_labels(labels)}}} {record['count']}")
-            else:
-                for record in metric.series():
-                    lines.append(f"{full}{{{_labels(record['labels'])}}} "
-                                 f"{_format_number(record['value'])}")
-        return "\n".join(lines) + "\n" if lines else ""
-
-    def _render_text(self, metrics: Iterable[Any]) -> str:
-        """Emit a human-readable summary."""
-        lines: list[str] = []
-        for metric in metrics:
-            if isinstance(metric, Histogram):
-                for record in metric.series():
-                    suffix = f" {_format_labels(record['labels'])}" if record["labels"] else ""
-                    lines.append(
-                        f"{metric.name}{suffix}: n={record['count']} "
-                        f"mean={_format_number(record['mean'])}s "
-                        f"p95={_format_number(record['p95'])}s "
-                        f"max={_format_number(record['max'])}s"
-                    )
-            else:
-                for record in metric.series():
-                    suffix = f" {_format_labels(record['labels'])}" if record["labels"] else ""
-                    lines.append(f"{metric.name}{suffix}: {_format_number(record['value'])}")
-        return "\n".join(lines)
-
-    def write(self, path: str, *, prometheus: bool = True) -> str:
-        """Write the rendered metrics to a file, returning the path."""
-        from pathlib import Path
-
-        target = Path(path).expanduser()
-        ensure_dir(target.parent)
-        atomic_write_text(target, self.render(prometheus=prometheus))
-        return str(target)
-
-    def reset(self) -> None:
-        """Clear every metric's values, keeping registrations."""
-        with self._lock:
-            for metric in self._metrics.values():
-                metric.reset()
-        self.created_at = time.time()
-
-    def describe(self) -> str:
-        """Return a one-line summary of the registry."""
-        with self._lock:
-            counts = {"counter": 0, "gauge": 0, "histogram": 0}
-            for metric in self._metrics.values():
-                counts[metric.meta.kind] = counts.get(metric.meta.kind, 0) + 1
-        return (f"{len(self)} metrics ({counts['counter']} counter, {counts['gauge']} gauge, "
-                f"{counts['histogram']} histogram) uptime "
-                f"{format_duration(time.time() - self.created_at)}")
+    def __repr__(self) -> str:
+        """Compact developer representation."""
+        return f"MetricsRegistry(prefix={self.prefix!r}, metrics={len(self)})"
 
 
-def standard_registry(*, enabled: bool = True, prefix: str = "magent") -> MetricsRegistry:
-    """Return a registry pre-declared with MAgent's core metrics.
+def record_run(registry: MetricsRegistry, result: Any) -> MetricsRegistry:
+    """Fold a :class:`~magent.types.RunResult` into a registry.
 
-    Declaring them up front means an export before any traffic still shows the
-    metric with a zero value, which distinguishes "nothing happened" from "this
-    build does not collect it".
+    Args:
+        registry: metrics to update
+        result: the finished run
     """
-    registry = MetricsRegistry(enabled=enabled, prefix=prefix)
-    registry.counter("llm_requests_total", help="LLM requests sent", unit="requests")
-    registry.counter("llm_errors_total", help="LLM requests that failed", unit="requests")
-    registry.counter("llm_retries_total", help="LLM requests retried", unit="retries")
-    registry.counter("tool_calls_total", help="Tool invocations", unit="calls")
-    registry.counter("tool_errors_total", help="Tool invocations that failed", unit="calls")
-    registry.counter("tokens_prompt_total", help="Prompt tokens consumed", unit="tokens")
-    registry.counter("tokens_completion_total", help="Completion tokens consumed", unit="tokens")
-    registry.counter("guardrail_findings_total", help="Guardrail findings by rule", unit="findings")
-    registry.counter("cache_hits_total", help="Cache hits", unit="lookups")
-    registry.counter("cache_misses_total", help="Cache misses", unit="lookups")
-    registry.histogram("llm_latency_seconds", help="LLM request latency")
-    registry.histogram("tool_latency_seconds", help="Tool execution latency")
-    registry.histogram("run_duration_seconds", help="Whole-run duration")
-    registry.gauge("active_runs", help="Runs currently in flight", unit="runs")
-    registry.gauge("context_utilization", help="Fraction of the context window used")
-    registry.gauge("memory_entries", help="Entries held in the memory store", unit="entries")
+    labels = {"model": str(getattr(result, "model", "") or "unknown")}
+    registry.inc("runs_total", labels=labels)
+    stop = str(getattr(getattr(result, "stop_reason", ""), "value",
+                       getattr(result, "stop_reason", "")) or "unknown")
+    registry.inc("runs_by_stop_reason", labels={**labels, "reason": stop})
+    if getattr(result, "succeeded", False):
+        registry.inc("runs_succeeded_total", labels=labels)
+    else:
+        registry.inc("runs_failed_total", labels=labels)
+    registry.observe("run_duration", getattr(result, "duration_ms", 0.0), labels=labels)
+    usage = getattr(result, "usage", None)
+    if usage is not None:
+        registry.inc("prompt_tokens_total", getattr(usage, "prompt_tokens", 0), labels=labels)
+        registry.inc("completion_tokens_total", getattr(usage, "completion_tokens", 0),
+                     labels=labels)
+        registry.inc("tokens_total", getattr(usage, "total_tokens", 0), labels=labels)
+        if getattr(usage, "cached_tokens", 0):
+            registry.inc("cached_tokens_total", usage.cached_tokens, labels=labels)
+    cost = getattr(result, "cost", None)
+    total = getattr(cost, "total", 0.0) or 0.0
+    if total:
+        registry.inc("cost_total", total, labels={**labels, "unit": getattr(cost, "currency", "USD")})
+    steps = getattr(result, "steps", []) or []
+    registry.gauge("last_run_steps", labels=labels).set(len(steps))
+    for step in steps:
+        for item in getattr(step, "tool_results", []) or []:
+            record_tool(registry, item)
     return registry
 
 
-def _label_key(labels: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
-    """Return a hashable, order-independent key for a label set."""
-    return tuple(sorted((str(key), str(value)) for key, value in labels.items() if value != ""))
+def record_tool(registry: MetricsRegistry, result: Any) -> MetricsRegistry:
+    """Fold a :class:`~magent.types.ToolResult` into a registry."""
+    name = str(getattr(result, "name", "") or "unknown")
+    labels = {"tool": name}
+    registry.inc("tool_calls_total", labels=labels)
+    if getattr(result, "ok", False):
+        registry.inc("tool_success_total", labels=labels)
+    else:
+        code = str(getattr(result, "error_code", "") or "error")
+        registry.inc("tool_errors_total", labels={**labels, "code": code})
+    registry.observe("tool_duration", getattr(result, "duration_ms", 0.0), labels=labels)
+    if getattr(result, "truncated", False):
+        registry.inc("tool_truncated_total", labels=labels)
+    return registry
 
 
-def _labels(labels: Mapping[str, str], *, extra: Mapping[str, str] | None = None) -> str:
-    """Render a label set in Prometheus syntax."""
-    merged = {str(key): str(value) for key, value in dict(labels).items()}
-    merged.update({str(key): str(value) for key, value in dict(extra or {}).items()})
-    if not merged:
-        return ""
-    rendered = ",".join(f'{key}="{_escape_label(value)}"'
-                        for key, value in sorted(merged.items()))
-    return rendered
+def record_llm(registry: MetricsRegistry, response: Any) -> MetricsRegistry:
+    """Fold a :class:`~magent.types.ChatResponse` into a registry."""
+    labels = {"model": str(getattr(response, "model", "") or "unknown")}
+    registry.inc("llm_requests_total", labels=labels)
+    registry.observe("llm_latency", getattr(response, "latency_ms", 0.0), labels=labels)
+    if getattr(response, "cache_hit", False):
+        registry.inc("llm_cache_hits_total", labels=labels)
+    return registry
 
 
-def _escape_label(value: str) -> str:
-    """Escape a label value for the exposition format."""
-    return (value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n"))
-
-
-def _escape_help(value: str) -> str:
-    """Escape help text for the exposition format."""
-    return value.replace("\\", "\\\\").replace("\n", "\\n")
-
-
-def _format_labels(labels: Mapping[str, Any]) -> str:
-    """Render a label set compactly for human-readable output."""
-    return ",".join(f"{key}={value}" for key, value in sorted(labels.items()))
-
-
-def _format_number(value: float) -> str:
-    """Render a number without trailing noise, keeping ``+Inf`` intact."""
-    if value == float("inf"):
-        return "+Inf"
-    if value == int(value) and abs(value) < 1e15:
-        return str(int(value))
-    return f"{value:.6g}"
+def iter_metrics(payload: Mapping[str, Any]) -> Iterable[tuple[str, Any]]:
+    """Yield ``(key, value)`` pairs from a snapshot, flattening nested dicts."""
+    for key, item in payload.items():
+        if isinstance(item, Mapping):
+            for sub_key, value in iter_metrics(item):
+                yield f"{key}.{sub_key}", value
+        else:
+            yield key, item
 
 
 __all__ = [
     "DEFAULT_BUCKETS",
-    "METRIC_TYPES",
+    "METRIC_KINDS",
     "Counter",
     "Gauge",
     "Histogram",
-    "MetricMeta",
+    "Metric",
     "MetricsRegistry",
-    "Timer",
-    "standard_registry",
+    "iter_metrics",
+    "record_llm",
+    "record_run",
+    "record_tool",
 ]

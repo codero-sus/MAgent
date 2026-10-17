@@ -1,428 +1,333 @@
-"""Plugin hooks: the lifecycle points a plugin may attach to.
+"""Plugin hooks: named extension points with ordered, isolated handlers.
 
-A hook registry is how a plugin extends behaviour without the framework knowing
-its name. The design constraints come from having untrusted code on the other
-end:
+A plugin rarely only *adds tools*; it wants to see the prompt before it is sent,
+tag a tool result, or notice when a run failed.  :class:`HookRegistry` provides
+those extension points.
 
-*hooks may not silently change control flow*
-    a hook that raises is recorded and the run continues, because one broken
-    plugin must not take down an agent that was working;
-
-*transforms are explicit*
-    ``before_tool`` and ``filter_output`` may return a replacement value, and
-    that is the only way a hook changes anything - everything else observes;
-
-*every call is metered*
-    timings and failure counts are kept per hook, so a plugin that makes a run
-    slow is identifiable rather than mysterious.
+Handlers are called in priority order and are isolated: one that raises is
+logged and skipped, so a broken plugin cannot take down a run.  Handlers that
+want to change data return a new value (or ``None`` to leave it alone), which
+keeps the flow explicit - ``payload = hooks.apply("before_prompt", payload)``.
 """
 
 from __future__ import annotations
 
-import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from ..errors import PluginError
 from ..logging_ import get_logger
-from .manifest import HOOK_NAMES
+from .manifest import HOOK_POINTS
 
 LOGGER = get_logger("plugins.hooks")
-"""Logger for hook execution faults."""
+"""Logger for hook failures."""
 
-HookFn = Callable[..., Any]
-"""A hook callable. Its signature depends on the hook name."""
+DEFAULT_PRIORITY = 100
+"""Priority for handlers that do not state one."""
 
-TRANSFORM_HOOKS: frozenset[str] = frozenset({"before_tool", "filter_output", "build_prompt"})
-"""Hooks whose return value replaces the data passed in."""
+MAX_HANDLERS_PER_HOOK = 64
+"""Ceiling on handlers per hook point, so a loop cannot register forever."""
 
-VETO_HOOKS: frozenset[str] = frozenset({"before_tool", "before_run"})
-"""Hooks that may block an action by returning a falsy verdict object."""
+
+def _accepts_positional(fn: Callable[..., Any]) -> bool:
+    """True when ``fn`` takes at least one positional parameter (the payload)."""
+    import inspect
+
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    for parameter in signature.parameters.values():
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                              inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            return True
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+    return False
 
 
 @dataclass(slots=True)
-class HookRegistration:
-    """One registered hook, with where it came from."""
+class HookHandler:
+    """One registered handler."""
 
-    name: str
-    fn: HookFn
+    point: str
+    fn: Callable[..., Any]
+    priority: int = DEFAULT_PRIORITY
+    name: str = ""
     plugin: str = ""
-    priority: int = 100
-    enabled: bool = True
-    once: bool = False
     calls: int = 0
-    failures: int = 0
-    total_ms: float = 0.0
-    fired: bool = False
+    errors: int = 0
+    total_seconds: float = 0.0
+    once: bool = False
+    accepts_payload: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Default the handler name and work out how to call it."""
+        if not self.name:
+            self.name = getattr(self.fn, "__name__", type(self.fn).__name__)
+        self.priority = int(self.priority)
+        self.accepts_payload = _accepts_positional(self.fn)
 
     @property
-    def label(self) -> str:
-        """A readable identifier for logs and reports."""
-        owner = self.plugin or getattr(self.fn, "__module__", "?")
-        return f"{self.name}:{owner}"
+    def key(self) -> str:
+        """Identifier used in logs and reports."""
+        return f"{self.plugin or 'anonymous'}:{self.name}"
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serialized form."""
+        """Serialise the handler."""
         return {
+            "point": self.point,
             "name": self.name,
             "plugin": self.plugin,
             "priority": self.priority,
-            "enabled": self.enabled,
-            "once": self.once,
-            "fired": self.fired,
             "calls": self.calls,
-            "failures": self.failures,
-            "mean_ms": round(self.total_ms / self.calls, 3) if self.calls else 0.0,
-        }
-
-
-@dataclass(slots=True)
-class HookResult:
-    """What running one hook chain produced."""
-
-    name: str
-    value: Any = None
-    transformed: bool = False
-    blocked: bool = False
-    reason: str = ""
-    ran: int = 0
-    failed: int = 0
-    duration_ms: float = 0.0
-    errors: list[str] = field(default_factory=list)
-
-    @property
-    def ok(self) -> bool:
-        """Whether every hook ran without raising."""
-        return not self.errors
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return the serialized form."""
-        return {
-            "name": self.name,
-            "transformed": self.transformed,
-            "blocked": self.blocked,
-            "reason": self.reason,
-            "ran": self.ran,
-            "failed": self.failed,
-            "duration_ms": round(self.duration_ms, 3),
-            "errors": self.errors[:10],
+            "errors": self.errors,
+            "seconds": round(self.total_seconds, 5),
+            "once": self.once,
+            "metadata": dict(self.metadata),
         }
 
 
 class HookRegistry:
-    """Registers and runs lifecycle hooks."""
+    """Registered handlers per hook point."""
 
-    def __init__(self, *, strict: bool = False, timeout: float = 0.0) -> None:
-        """Create a registry.
+    def __init__(self, *, enabled: bool = True) -> None:
+        """Create an empty registry.
 
         Args:
-            strict: re-raise hook exceptions instead of recording them
-            timeout: unused ceiling kept for interface symmetry; hooks are
-                expected to be fast and synchronous
+            enabled: when false every :meth:`apply` is a no-op
         """
-        self.strict = bool(strict)
-        self.timeout = float(timeout)
-        self._hooks: dict[str, list[HookRegistration]] = {name: [] for name in HOOK_NAMES}
-        self._lock = threading.RLock()
-        self.executed = 0
-        self.failures = 0
+        self.enabled = bool(enabled)
+        self._handlers: dict[str, list[HookHandler]] = {}
+        self.errors: list[str] = []
 
-    # -- registration --------------------------------------------------------
-
-    def register(self, name: str, fn: HookFn, *, plugin: str = "", priority: int = 100,
-                 once: bool = False) -> HookRegistration:
-        """Attach a callable to one lifecycle point.
+    def register(self, point: str, fn: Callable[..., Any], *, priority: int = DEFAULT_PRIORITY,
+                 name: str = "", plugin: str = "", once: bool = False,
+                 **metadata: Any) -> HookHandler:
+        """Register a handler.
 
         Args:
-            name: hook name, one of :data:`~magent.plugins.manifest.HOOK_NAMES`
-            fn: callable to invoke
-            plugin: owning plugin, for reporting and removal
-            priority: lower runs first; equal priorities keep insertion order
-            once: fire at most one time, then disable
+            point: one of :data:`~magent.plugins.manifest.HOOK_POINTS`
+            fn: callable receiving the payload (and any extra keyword arguments)
+            priority: lower runs first
+            name: handler name for logs
+            plugin: owning plugin name
+            once: remove the handler after its first successful call
+            **metadata: extra values stored on the handler
 
         Raises:
-            PluginError: the hook name is unknown or ``fn`` is not callable
+            PluginError: when the hook point is unknown
         """
-        if name not in HOOK_NAMES:
-            raise PluginError(f"unknown hook {name!r}; known: {', '.join(HOOK_NAMES)}",
-                              details={"hook": name, "plugin": plugin})
-        if not callable(fn):
-            raise PluginError(f"hook {name!r} needs a callable, got {type(fn).__name__}",
-                              details={"hook": name, "plugin": plugin})
-        registration = HookRegistration(name=name, fn=fn, plugin=plugin,
-                                        priority=int(priority), once=bool(once))
-        with self._lock:
-            bucket = self._hooks[name]
-            bucket.append(registration)
-            # A stable sort keeps insertion order among equal priorities, so two
-            # plugins at the default priority run in registration order.
-            bucket.sort(key=lambda item: item.priority)
-        return registration
+        from ..errors import PluginError
 
-    def unregister(self, name: str, *, plugin: str = "", fn: HookFn | None = None) -> int:
-        """Remove hooks, by name and optionally by plugin or callable."""
-        with self._lock:
-            if name not in self._hooks:
-                return 0
-            before = len(self._hooks[name])
-            self._hooks[name] = [
-                item for item in self._hooks[name]
-                if not ((not plugin or item.plugin == plugin) and (fn is None or item.fn is fn))
-            ]
-            return before - len(self._hooks[name])
+        if point not in HOOK_POINTS:
+            raise PluginError(f"unknown hook point {point!r}",
+                              details={"known": list(HOOK_POINTS)})
+        bucket = self._handlers.setdefault(point, [])
+        if len(bucket) >= MAX_HANDLERS_PER_HOOK:
+            raise PluginError(f"too many handlers for hook {point!r}",
+                              details={"limit": MAX_HANDLERS_PER_HOOK})
+        handler = HookHandler(point=point, fn=fn, priority=priority, name=name, plugin=plugin,
+                              once=once, metadata=dict(metadata))
+        bucket.append(handler)
+        bucket.sort(key=lambda item: (item.priority, item.key))
+        return handler
 
-    def unregister_plugin(self, plugin: str) -> int:
-        """Remove every hook belonging to one plugin."""
-        removed = 0
-        for name in HOOK_NAMES:
-            removed += self.unregister(name, plugin=plugin)
-        return removed
+    def register_many(self, points: Iterable[str], fn: Callable[..., Any],
+                      **kwargs: Any) -> list[HookHandler]:
+        """Register the same handler on several hook points."""
+        return [self.register(point, fn, **kwargs) for point in points]
 
-    def disable(self, name: str, *, plugin: str = "", enabled: bool = False) -> int:
-        """Enable or disable hooks without removing them."""
-        count = 0
-        with self._lock:
-            for item in self._hooks.get(name, []):
-                if not plugin or item.plugin == plugin:
-                    item.enabled = bool(enabled)
-                    count += 1
-        return count
+    def handlers(self, point: str = "") -> list[HookHandler]:
+        """Handlers for one point, or all of them when ``point`` is empty."""
+        if point:
+            return list(self._handlers.get(point, []))
+        out: list[HookHandler] = []
+        for bucket in self._handlers.values():
+            out.extend(bucket)
+        return out
 
-    def hooks(self, name: str = "") -> list[HookRegistration]:
-        """Return registrations for one hook, or all of them."""
-        with self._lock:
-            if name:
-                return list(self._hooks.get(name, []))
-            return [item for bucket in self._hooks.values() for item in bucket]
+    def points(self) -> list[str]:
+        """Hook points that have at least one handler."""
+        return sorted(point for point, bucket in self._handlers.items() if bucket)
 
-    def names(self) -> list[str]:
-        """Return hook names that have at least one registration."""
-        with self._lock:
-            return [name for name in HOOK_NAMES if self._hooks.get(name)]
-
-    def count(self, name: str = "") -> int:
-        """Return how many hooks are registered."""
-        return len(self.hooks(name))
-
-    # -- execution -----------------------------------------------------------
-
-    def emit(self, name: str, payload: Any = None, **kwargs: Any) -> HookResult:
-        """Run one hook chain and return what happened.
-
-        For a transform hook the chain threads the value through each callable,
-        so later hooks see earlier edits. For an observe hook the payload is
-        passed unchanged and return values are ignored.
-
-        A hook may block a veto hook by returning an object whose ``allow``
-        attribute is false, or a ``False`` literal; the chain then stops.
+    def apply(self, point: str, payload: Any = None, **context: Any) -> Any:
+        """Run every handler for ``point``, threading the payload through them.
 
         Args:
-            name: hook to run
-            payload: data passed to each hook
-            kwargs: extra keyword arguments forwarded to each hook
+            point: the hook point
+            payload: value passed to each handler
+            **context: extra keyword arguments (``agent``, ``run_id``, ...)
+
+        Returns:
+            the payload after every handler has had a chance to change it
         """
-        started = time.perf_counter()
-        result = HookResult(name=name)
-        if name not in HOOK_NAMES:
-            result.errors.append(f"unknown hook {name!r}")
-            return result
-        with self._lock:
-            registrations = [item for item in self._hooks.get(name, [])
-                             if item.enabled and not (item.once and item.fired)]
-        if not registrations:
-            result.duration_ms = (time.perf_counter() - started) * 1000.0
-            return result
-
-        value = payload
-        is_transform = name in TRANSFORM_HOOKS
-        is_veto = name in VETO_HOOKS
-        for registration in registrations:
-            call_started = time.perf_counter()
+        if not self.enabled:
+            return payload
+        handlers = self._handlers.get(point)
+        if not handlers:
+            return payload
+        current = payload
+        for handler in list(handlers):
+            started = time.perf_counter()
             try:
-                returned = registration.fn(value, **kwargs) if kwargs else registration.fn(value)
-            except Exception as exc:  # noqa: BLE001 - one bad plugin must not stop a run
-                elapsed = (time.perf_counter() - call_started) * 1000.0
-                with self._lock:
-                    registration.calls += 1
-                    registration.failures += 1
-                    registration.total_ms += elapsed
-                    self.executed += 1
-                    self.failures += 1
-                result.failed += 1
-                result.errors.append(f"{registration.label}: {type(exc).__name__}: {exc}")
-                LOGGER.warning("hook %s raised: %s", registration.label, exc)
-                if self.strict:
-                    raise
+                # The calling convention is decided once, at registration, so a
+                # TypeError raised *inside* a handler is not retried as a
+                # signature mismatch.
+                result = (handler.fn(current, **context) if handler.accepts_payload
+                          else handler.fn(**context))
+            except Exception as exc:  # noqa: BLE001 - failures are recorded, not raised
+                self._record_error(handler, exc, point)
                 continue
-            elapsed = (time.perf_counter() - call_started) * 1000.0
-            with self._lock:
-                registration.calls += 1
-                registration.total_ms += elapsed
-                if registration.once:
-                    registration.fired = True
-                self.executed += 1
-            result.ran += 1
+            handler.calls += 1
+            handler.total_seconds += time.perf_counter() - started
+            if result is not None:
+                current = result
+            if handler.once:
+                try:
+                    handlers.remove(handler)
+                except ValueError:
+                    pass
+        return current
 
-            if is_veto and _is_veto(returned):
-                result.blocked = True
-                result.reason = _veto_reason(returned)
-                result.value = value
-                break
-            if is_transform and returned is not None:
-                value = returned
-                result.transformed = True
+    def _record_error(self, handler: HookHandler, exc: BaseException, point: str) -> None:
+        """Note a failing handler without interrupting the caller."""
+        handler.errors += 1
+        message = f"{point}:{handler.key} -> {type(exc).__name__}: {exc}"
+        self.errors.append(message)
+        if len(self.errors) > 200:
+            del self.errors[:-200]
+        LOGGER.warning("hook %s failed: %s", handler.key, exc)
 
-        result.value = value
-        result.duration_ms = (time.perf_counter() - started) * 1000.0
-        return result
+    def collect(self, point: str, **context: Any) -> list[Any]:
+        """Run handlers expecting each to return a value, collecting non-None results."""
+        out: list[Any] = []
+        for handler in list(self._handlers.get(point, [])):
+            try:
+                value = (handler.fn(None, **context) if handler.accepts_payload
+                         else handler.fn(**context))
+            except Exception as exc:  # noqa: BLE001
+                self._record_error(handler, exc, point)
+                continue
+            handler.calls += 1
+            if value is not None:
+                out.append(value)
+        return out
 
-    def transform(self, name: str, value: Any, **kwargs: Any) -> Any:
-        """Run a transform hook and return the possibly-modified value."""
-        return self.emit(name, value, **kwargs).value
+    def unregister(self, point: str, name: str) -> bool:
+        """Remove every handler with this name from a hook point."""
+        bucket = self._handlers.get(point)
+        if not bucket:
+            return False
+        before = len(bucket)
+        self._handlers[point] = [item for item in bucket if item.name != name]
+        return len(self._handlers[point]) != before
 
-    # -- reporting -----------------------------------------------------------
+    def clear(self, point: str = "") -> int:
+        """Remove handlers, from one point or all of them."""
+        if point:
+            return len(self._handlers.pop(point, []))
+        removed = sum(len(bucket) for bucket in self._handlers.values())
+        self._handlers.clear()
+        return removed
 
     def stats(self) -> dict[str, Any]:
-        """Return per-hook execution statistics."""
-        with self._lock:
-            by_hook = {
-                name: {
-                    "registered": len(bucket),
-                    "enabled": sum(1 for item in bucket if item.enabled),
-                    "calls": sum(item.calls for item in bucket),
-                    "failures": sum(item.failures for item in bucket),
-                    "total_ms": round(sum(item.total_ms for item in bucket), 3),
-                }
-                for name, bucket in self._hooks.items() if bucket
-            }
+        """Per-point handler counts and error totals."""
         return {
-            "hooks": by_hook,
-            "executed": self.executed,
-            "failures": self.failures,
-            "registered": self.count(),
-            "strict": self.strict,
+            "enabled": self.enabled,
+            "points": {point: len(bucket) for point, bucket in sorted(self._handlers.items())},
+            "handlers": sum(len(bucket) for bucket in self._handlers.values()),
+            "calls": sum(item.calls for item in self.handlers()),
+            "errors": sum(item.errors for item in self.handlers()),
+            "recent_errors": self.errors[-5:],
         }
 
-    def slowest(self, limit: int = 5) -> list[dict[str, Any]]:
-        """Return the slowest hooks by mean duration."""
-        items = [item.to_dict() | {"label": item.label} for item in self.hooks()]
-        items.sort(key=lambda record: record.get("mean_ms", 0.0), reverse=True)
-        return items[: max(1, int(limit))]
-
-    def describe(self) -> str:
-        """Return a one-line summary."""
-        info = self.stats()
-        return (f"{info['registered']} hooks registered, {info['executed']} executed, "
-                f"{info['failures']} failed")
-
-    def clear(self) -> None:
-        """Remove every registration."""
-        with self._lock:
-            self._hooks = {name: [] for name in HOOK_NAMES}
-            self.executed = 0
-            self.failures = 0
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise every handler."""
+        return {"points": {point: [item.to_dict() for item in bucket]
+                           for point, bucket in sorted(self._handlers.items())},
+                "stats": self.stats()}
 
     def __len__(self) -> int:
-        """Number of registered hooks."""
-        return self.count()
+        """Number of registered handlers."""
+        return sum(len(bucket) for bucket in self._handlers.values())
 
-    def __contains__(self, name: str) -> bool:
-        """Whether a hook name has registrations."""
-        with self._lock:
-            return bool(self._hooks.get(name))
+    def __contains__(self, point: object) -> bool:
+        """True when a hook point has handlers."""
+        return bool(self._handlers.get(str(point)))
 
-
-def _is_veto(returned: Any) -> bool:
-    """Whether a hook's return value blocks the action."""
-    if returned is None:
-        return False
-    if isinstance(returned, bool):
-        return not returned
-    allow = getattr(returned, "allow", None)
-    if allow is False:
-        return True
-    if isinstance(returned, dict) and returned.get("allow") is False:
-        return True
-    return False
+    def __repr__(self) -> str:
+        """Compact developer representation."""
+        return f"HookRegistry(handlers={len(self)}, points={len(self.points())})"
 
 
-def _veto_reason(returned: Any) -> str:
-    """Extract a human-readable reason from a veto value."""
-    if isinstance(returned, dict):
-        return str(returned.get("reason") or returned.get("message") or "blocked by hook")
-    reason = getattr(returned, "reason", "") or getattr(returned, "message", "")
-    return str(reason) if reason else "blocked by hook"
+def attach_to_agent(hooks: HookRegistry, agent: Any) -> Any:
+    """Wire hook points that the agent exposes directly.
 
-
-def hook(name: str, *, plugin: str = "", priority: int = 100,
-         once: bool = False) -> Callable[[HookFn], HookFn]:
-    """Decorator marking a function as a hook, for use with a registry.
-
-    The decorated function keeps working normally and gains a ``hook_names``
-    attribute listing what it wants, so a plugin module can be introspected and
-    registered in one pass::
-
-        @hook("before_tool", priority=10)
-        def audit(value):
-            log(value)
+    Not every hook point has an agent-side counterpart; the ones that do
+    (``before_run``/``after_run``/``on_error``) are subscribed to the event bus,
+    which is how plugins observe runs without patching the agent.
     """
-    if name not in HOOK_NAMES:
-        raise PluginError(f"unknown hook {name!r}; known: {', '.join(HOOK_NAMES)}")
+    bus = getattr(agent, "events", None)
+    if bus is None or not hasattr(bus, "subscribe"):
+        return None
 
-    def decorator(fn: HookFn) -> HookFn:
-        existing = list(getattr(fn, "hook_names", []) or [])
-        existing.append({
-            "name": name, "plugin": plugin, "priority": priority, "once": once,
-        })
-        fn.hook_names = existing  # type: ignore[attr-defined]
-        return fn
+    def on_event(event: Any) -> None:
+        kind = str(getattr(getattr(event, "kind", ""), "value", getattr(event, "kind", "")))
+        data = dict(getattr(event, "data", {}) or {})
+        if kind == "run.started":
+            hooks.apply("before_run", {"agent": agent, **data}, agent=agent, run_id=data.get("run_id", ""))
+        elif kind == "run.finished":
+            hooks.apply("after_run", {"agent": agent, **data}, agent=agent, run_id=data.get("run_id", ""))
+        elif kind == "run.failed":
+            hooks.apply("on_error", {"agent": agent, **data}, agent=agent, run_id=data.get("run_id", ""))
+        hooks.apply("on_event", event, agent=agent)
 
-    return decorator
-
-
-def register_decorated(module: Any, registry: HookRegistry, *, plugin: str = "") -> int:
-    """Register every ``@hook``-decorated callable found in a module."""
-    registered = 0
-    for attribute in dir(module):
-        if attribute.startswith("__"):
-            continue
-        candidate = getattr(module, attribute, None)
-        declarations = getattr(candidate, "hook_names", None)
-        if not callable(candidate) or not declarations:
-            continue
-        for declaration in declarations:
-            registry.register(
-                str(declaration.get("name", "")),
-                candidate,
-                plugin=str(declaration.get("plugin") or plugin),
-                priority=int(declaration.get("priority", 100) or 100),
-                once=bool(declaration.get("once", False)),
-            )
-            registered += 1
-    return registered
+    return bus.subscribe(on_event, name="plugin-hooks", priority=300)
 
 
-def collect_hooks(modules: Iterable[Any], registry: HookRegistry, *,
-                  plugin: str = "") -> int:
-    """Register decorated hooks from several modules."""
-    return sum(register_decorated(module, registry, plugin=plugin) for module in modules)
+def chain_handlers(handlers: Sequence[HookHandler]) -> Callable[[Any], Any]:
+    """Compose several handlers into one callable, in priority order."""
+    ordered = sorted(handlers, key=lambda item: (item.priority, item.key))
+
+    def composed(payload: Any = None, **context: Any) -> Any:
+        current = payload
+        for handler in ordered:
+            result = (handler.fn(current, **context) if handler.accepts_payload
+                      else handler.fn(**context))
+            if result is not None:
+                current = result
+        return current
+
+    composed.__name__ = "chained_hooks"
+    composed.__doc__ = f"Chained handler over {len(ordered)} hook handlers."
+    return composed
 
 
-def known_hooks() -> Sequence[str]:
-    """Return every hook name MAgent dispatches."""
-    return HOOK_NAMES
+def describe_hooks(hooks: HookRegistry) -> list[tuple[str, str, str]]:
+    """Rows of ``(point, handler, priority)`` for CLI tables."""
+    rows: list[tuple[str, str, str]] = []
+    for handler in hooks.handlers():
+        rows.append((handler.point, handler.key, str(handler.priority)))
+    return sorted(rows)
+
+
+def load_hooks_from(mapping: Mapping[str, Any], *, plugin: str = "") -> HookRegistry:
+    """Build a registry from a ``{hook_point: callable}`` mapping."""
+    hooks = HookRegistry()
+    for point, fn in mapping.items():
+        hooks.register(str(point), fn, plugin=plugin)
+    return hooks
 
 
 __all__ = [
-    "TRANSFORM_HOOKS",
-    "VETO_HOOKS",
-    "HookFn",
-    "HookRegistration",
+    "DEFAULT_PRIORITY",
+    "MAX_HANDLERS_PER_HOOK",
+    "HookHandler",
     "HookRegistry",
-    "HookResult",
-    "collect_hooks",
-    "hook",
-    "known_hooks",
-    "register_decorated",
+    "attach_to_agent",
+    "chain_handlers",
+    "describe_hooks",
+    "load_hooks_from",
 ]

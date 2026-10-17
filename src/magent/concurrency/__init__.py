@@ -1,66 +1,51 @@
-"""Concurrency: bounded parallel work and the synchronization around it.
+"""Threads, limits and batching for a sync-first framework.
 
-Two halves:
+Public API:
 
-- :mod:`magent.concurrency.pool` runs work in parallel and keeps every outcome,
-  including the failures, in submission or completion order.
-- :mod:`magent.concurrency.sync` provides the coordination an agent run needs:
-  cancellation, permit limits, throttling, debouncing, one-shot init.
+:class:`WorkerPool` / :class:`Task` / :class:`TaskOutcome` / :func:`run_parallel`
+    bounded parallel execution where one failure never aborts the batch;
+:class:`CancellationToken`
+    cooperative cancellation, shared with the agent's own cancel flag;
+:class:`TokenBucket` / :class:`Throttle` / :class:`Debouncer` / :class:`ConcurrencyLimiter`
+    rate limiting, throttling, debouncing and slot bounding;
+:func:`run_rate_limited`
+    push a batch through a rate limit, sequentially or in parallel.
 
-Parallel tool dispatch, RAG ingestion, and evaluation runs all go through
-:func:`parallel_map`, so timeout handling, error capture, and trace-context
-propagation are implemented once::
-
-    result = parallel_map(index_file, paths, max_workers=4, timeout=30)
-    if not result.ok:
-        log(result.errors)
-    chunks = result.values
-
-Heavier resilience patterns live elsewhere on purpose: retries and circuit
-breaking in :mod:`magent.llm.retry`, per-caller rate limits in
-:mod:`magent.guardrails.policy`.
+>>> from magent.concurrency import run_parallel
+>>> outcomes = run_parallel([lambda: 1, lambda: 2])
+>>> [outcome.value for outcome in outcomes]
+[1, 2]
 """
 
 from __future__ import annotations
 
-from .pool import (
-    DEFAULT_MAX_WORKERS,
-    ParallelResult,
-    TaskOutcome,
-    WorkerPool,
-    bounded_chunks,
-    chunked,
-    first_success,
-    gather,
-    parallel_map,
-)
-from .sync import (
-    DEFAULT_ACQUIRE_TIMEOUT,
-    Barrier,
-    CancellationToken,
-    ConcurrencyLimiter,
-    Debouncer,
-    Throttle,
-    once,
-    retry_until,
-)
+from .limits import (DEFAULT_CAPACITY, DEFAULT_RATE, BatchResult, ConcurrencyLimiter, Debouncer,
+                     LimitStats, Throttle, TokenBucket, first_success, interleave,
+                     run_rate_limited)
+from .pool import (DEFAULT_TIMEOUT, DEFAULT_WORKERS, MAX_WORKERS, CancellationToken, Task,
+                   TaskOutcome, WorkerPool, chunked, gather, parallel_map, run_parallel)
 
 __all__ = [
-    "DEFAULT_ACQUIRE_TIMEOUT",
-    "DEFAULT_MAX_WORKERS",
-    "Barrier",
+    "DEFAULT_CAPACITY",
+    "DEFAULT_RATE",
+    "DEFAULT_TIMEOUT",
+    "DEFAULT_WORKERS",
+    "MAX_WORKERS",
+    "BatchResult",
     "CancellationToken",
     "ConcurrencyLimiter",
     "Debouncer",
-    "ParallelResult",
+    "LimitStats",
+    "Task",
     "TaskOutcome",
     "Throttle",
+    "TokenBucket",
     "WorkerPool",
-    "bounded_chunks",
     "chunked",
     "first_success",
     "gather",
-    "once",
+    "interleave",
     "parallel_map",
-    "retry_until",
+    "run_parallel",
+    "run_rate_limited",
 ]

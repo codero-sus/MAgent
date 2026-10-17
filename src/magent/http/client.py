@@ -121,16 +121,6 @@ class HTTPResponse:
         """Look up a response header case-insensitively."""
         return self.headers.get(name.lower(), default)
 
-    def safe_url(self) -> str:
-        """Return the response URL with embedded credentials removed.
-
-        Responses need the same protection as requests because error messages
-        and structured ``HTTPError.details`` include their URL. The status path
-        previously called this method even though only :class:`HTTPRequest`
-        implemented it, masking every non-2xx response with ``AttributeError``.
-        """
-        return redact_url(self.url)
-
     def retry_after(self) -> float | None:
         """Parse a ``Retry-After`` header into seconds, if present."""
         raw = self.header("retry-after")

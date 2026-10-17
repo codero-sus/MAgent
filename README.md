@@ -1,464 +1,209 @@
 # MAgent
 
-**Mr. Agent, Powerful.** A batteries-included, zero-mandatory-dependency Python agent framework and operator CLI built for [Cortex LLMHoster](https://github.com/codero-sus/Cortex_LLMHoster).
+**Mr. Agent, Powerful.** A local-first Python agent framework for
+[Cortex LLMHoster](https://github.com/codero-sus/Cortex_LLMHoster): it plans,
+calls tools, remembers, retrieves, guards itself, works in teams, and explains
+what it did — with **zero mandatory dependencies** beyond the Python standard
+library.
 
-> The product is **MAgent**. The lowercase word `magent` is used only for the Python import package, the executable command, configuration paths, and environment-variable namespace.
+```bash
+git clone https://github.com/codero-sus/MAgent && cd MAgent
+python -m magent doctor
+python -m magent ask "what can you do?"
+python -m magent serve          # REST API + web UI
+```
 
-MAgent runs local models through Cortex's real HTTP API, gives them 113 schema-declared tools, keeps short- and long-term memory, retrieves cited context, applies guardrails and approval policy, records events and metrics, loads permission-declared plugins, evaluates datasets, and exposes a 31-route HTTP API with an embedded web console.
+---
 
-It has **3,200+ machine-verified improvements**—well above the promised 777. Every numbered row in [`IMPROVEMENTS.md`](IMPROVEMENTS.md) names a real file and symbol, and the verifier fails if any reference disappears.
+## Why it exists
 
-## Highlights
+Running a capable agent locally should not require a cloud account, a dozen
+libraries or a vector database. MAgent is a complete agent framework in one
+installable package: 113 tools behind a real sandbox, hybrid memory, retrieval
+with citations you can verify, guardrails that fire, multi-agent orchestration,
+sessions, evaluation, tracing, plugins, a 26-command CLI and an HTTP API — all
+talking to the models Cortex LLMHoster already serves on your machine.
 
-- **Real Cortex integration** — `/health`, `/ready`, OpenAI-compatible `/v1`, streamed SSE tool calls, embeddings, and `/admin/api` model control.
-- **Zero mandatory runtime dependencies** — the HTTP pool, SSE parser, TOML configuration, SQLite memory, BM25/vector retrieval, terminal UI, server, and test doubles use the Python 3.11+ standard library.
-- **113 actual tools in 16 categories** — files, shell, Python, web, search, text, data, Git, memory, media, system inspection, Cortex administration, and more.
-- **Four loop modes** — `react`, `plan`, `reflect`, and `single`, with bounded iterations and tool calls.
-- **Safety by default** — loopback server bind, API key required for public binds, path roots, command/domain policy, risk-ranked approvals, prompt-injection checks, PII redaction, budgets, and append-only audit records.
-- **Hybrid memory and RAG** — SQLite persistence, lexical + hashing-vector ranking, MMR diversity, file-aware chunkers, numbered citations, and grounding verification.
-- **Observable and testable** — 27 typed event kinds, traces, Prometheus metrics, deterministic backends, and a real in-process fake of Cortex's HTTP contract.
-- **Permission-declared plugins** — manifest validation, checksum pinning, sensitive-permission approval, declared tool/hook registration, lifecycle hooks, and static inspection before import.
-- **One operator surface** — 14 CLI command groups, 31 HTTP routes, and a self-contained web console.
-
-## Requirements
-
-- CPython **3.11 or newer**
-- [Cortex LLMHoster](https://github.com/codero-sus/Cortex_LLMHoster) for real local-model inference
-- No cloud API key and no mandatory third-party Python package
-
-MAgent integrates with Cortex as an external HTTP client. Cortex is not vendored, modified, or redistributed.
+| | |
+| --- | --- |
+| **No dependencies** | `dependencies = []` in `pyproject.toml`. Stdlib only, by design and by test. |
+| **Local first** | Cortex LLMHoster over its documented `/v1` and `/admin/api` endpoints; an echo backend keeps everything working with no models running. |
+| **Honest failure** | 63 typed errors with codes and exit codes; edges report problems instead of raising, contracts raise loudly. |
+| **Verifiable** | 438 tests, plus an auto-generated manifest of **3,266 improvements** where every entry is re-checked against the code by `make verify`. |
 
 ## Install
 
-From this repository:
-
 ```bash
-git clone https://github.com/codero-sus/MAgent.git
-cd MAgent
-python3 -m pip install -e . --no-deps
-magent version
+pip install -e .              # optional — `python -m magent` works from a checkout
+magent --help
+make test                     # 438 tests, offline, ~15 seconds
+make verify                   # re-check the improvements manifest
 ```
 
-Or run directly from a checkout without installing:
+Requires Python 3.11+.
 
-```bash
-PYTHONPATH=src python3 -m magent --help
-```
-
-The distribution is named **MAgent**. Package indexes normalize project names, so `pip install magent` and `pip install MAgent` resolve identically. Python imports and shell commands stay lowercase by convention:
+## Quick start
 
 ```python
-from magent import Agent
-```
+from magent import Agent, build_backend
 
-## Start Cortex
-
-Cortex listens on `http://127.0.0.1:8624` by default. Start it using the instructions in its repository, then verify the actual endpoints MAgent uses:
-
-```bash
-curl http://127.0.0.1:8624/health
-curl http://127.0.0.1:8624/ready
-curl http://127.0.0.1:8624/v1/models
-```
-
-If Cortex authentication is enabled, set the key in the environment instead of putting it on a command line:
-
-```bash
-export MAGENT_CORTEX_API_KEY='your-cortex-key'
-# CORTEX_API_KEY is also accepted; the MAgent-prefixed name wins.
-```
-
-Optional connection variables:
-
-```bash
-export MAGENT_CORTEX_URL='http://127.0.0.1:8624'
-export MAGENT_CORTEX_MODEL='your-model-id'
-export MAGENT_CORTEX_TIMEOUT='120'
-```
-
-Check and operate the hoster through MAgent:
-
-```bash
-magent cortex status
-magent cortex models
-magent cortex hardware
-magent cortex metrics
-magent cortex start YOUR_MODEL_ID
-magent cortex test YOUR_MODEL_ID --prompt 'Reply with pong'
-```
-
-## First run
-
-```bash
-magent run 'Explain this repository in five bullets'
-magent chat
-```
-
-Use a specific model, persona, and workspace:
-
-```bash
-magent run \
-  --model YOUR_MODEL_ID \
-  --persona coder \
-  --workspace . \
-  'Find the failing test, fix it, and show the exact verification command'
-```
-
-Use the deterministic local echo backend when Cortex is not running:
-
-```bash
-magent --offline run 'hello'
-# echo:hello
-```
-
-Global flags work both before and after subcommands/actions:
-
-```bash
-magent -f json tools categories
-magent tools categories -f json
-magent plugins --dir ./plugins list
-magent plugins list --dir ./plugins
-```
-
-## Python API
-
-### Text run
-
-```python
-from magent import Agent, CortexBackend, CortexSettings, load_config
-
-config = load_config()
-backend = CortexBackend(CortexSettings.from_env())
-agent = Agent(
-    backend=backend,
-    config=config.agent,
-    settings=config,
-    workspace=".",
-)
-
-result = agent.run("Summarize README.md and cite the path you read")
+agent = Agent(backend=build_backend())
+result = agent.run("read README.md and tell me what this project is")
 print(result.output)
-print(result.stop_reason.value)
-print(result.usage.total_tokens)
+print(f"{result.usage.total_tokens} tokens, {result.duration_ms:.0f} ms, "
+      f"{result.tool_call_count} tool calls")
 ```
 
-`Agent.run()` returns a `RunResult`, never a bare string. It records steps, messages, tool calls/results, usage, cost, stop reason, timings, metadata, and typed events. `agent.ask(prompt)` is the convenience method when only text is needed.
+```bash
+magent run "summarise docs/" --stream           # watch it work
+magent chat                                     # interactive session
+magent plan "add pagination to the sessions API"
+magent rag ingest docs/ && magent rag search --query "how do guardrails work"
+magent eval sample --output evals/smoke.json    # evaluate an agent
+magent serve                                    # http://127.0.0.1:8765
+```
 
-### Custom tool
+## What is in the box
+
+### Agent loop
+
+Four loop modes — `react`, `plan`, `reflect`, `single` — with streaming,
+structured output (`structured=<schema>`), cancellation, budgets, retries,
+approval gates and a `RunResult` that records every step, tool call, token and
+event. `result.events` includes the terminal event, so a replay sees a run that
+finished.
+
+### Tools
+
+113 tools across 16 categories (`files`, `text`, `data`, `git`, `shell`,
+`python`, `web`, `cortex`, `memory`, `media`, `math`, `datetime`, `system`,
+`search`, `output`, `meta`). Schemas are inferred from type hints and
+docstrings; every call goes through a deny-by-default sandbox with path jails,
+byte ceilings, command allow/deny policy, URL checks and an audit trail.
 
 ```python
-from magent import Agent, CortexBackend, CortexSettings, default_registry, tool
+from magent.tools import tool
 
-@tool(category="weather", risk="read", description="Read a local weather observation.")
-def local_weather(city: str, unit: str = "celsius") -> dict[str, object]:
-    """Return a demonstration observation.
+@tool(name="count_lines", description="Count the lines in a file", category="files")
+def count_lines(path: str, skip_blank: bool = False) -> dict:
+    """Count lines, optionally ignoring blank ones.
 
     Args:
-        city: city to report
-        unit: celsius or fahrenheit
+        path: file to read, inside the workspace
+        skip_blank: ignore lines that are empty after stripping
     """
-    return {"city": city, "temperature": 24, "unit": unit, "source": "demo sensor"}
-
-registry = default_registry()
-registry.register(local_weather)
-agent = Agent(
-    backend=CortexBackend(CortexSettings.from_env()),
-    registry=registry,
-    workspace=".",
-)
-print(agent.ask("Use local_weather for Gurugram and report the observation."))
+    lines = open(path, encoding="utf-8").read().splitlines()
+    return {"lines": len([line for line in lines if line.strip()]) if skip_blank else len(lines)}
 ```
 
-The decorator derives a JSON Schema from type hints and Google-style argument documentation. Tool handlers receive a `ToolContext` when they declare a `context` or `ctx` parameter.
+### Backends
 
-### Structured output
+Cortex LLMHoster via `MAGENT_CORTEX_URL` (default `http://127.0.0.1:8624`),
+streaming, embeddings, reranking, capability checks, model start/stop/restart
+through the admin API, a `ModelRouter` with six strategies and per-route circuit
+breakers, disk caching, token accounting and price books.
 
-```python
-schema = {
-    "type": "object",
-    "properties": {
-        "summary": {"type": "string"},
-        "risk": {"type": "string", "enum": ["low", "medium", "high"]},
-    },
-    "required": ["summary", "risk"],
-    "additionalProperties": False,
-}
+### Memory and retrieval
 
-result = agent.run("Assess this change", structured=schema)
-print(result.structured)
-```
+Hybrid BM25 + vector long-term memory with entity extraction, decay,
+de-duplication and JSONL export; a token-aware short-term window with batched
+rolling summaries; five chunking strategies; hybrid retrieval with MMR,
+cross-encoder re-ranking and citations that `verify_citations` can check.
 
-MAgent asks Cortex for JSON, validates the object, and performs one schema-informed repair turn if necessary.
+### Guardrails
 
-## Tools and approvals
+Nine injection families, twelve PII detectors, policy rules, budgets, rate
+limits, approval gates and an append-only audit log. Tool results are scanned
+separately, and credentials the scanner recognises are redacted even in `warn`
+mode.
 
-Inspect the real catalogue:
+### Teams
+
+Five orchestration modes — `sequential`, `round_robin`, `supervisor`, `debate`,
+`vote` — with structured handoffs between members, per-member token accounting
+and full transcripts.
+
+### Interface
 
 ```bash
-magent tools categories
-magent tools list --category files
-magent tools show read_file
-magent tools schema calculate read_file
-magent tools search 'regular expression'
+magent run | ask | chat | plan | reflect     # the agent
+magent tools | presets | skills | plugins    # what it can do
+magent memory | rag | sessions | trace       # what it knows and did
+magent models | cortex | config | doctor     # the machine it runs on
+magent eval | bench | improvements           # how good it is
+magent serve | init | commands | completion  # operational
 ```
 
-Risk order:
+Every command accepts `--format text|json|jsonl|yaml|csv|md`, `--quiet`,
+`--verbose`, `--no-color` and `--output-file`, before or after the subcommand.
 
-```text
-safe < read < write < execute < destructive < network
-```
+### HTTP API and web UI
 
-Approval modes are `never`, `ask`, `always`, and `dangerous`. The default is `dangerous`: read-only work proceeds, while risky or irreversible operations require a decision. `--yes` is explicit non-interactive approval; `--dry-run` validates calls without executing handlers.
+`magent serve` exposes the same objects over REST, plus a single-page UI at `/`
+that uses relative URLs and works behind a proxy. Endpoints cover health, info,
+models, tools, chat (JSON and server-sent events), sessions, memory, metrics
+(Prometheus) and RAG. Optional bearer-token auth; configurable CORS.
 
-The sandbox is policy enforcement for well-behaved tools, not an operating-system security boundary against hostile Python code. Run untrusted plugins or generated code inside an OS/container sandbox as well.
+### Extensibility
 
-## Configuration
-
-Configuration precedence, lowest to highest:
-
-1. built-in defaults;
-2. system `magent.toml`;
-3. user `magent.toml`;
-4. project `./magent.toml`;
-5. `$MAGENT_CONFIG`;
-6. `MAGENT_*` environment variables;
-7. CLI `--set section.key=value` overrides.
-
-Create and inspect a complete file:
-
-```bash
-magent config init --file ./magent.toml
-magent config paths
-magent config show
-magent config get agent.max_iterations
-magent config validate
-```
-
-Minimal example:
-
-```toml
-profile = "default"
-
-[server]
-base_url = "http://127.0.0.1:8624"
-api_key = "env:MAGENT_CORTEX_API_KEY"
-
-[model]
-backend = "cortex"
-model = ""
-fallback_to_echo = true
-
-[agent]
-loop_mode = "react"
-max_iterations = 12
-persona = "assistant"
-
-[tools]
-workspace = "."
-approval_mode = "dangerous"
-allow_network = false
-
-[http]
-host = "127.0.0.1"
-port = 8700
-api_key = "env:MAGENT_SERVER_KEY"
-```
-
-Secrets support `env:NAME` and `file:/path/to/value` references. Normal configuration serialization is redacted. The HTTP API refuses `?reveal=true` by design.
-
-Named profiles deep-merge over the base:
-
-```toml
-[profiles.fast.agent]
-max_iterations = 4
-loop_mode = "single"
-
-[profiles.research.tools]
-allow_network = true
-```
-
-```bash
-magent --profile fast run 'Give a quick answer'
-```
-
-## Memory and RAG
-
-Long-term memory uses a local SQLite database and hybrid lexical/vector ranking:
-
-```bash
-magent memory add 'The deployment region is ap-south-1' --kind fact --tag operations
-magent memory search 'deployment region'
-magent memory stats
-```
-
-Ingest and query files:
-
-```bash
-magent rag ingest docs/ README.md
-magent rag search 'How does plugin permission approval work?'
-magent rag stats
-```
-
-MAgent has Markdown-, Python-, and text-aware chunkers; BM25 + hashing-vector hybrid scoring; optional backend embeddings; MMR diversity; source filters; numbered citations; and citation verification. See [`docs/rag.md`](docs/rag.md).
-
-## Plugins
-
-Create, inspect, and load a real plugin:
-
-```bash
-magent plugins scaffold ./plugins --name weather
-magent plugins inspect ./plugins/weather
-magent plugins list --dir ./plugins
-magent plugins load --dir ./plugins
-```
-
-A `plugin.json` declares its entrypoint, tools, hooks, and permissions. Sensitive permissions—`filesystem.write`, `network`, `shell`, and `secrets.read`—are refused unless the operator approves them:
-
-```bash
-magent plugins load --dir ./plugins --allow-sensitive network
-```
-
-Checksums are optional but enforced when declared. Entrypoints cannot escape their plugin directory. Static `inspect` does not import plugin code. See [`docs/plugins.md`](docs/plugins.md).
-
-## HTTP server and web console
-
-Start the embedded server:
-
-```bash
-magent serve
-# http://127.0.0.1:8700/
-```
-
-Useful modes:
-
-```bash
-magent serve --routes
-magent serve --routes -f json
-magent serve --port 0 --offline
-magent serve --generate-key
-magent serve --host 0.0.0.0 --server-key "$MAGENT_SERVER_KEY"
-```
-
-MAgent refuses a non-loopback bind without an API key. Authenticate with either header:
-
-```bash
-curl -H "Authorization: Bearer $MAGENT_SERVER_KEY" http://127.0.0.1:8700/api/tools
-curl -H "X-API-Key: $MAGENT_SERVER_KEY" http://127.0.0.1:8700/api/tools
-```
-
-The 31 routes include health/readiness, configuration, tools/schema/dispatch, sync and async runs, SSE events, sessions, memory, RAG, guardrails, metrics, Cortex status/models, improvement totals, and server statistics. The console has Run, Tools, Memory, RAG, Sessions, Events, Metrics, and Settings tabs and is one embedded HTML file—no Node build or CDN.
-
-## Evaluation
-
-```bash
-magent eval list --dataset builtin
-magent eval run --dataset builtin
-magent eval run --dataset ./my-eval.json --fail-below 0.80
-magent eval init ./my-eval.json
-magent eval metrics
-```
-
-Datasets can assert text, JSON, tool calls, stop reasons, latency, usage, and custom metrics. Exit code `8` indicates an evaluation threshold failure.
-
-## CLI map
-
-| Command | Purpose |
-|---|---|
-| `magent run` | execute one task |
-| `magent chat` | interactive session with slash commands |
-| `magent tools` | inspect tools, schemas, categories, and risk |
-| `magent config` | initialize, inspect, validate, and edit configuration |
-| `magent doctor` | diagnose Python, Cortex, models, tools, storage, and policy |
-| `magent cortex` | inspect and operate Cortex LLMHoster |
-| `magent memory` | add, find, export, compact, and remove memories |
-| `magent rag` | ingest, search, inspect, save, and load indexes |
-| `magent sessions` | list, show, resume, export, and delete sessions |
-| `magent eval` | run and inspect evaluation datasets |
-| `magent serve` | run the embedded API and web console |
-| `magent plugins` | inspect, scaffold, policy-check, and load plugins |
-| `magent improvements` | list, regenerate, and verify the manifest |
-| `magent version` | print release metadata |
-
-Run `magent COMMAND --help` for the exact action and flag surface.
-
-## Verification and tests
-
-Everything important can be checked without Cortex or the internet:
-
-```bash
-make test          # stdlib unittest suite
-make smoke         # offline agent + fake-Cortex end-to-end scenario
-make smoke-tools   # execute 83 safe tool cases
-make verify        # resolve every IMPROVEMENTS.md reference
-make check         # all of the above
-```
-
-Direct equivalents:
-
-```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -t . -v
-PYTHONPATH=src python3 scripts/smoke.py
-PYTHONPATH=src python3 scripts/smoke_tools.py
-PYTHONPATH=src python3 scripts/verify_improvements.py
-```
-
-The tests use a real loopback HTTP server for both Cortex and MAgent routes, but no external network, GPU, model weights, or third-party testing package.
-
-## 777+ real improvements
-
-This repository does not satisfy the number with filler prose. [`scripts/count_improvements.py`](scripts/count_improvements.py) discovers real modules, public classes/functions/methods/properties/constants, error types, event kinds, tool implementations, CLI commands and flags, packaging files, scripts, tests, examples, and documentation. It writes the numbered manifest. [`scripts/verify_improvements.py`](scripts/verify_improvements.py) then resolves every reference against the current checkout and enforces the floor.
-
-```bash
-magent improvements --verify
-python3 scripts/verify_improvements.py --json
-python3 scripts/count_improvements.py --by-category
-```
-
-If a referenced symbol or file is deleted, verification exits non-zero.
+Twelve presets, ten personas, 23 prompt templates, twelve built-in skills,
+plugins with manifests, hooks and validation, and a context builder that
+compresses everything into your token budget in priority order.
 
 ## Architecture
 
-```text
-User / Python API / CLI / Web console
-                  │
-                  ▼
-         Agent loop + prompt builder
-     ┌────────────┼──────────────┐
-     ▼            ▼              ▼
- Tool registry  Memory/RAG   Guardrails/budgets
-     │            │              │
-     └────────────┼──────────────┘
-                  ▼
-      LLMBackend / ModelRouter
-                  │ HTTP + SSE
-                  ▼
-          Cortex LLMHoster
-      /health /ready /v1 /admin/api
-
-Cross-cutting: EventBus · sessions · traces · metrics · plugins · approvals
+```
+src/magent/
+├── agent.py core loop + prompts/ + context/     the thinking
+├── llm/ http/ secrets.py                        the wiring to models
+├── tools/ (113 builtins) guardrails/            what it may do
+├── memory/ rag/                                 what it knows
+├── agents/ (presets, teams) skills/ plugins/    how it is extended
+├── session/ eval/ observability/ concurrency/   how it is operated
+├── output/ server/ cli/                         how you talk to it
+└── utils/ (13 modules) errors.py types.py       the foundation
 ```
 
-Backend selection happens in one factory: explicit backend → `MAGENT_BACKEND` → probe Cortex `/health` → offline `EchoBackend` when fallback is enabled.
+* [docs/index.md](docs/index.md) — overview and page index
+* [docs/quickstart.md](docs/quickstart.md) — five minutes to a working agent
+* [docs/contributing.md](docs/contributing.md) — layout, conventions, adding tools
 
-## Documentation
+## Testing and evaluation
 
-- [Quickstart](docs/quickstart.md)
-- [Agents and loop modes](docs/agents.md)
-- [Cortex LLMHoster integration](docs/cortex.md)
-- [Tools, sandbox, and approvals](docs/tools.md)
-- [Configuration](docs/configuration.md)
-- [Memory](docs/memory-and-state.md)
-- [RAG and citations](docs/rag.md)
-- [Guardrails and security](docs/guardrails.md)
-- [Plugins and hooks](docs/plugins.md)
-- [HTTP server and console](docs/server.md)
-- [CLI reference](docs/cli.md)
-- [Python API](docs/api.md)
-- [Testing](docs/testing.md)
-- [Contributing](docs/contributing.md)
+```bash
+make test            # 438 tests: unit, integration, CLI, HTTP, doctests
+make smoke           # one end-to-end offline run of the whole stack
+make smoke-tools     # dispatch every registered tool
+make eval            # run the sample dataset
+make verify          # verify every improvement reference
+make check           # lint + type + test + smoke + verify
+```
 
-## License
+Evaluation uses deterministic, model-free metrics. A case only passes when its
+hard assertions hold — a missing required substring is not averaged away.
 
-MAgent is released under the [MIT License](LICENSE).
+## The improvements manifest
 
-Cortex LLMHoster is a separate project with its own license. MAgent communicates with it only through its public HTTP API; Cortex source is not copied into this repository.
+`IMPROVEMENTS.md` and `improvements.json` are generated from the source tree:
+
+```bash
+make improvements    # regenerate (the manifest is generated, not written by hand)
+make count           # print the total
+make verify          # re-resolve every reference against the tree
+```
+
+Each entry names a file and a symbol: a documented function, class or method; a
+registered tool; a CLI command; a skill, persona, template or preset; a test; a
+documentation section; a Makefile target. The verifier fails the build if a
+reference no longer resolves, so the number cannot drift away from the code.
+
+## Cortex LLMHoster licence
+
+MAgent integrates with Cortex purely as an **HTTP client**. Cortex is licensed
+`LicenseRef-Cortex-Personal-NonCommercial-NoModification-NoRedistribution`, which
+forbids modification and redistribution — so no Cortex source is vendored,
+patched or copied into this repository.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

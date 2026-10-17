@@ -32,6 +32,23 @@ DEFAULT_LAMBDA = 0.7
 """Default MMR trade-off: 0.7 relevance, 0.3 novelty."""
 
 
+def _relevance(chunk: Chunk, query_vector: list[float], lookup: dict[str, list[float]]) -> float:
+    """Return the MMR relevance term for one chunk.
+
+    The index already blended BM25 and vector similarity into ``chunk.score``.
+    Recomputing relevance from the embedding alone would throw that away - on a
+    small corpus a hashing embedder's cosine is noisy enough to outrank the
+    document that actually contains the query terms - so the hybrid score wins
+    and cosine only fills in chunks the index left unscored.
+    """
+    if chunk.score > 0.0:
+        return chunk.score
+    vector = lookup.get(chunk.id)
+    if vector and query_vector:
+        return max(0.0, cosine_similarity(query_vector, vector))
+    return 0.0
+
+
 def mmr_select(chunks: Sequence[Chunk], query: str, *, embedder: Embedder | None = None,
                limit: int = 5, lambda_: float = DEFAULT_LAMBDA,
                vectors: dict[str, list[float]] | None = None) -> list[Chunk]:
@@ -66,16 +83,9 @@ def mmr_select(chunks: Sequence[Chunk], query: str, *, embedder: Embedder | None
             query_vector = embedder.embed([query])[0]
         except Exception as exc:  # noqa: BLE001
             LOGGER.debug("mmr query embedding failed: %s", exc)
-    if not query_vector and not lookup:
-        # Nothing to measure novelty against, so plain relevance order is right.
+    if not query_vector:
         return sorted(items, key=lambda chunk: chunk.score, reverse=True)[: max(1, limit)]
-    # Relevance stays the score the retrieval pipeline already computed. MMR's
-    # job is to add diversity, not to re-judge relevance with a weaker signal:
-    # recomputing it as a raw cosine discarded the hybrid blend (and mixed
-    # incomparable scales, since chunks without a vector fell back to a 0..1
-    # score), which let a weakly related chunk outrank the correct answer.
-    # The cosine is still used below, where it belongs: the novelty term.
-    relevance = {chunk.id: chunk.score for chunk in items}
+    relevance = {chunk.id: _relevance(chunk, query_vector, lookup) for chunk in items}
     selected: list[Chunk] = []
     remaining = list(items)
     while remaining and len(selected) < max(1, limit):

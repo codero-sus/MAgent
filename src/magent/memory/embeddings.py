@@ -35,12 +35,32 @@ DEFAULT_DIM = 256
 NGRAM_RANGE = (3, 5)
 """Character n-gram sizes the hashing embedder folds into the vector."""
 
+HASHING_SEMANTIC_WEIGHT = 0.35
+"""Trust a hybrid scorer places in hashed vectors.
+
+Hashed n-grams recognise shared surface tokens but not paraphrase, and BM25
+already scores shared tokens with proper length and frequency normalisation.
+Measured on MAgent's own retrieval fixture, weighting the cosine term equally
+let an unrelated document that happened to share two common words outrank the
+document that actually answered the question. Discounting the term instead of
+dropping it keeps paraphrase-tolerant recall while letting lexical evidence win
+when the two disagree.
+"""
+
 
 class Embedder(Protocol):
     """The interface every embedder satisfies."""
 
     dim: int
     """Width of the vectors this embedder returns."""
+
+    semantic_weight: float
+    """How much a hybrid scorer should trust this embedder's cosine term.
+
+    A trained model understands paraphrase, so 1.0 is right. A hashing embedder
+    only detects shared surface tokens, which BM25 already measures better, so
+    it reports a lower value and lets the lexical term lead.
+    """
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         """Return one vector per input text."""
@@ -56,8 +76,12 @@ class HashingEmbedder:
     layer work on a fresh interpreter.
     """
 
+    semantic_weight = HASHING_SEMANTIC_WEIGHT
+    """Discounted trust for hashed vectors in a hybrid blend."""
+
     def __init__(self, *, dim: int = DEFAULT_DIM, ngram_range: tuple[int, int] = NGRAM_RANGE,
-                 word_weight: float = 1.5, normalize: bool = True) -> None:
+                 word_weight: float = 1.5, normalize: bool = True,
+                 semantic_weight: float = HASHING_SEMANTIC_WEIGHT) -> None:
         """Configure the vector width and the features that are hashed.
 
         Args:
@@ -65,7 +89,9 @@ class HashingEmbedder:
             ngram_range: inclusive ``(min, max)`` character n-gram sizes
             word_weight: extra weight for whole-word features
             normalize: L2-normalize each vector so cosine equals dot product
+            semantic_weight: trust placed in the cosine term when blended
         """
+        self.semantic_weight = min(1.0, max(0.0, float(semantic_weight)))
         self.dim = max(8, int(dim))
         self.ngram_range = (max(1, ngram_range[0]), max(ngram_range[0], ngram_range[1]))
         self.word_weight = float(word_weight)
@@ -133,6 +159,7 @@ class BackendEmbedder:
         self.backend = backend
         self.model = model
         self.dim = int(dim)
+        self.semantic_weight = 1.0
         self.batch_size = max(1, int(batch_size))
         self.timeout = timeout
         self.name = f"backend:{getattr(backend, 'name', type(backend).__name__)}"
@@ -185,6 +212,7 @@ class CachingEmbedder:
         """
         self.inner = inner
         self.dim = inner.dim
+        self.semantic_weight = float(getattr(inner, "semantic_weight", 1.0))
         self.max_entries = max(16, int(max_entries))
         self.name = f"cache:{getattr(inner, 'name', 'inner')}"
         self._cache: OrderedDict[str, list[float]] = OrderedDict()

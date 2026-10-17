@@ -266,7 +266,12 @@ def chunk_markdown(text: str, *, source: str = "", max_chars: int = DEFAULT_MAX_
         if not body.strip():
             continue
         trail = " > ".join(headings)
-        rendered = f"{trail}\n\n{body}" if (keep_headings and trail) else body
+        rendered = body
+        if keep_headings and trail:
+            # The section body starts with its own heading line; render it once.
+            parts = body.split("\n", 1)
+            inner = parts[1].strip() if len(parts) > 1 else ""
+            rendered = f"{trail}\n\n{inner}" if inner else trail
         for piece_index, piece in enumerate(chunk_text(rendered, max_chars=max_chars, overlap=0)):
             chunks.append(Chunk(
                 text=piece.strip(),
@@ -306,7 +311,10 @@ def chunk_python(source_code: str, *, source: str = "", max_chars: int = DEFAULT
         if not body.strip():
             continue
         name = getattr(node, "name", "") or type(node).__name__
-        docstring = ast.get_docstring(node) or ""
+        try:
+            docstring = ast.get_docstring(node) or ""
+        except (TypeError, ValueError):
+            docstring = ""
         for piece_index, piece in enumerate(chunk_text(body, max_chars=max_chars, overlap=0)):
             chunks.append(Chunk(
                 text=piece.strip(),

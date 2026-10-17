@@ -34,6 +34,34 @@ INDEX_VERSION = 1
 """Schema version written into a saved index."""
 
 
+def augmented_text(chunk: Chunk) -> str:
+    """Return the text a lexical scorer should see for one chunk.
+
+    The heading path, the file stem, and a code symbol are strong relevance
+    signals that the raw body often omits: a chunk under ``## Installation``
+    rarely repeats the word "installation". Weighting the heading twice keeps it
+    influential without letting a heading-only match outrank a body match.
+
+    Args:
+        chunk: the chunk to describe
+
+    Returns:
+        The body prefixed by its metadata, for scoring only.
+    """
+    parts: list[str] = []
+    heading = (chunk.heading or "").strip()
+    if heading:
+        parts.extend([heading, heading])
+    stem = Path(chunk.source).stem.strip()
+    if stem:
+        parts.append(stem)
+    symbol = str(chunk.metadata.get("symbol") or "").strip()
+    if symbol:
+        parts.append(symbol)
+    parts.append(chunk.text)
+    return "\n".join(part for part in parts if part)
+
+
 class ChunkIndex:
     """Hybrid lexical and vector index over document chunks."""
 
@@ -146,15 +174,27 @@ class ChunkIndex:
 
     # -- searching -----------------------------------------------------------
 
+    @staticmethod
+    def _bm25_corpus(chunks: Sequence[Chunk]) -> list[str]:
+        """Build the strings BM25 scores against.
+
+        Tiny corpora give rare tokens an outsized inverse document frequency, so
+        scoring the bare body lets a short file that happens to mention a unique
+        word beat the chunk that actually answers the question. Repeating the
+        heading path, file stem, and code symbol in the scored text restores that
+        signal without changing what gets returned to the caller.
+        """
+        return [augmented_text(chunk) for chunk in chunks]
+
     def _lexical_scores(self, query: str) -> list[float]:
         """Return normalized BM25 scores, rebuilding the scorer when needed."""
         with self._lock:
             if self._dirty_scorer or self._scorer is None:
-                self._scorer = BM25Scorer(self._chunks)
+                self._scorer = BM25Scorer(self._bm25_corpus(self._chunks))
                 self._dirty_scorer = False
             scorer = self._scorer
         if scorer.total != len(self._chunks):
-            scorer = BM25Scorer(self._chunks)
+            scorer = BM25Scorer(self._bm25_corpus(self._chunks))
             with self._lock:
                 self._scorer = scorer
                 self._dirty_scorer = False
@@ -188,7 +228,7 @@ class ChunkIndex:
         active = mode if mode in {"hybrid", "bm25", "vector", "none"} else "hybrid"
         lexical: dict[str, float] = {}
         if active in {"hybrid", "bm25"} and query.strip():
-            scorer = BM25Scorer(candidates)
+            scorer = BM25Scorer(self._bm25_corpus(candidates))
             for chunk, score in zip(candidates, scorer.scores(query), strict=True):
                 lexical[chunk.id] = score
         semantic: dict[str, float] = {}
@@ -202,7 +242,11 @@ class ChunkIndex:
                 hits = self.vectors.search(query_vector, limit=max(limit * 10, 50))
                 semantic = {key: score for key, score in hits}
         query_tokens = set(tokenize(query))
-        semantic_weight = max(0.0, 1.0 - lexical_weight)
+        # The embedder reports how far its cosine term can be trusted: a trained
+        # model says 1.0, a hashing embedder less, because hashing only detects
+        # shared tokens that BM25 already scores more carefully.
+        trust = float(getattr(self.embedder, "semantic_weight", 1.0))
+        semantic_weight = max(0.0, 1.0 - lexical_weight) * trust
         scored: list[tuple[float, Chunk]] = []
         for chunk in candidates:
             base = (lexical_weight * lexical.get(chunk.id, 0.0)

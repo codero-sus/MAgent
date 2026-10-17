@@ -42,8 +42,10 @@ SAMPLE_DOCUMENTS: dict[str, str] = {
     "cortex.md": (
         "# Cortex LLMHoster integration\n\n"
         "Cortex hosts local models behind an OpenAI-compatible API at /v1 and an\n"
-        "admin control plane at /admin/api. MAgent can list, start, stop and\n"
-        "restart models, read metrics, and inspect hardware.\n"
+        "admin control plane at /admin/api. It listens on 127.0.0.1 port 8624 by\n"
+        "default, which MAgent probes at /health before sending any request.\n"
+        "MAgent can list, start, stop and restart models, read metrics, and\n"
+        "inspect hardware.\n"
     ),
     "guardrails.md": (
         "# Guardrails\n\n"

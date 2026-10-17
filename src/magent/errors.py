@@ -486,6 +486,25 @@ class UserAbortError(CancelledError):
     code = "user_abort"
 
 
+class EvalError(MAgentError):
+    """Base class for evaluation harness failures."""
+
+    code = "eval_error"
+
+
+class EvalDatasetError(EvalError):
+    """Raised when a dataset file is missing or malformed."""
+
+    code = "eval_dataset_error"
+
+
+class EvalThresholdError(EvalError):
+    """Raised when an evaluation run scores below its required threshold."""
+
+    code = "eval_threshold"
+    exit_code = 8
+
+
 class ConcurrencyError(MAgentError):
     """Base class for failures in parallel execution."""
 
@@ -511,6 +530,9 @@ ERROR_REGISTRY: dict[str, type[MAgentError]] = {
     for cls in (
         MAgentError,
         ConcurrencyError,
+        EvalError,
+        EvalDatasetError,
+        EvalThresholdError,
         PoolTimeoutError,
         PoolExhaustedError,
         ConfigError,
@@ -618,6 +640,9 @@ __all__ = [
     "ConfigValidationError",
     "ConcurrencyError",
     "ConnectionError_",
+    "EvalDatasetError",
+    "EvalError",
+    "EvalThresholdError",
     "ContentBlockedError",
     "ERROR_REGISTRY",
     "EmbeddingError",

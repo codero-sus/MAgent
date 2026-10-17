@@ -522,7 +522,7 @@ def _collect_flags(command: str, parser: argparse.ArgumentParser) -> list[Improv
 _COMMAND_MODULES: dict[str, str] = {
     "run": "run", "chat": "run", "tools": "tools", "config": "config_cmd",
     "doctor": "doctor", "version": "doctor", "cortex": "cortex", "memory": "memory",
-    "rag": "rag", "sessions": "sessions", "improvements": "misc", "eval": "misc",
+    "rag": "rag", "sessions": "sessions", "improvements": "misc", "eval": "eval_cmd",
 }
 """Command name to CLI module stem."""
 

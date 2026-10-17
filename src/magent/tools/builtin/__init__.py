@@ -17,6 +17,7 @@ because tool modules touch optional platform features.
 from __future__ import annotations
 
 import importlib
+import threading
 import traceback
 from types import ModuleType
 from typing import Any, Iterable
@@ -136,6 +137,7 @@ def load_all(registry: Any, *, include: Iterable[str] | None = None,
 
 
 _TOOL_MODULES: dict[str, str] = {}
+_TOOL_INDEX_LOCK = threading.Lock()
 
 
 def tool_module_index(*, refresh: bool = False) -> dict[str, str]:
@@ -144,18 +146,28 @@ def tool_module_index(*, refresh: bool = False) -> dict[str, str]:
     The mapping is built once by importing the modules, which is cheap compared
     with the alternative of failing to resolve a tool name at all.
 
+    Construction is atomic. Building it in place would let a second thread see a
+    half-populated mapping - enough for the ``if cached`` check to pass while
+    some tool names were still missing, which then reported a valid tool as
+    unknown. That is reachable from any parallel caller, including the
+    evaluation harness running cases concurrently.
+
     Args:
         refresh: rebuild even if a cached mapping exists
     """
-    if _TOOL_MODULES and not refresh:
-        return dict(_TOOL_MODULES)
-    for name in MODULES:
-        try:
-            for item in module_tools(name):
-                _TOOL_MODULES[item.tool.name] = name
-        except Exception:  # noqa: BLE001 - discovery is best effort
-            continue
-    return dict(_TOOL_MODULES)
+    with _TOOL_INDEX_LOCK:
+        global _TOOL_MODULES
+        if _TOOL_MODULES and not refresh:
+            return dict(_TOOL_MODULES)
+        built: dict[str, str] = {}
+        for name in MODULES:
+            try:
+                for item in module_tools(name):
+                    built[item.tool.name] = name
+            except Exception:  # noqa: BLE001 - discovery is best effort
+                continue
+        _TOOL_MODULES = built
+        return dict(built)
 
 
 def load_errors() -> dict[str, str]:

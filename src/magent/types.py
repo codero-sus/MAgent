@@ -396,13 +396,21 @@ class ToolResult:
             metadata=dict(raw.get("metadata") or {}),
         )
 
-    def as_tool_message(self) -> str:
-        """Render the result as the text payload of a ``tool`` role message."""
+    def payload_text(self) -> str:
+        """Render the result as the text payload of a ``tool`` role message.
+
+        Failures are serialized rather than raised, because the model has to see
+        what went wrong in order to recover from it.
+        """
         if not self.ok:
             return json.dumps({"error": self.error, "code": self.error_code}, default=str)
         if isinstance(self.content, str):
             return self.content
         return json.dumps(self.content, default=str, ensure_ascii=False)
+
+    def to_message(self) -> "Message":
+        """Return this result as a ``tool`` role :class:`Message`."""
+        return Message.tool(self)
 
 
 # --------------------------------------------------------------------------- #
@@ -455,7 +463,7 @@ class Message:
         """Build the ``tool`` role reply for an executed tool call."""
         return cls(
             role=Role.TOOL,
-            content=result.as_tool_message(),
+            content=result.payload_text(),
             tool_call_id=result.call_id,
             name=result.name,
             metadata={"ok": result.ok, "duration_ms": result.duration_ms},
@@ -573,6 +581,18 @@ class Usage:
     reasoning_tokens: int = 0
     audio_tokens: int = 0
     image_count: int = 0
+
+    def __post_init__(self) -> None:
+        """Derive ``total_tokens`` when the caller supplied only the halves.
+
+        ``from_dict`` has always filled a missing total from ``prompt +
+        completion``; the constructor did not, so ``Usage(prompt_tokens=10,
+        completion_tokens=5).total_tokens`` was ``0`` while the same numbers
+        parsed from JSON gave ``15``. Budgets and cost estimates read this
+        field, so the two paths have to agree.
+        """
+        if not self.total_tokens and (self.prompt_tokens or self.completion_tokens):
+            self.total_tokens = self.prompt_tokens + self.completion_tokens
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> Usage:

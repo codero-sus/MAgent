@@ -39,7 +39,12 @@ from ..errors import (
 )
 from ..http.client import HTTPClient, RetryPolicy, StdlibTransport
 from ..http.multipart import encode_multipart
-from ..http.sse import SSEParser, extract_delta_text, extract_delta_tool_calls, merge_tool_call_deltas
+from ..http.sse import (
+    SSEParser,
+    extract_delta_text,
+    extract_delta_tool_calls,
+    merge_tool_call_deltas,
+)
 from ..types import Capability, ChatResponse, Message, ModelInfo, ToolCall, Usage
 from ..utils.urls import join_url, normalize_base_url
 from .base import BaseBackend, CompletionRequest, StreamChunk
@@ -124,7 +129,9 @@ class CortexSettings:
                     return value.strip()
             return default
 
-        url = normalize_base_url(pick("MAGENT_CORTEX_URL", "CORTEX_URL", default=DEFAULT_CORTEX_URL))
+        url = normalize_base_url(
+            pick("MAGENT_CORTEX_URL", "CORTEX_URL", default=DEFAULT_CORTEX_URL)
+        )
         timeout = pick("MAGENT_CORTEX_TIMEOUT", "CORTEX_TIMEOUT", default="120")
         try:
             timeout_value = float(timeout)
@@ -138,8 +145,10 @@ class CortexSettings:
             embedding_model=pick("MAGENT_EMBEDDING_MODEL", "MAGENT_CORTEX_EMBEDDING_MODEL"),
             timeout=timeout_value,
             max_retries=int(pick("MAGENT_CORTEX_RETRIES", default="3") or 3),
-            verify_ssl=pick("MAGENT_CORTEX_VERIFY_SSL", default="true").lower() not in {"0", "false", "no"},
-            require_auth=pick("MAGENT_CORTEX_REQUIRE_AUTH", default="true").lower() not in {"0", "false", "no"},
+            verify_ssl=pick("MAGENT_CORTEX_VERIFY_SSL", default="true").lower()
+            not in {"0", "false", "no"},
+            require_auth=pick("MAGENT_CORTEX_REQUIRE_AUTH", default="true").lower()
+            not in {"0", "false", "no"},
         )
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
@@ -234,7 +243,7 @@ class CortexBackend(BaseBackend):
         if self.on_event is not None:
             try:
                 self.on_event(kind, data)
-            except Exception:  # noqa: BLE001 - telemetry must never break inference
+            except Exception:
                 pass
 
     # -- URL helpers ---------------------------------------------------------
@@ -263,19 +272,27 @@ class CortexBackend(BaseBackend):
             "ok": False,
         }
         try:
-            live = self.client.get(self.root_url(HEALTH_PATH), timeout=self.settings.connect_timeout,
-                                   raise_for_status=False, max_attempts=1)
+            live = self.client.get(
+                self.root_url(HEALTH_PATH),
+                timeout=self.settings.connect_timeout,
+                raise_for_status=False,
+                max_attempts=1,
+            )
             result["liveness"] = {"status": live.status, "body": live.json({})}
-        except Exception as exc:  # noqa: BLE001 - probe must report, never raise
+        except Exception as exc:
             result["liveness"] = {"status": None, "error": str(exc)[:300]}
             result["ok"] = False
             return result
         try:
-            ready = self.client.get(self.root_url(READY_PATH), timeout=self.settings.connect_timeout,
-                                    raise_for_status=False, max_attempts=1)
+            ready = self.client.get(
+                self.root_url(READY_PATH),
+                timeout=self.settings.connect_timeout,
+                raise_for_status=False,
+                max_attempts=1,
+            )
             result["readiness"] = {"status": ready.status, "body": ready.json({})}
             result["ok"] = live.status < 500
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             result["readiness"] = {"status": None, "error": str(exc)[:300]}
             result["ok"] = live.status < 500
         return result
@@ -290,7 +307,7 @@ class CortexBackend(BaseBackend):
                 max_attempts=1,
             )
             return response.status < 500
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
     def models(self, *, refresh: bool = False) -> list[ModelInfo]:
@@ -373,8 +390,15 @@ class CortexBackend(BaseBackend):
         payload["model"] = model
         payload["stream"] = False
         started = time.perf_counter()
-        self._emit("llm.request", {"backend": self.name, "model": model, "path": CHAT_COMPLETIONS_PATH,
-                                   "messages": len(payload["messages"])})
+        self._emit(
+            "llm.request",
+            {
+                "backend": self.name,
+                "model": model,
+                "path": CHAT_COMPLETIONS_PATH,
+                "messages": len(payload["messages"]),
+            },
+        )
         response = self.client.post(
             self.api_url(CHAT_COMPLETIONS_PATH),
             json_body=payload,
@@ -386,10 +410,16 @@ class CortexBackend(BaseBackend):
         data = response.json({}) or {}
         result = self._parse_completion(data, model=model, latency_ms=latency)
         self.record(result)
-        self._emit("llm.response", {
-            "backend": self.name, "model": model, "latency_ms": round(latency, 2),
-            "usage": result.usage.to_dict(), "finish_reason": result.finish_reason,
-        })
+        self._emit(
+            "llm.response",
+            {
+                "backend": self.name,
+                "model": model,
+                "latency_ms": round(latency, 2),
+                "usage": result.usage.to_dict(),
+                "finish_reason": result.finish_reason,
+            },
+        )
         return result
 
     def completion(self, prompt: str, *, model: str = "", **params: Any) -> ChatResponse:
@@ -409,7 +439,9 @@ class CortexBackend(BaseBackend):
             text=text,
             model=str(data.get("model") or target),
             usage=Usage.from_dict(data.get("usage")),
-            finish_reason=str((choices[0] or {}).get("finish_reason") or "stop") if choices else "stop",
+            finish_reason=str((choices[0] or {}).get("finish_reason") or "stop")
+            if choices
+            else "stop",
             raw=data,
         )
 
@@ -441,8 +473,7 @@ class CortexBackend(BaseBackend):
                 for event in parser.feed(raw_chunk):
                     if event.is_done:
                         final_calls = [
-                            ToolCall.from_dict(raw)
-                            for raw in merge_tool_call_deltas(fragments)
+                            ToolCall.from_dict(raw) for raw in merge_tool_call_deltas(fragments)
                         ]
                         yield StreamChunk(
                             tool_calls=final_calls,
@@ -474,7 +505,9 @@ class CortexBackend(BaseBackend):
                     text = extract_delta_text(data)
                     if text and not first_token_recorded:
                         first_token_recorded = True
-                        self.first_token_ms.append(round((time.perf_counter() - started) * 1000.0, 2))
+                        self.first_token_ms.append(
+                            round((time.perf_counter() - started) * 1000.0, 2)
+                        )
                         self.first_token_ms = self.first_token_ms[-50:]
                     if text:
                         index += 1
@@ -488,7 +521,7 @@ class CortexBackend(BaseBackend):
                         yield StreamChunk(text=text, model=model, index=index + 1, raw=data)
         except StreamingError:
             raise
-        except Exception as exc:  # noqa: BLE001 - normalize transport errors
+        except Exception as exc:
             if isinstance(exc, BackendError):
                 raise
             raise StreamingError(f"Cortex stream failed: {exc}", details={"model": model}) from exc
@@ -539,8 +572,9 @@ class CortexBackend(BaseBackend):
             payload: dict[str, Any] = {"model": target, "input": batch}
             if dimensions:
                 payload["dimensions"] = dimensions
-            response = self.client.post(self.api_url(EMBEDDINGS_PATH), json_body=payload,
-                                        raise_for_status=False)
+            response = self.client.post(
+                self.api_url(EMBEDDINGS_PATH), json_body=payload, raise_for_status=False
+            )
             self._raise_for_inference(response, target)
             data = response.json({}) or {}
             items = data.get("data") or []
@@ -558,8 +592,9 @@ class CortexBackend(BaseBackend):
 
     def responses_api(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST the Responses API dialect and return the parsed body."""
-        response = self.client.post(self.api_url(RESPONSES_PATH), json_body=payload,
-                                    raise_for_status=False)
+        response = self.client.post(
+            self.api_url(RESPONSES_PATH), json_body=payload, raise_for_status=False
+        )
         model = str(payload.get("model") or self.default_model)
         self._raise_for_inference(response, model)
         return response.json({}) or {}
@@ -583,8 +618,9 @@ class CortexBackend(BaseBackend):
             fields["prompt"] = prompt
         if temperature is not None:
             fields["temperature"] = temperature
-        body, content_type = encode_multipart(fields, {"file": audio_path},
-                                              max_bytes=self.settings.max_upload_bytes)
+        body, content_type = encode_multipart(
+            fields, {"file": audio_path}, max_bytes=self.settings.max_upload_bytes
+        )
         response = self.client.post(
             self.api_url(TRANSCRIPTION_PATH),
             body=body,
@@ -614,8 +650,9 @@ class CortexBackend(BaseBackend):
             "response_format": response_format,
             "speed": speed,
         }
-        response = self.client.post(self.api_url(SPEECH_PATH), json_body=payload,
-                                    raise_for_status=False)
+        response = self.client.post(
+            self.api_url(SPEECH_PATH), json_body=payload, raise_for_status=False
+        )
         self._raise_for_inference(response, target)
         return response.body
 
@@ -640,8 +677,9 @@ class CortexBackend(BaseBackend):
         }
         if negative_prompt:
             payload["negative_prompt"] = negative_prompt
-        response = self.client.post(self.api_url(IMAGE_GENERATION_PATH), json_body=payload,
-                                    raise_for_status=False)
+        response = self.client.post(
+            self.api_url(IMAGE_GENERATION_PATH), json_body=payload, raise_for_status=False
+        )
         self._raise_for_inference(response, target)
         return response.json({}) or {}
 
@@ -664,12 +702,15 @@ class CortexBackend(BaseBackend):
         if mask_path:
             files["mask"] = mask_path
         body, content_type = encode_multipart(
-            {"model": target, "prompt": prompt, "size": size}, files,
+            {"model": target, "prompt": prompt, "size": size},
+            files,
             max_bytes=self.settings.max_upload_bytes,
         )
         response = self.client.post(
-            self.api_url(IMAGE_EDIT_PATH), body=body,
-            headers={"Content-Type": content_type}, raise_for_status=False,
+            self.api_url(IMAGE_EDIT_PATH),
+            body=body,
+            headers={"Content-Type": content_type},
+            raise_for_status=False,
         )
         self._raise_for_inference(response, target)
         return response.json({}) or {}
@@ -687,8 +728,9 @@ class CortexBackend(BaseBackend):
         payload: dict[str, Any] = {"model": target, "query": query, "documents": documents}
         if top_n:
             payload["top_n"] = top_n
-        response = self.client.post(self.api_url(RERANK_PATH), json_body=payload,
-                                    raise_for_status=False)
+        response = self.client.post(
+            self.api_url(RERANK_PATH), json_body=payload, raise_for_status=False
+        )
         self._raise_for_inference(response, target)
         return response.json({}) or {}
 
@@ -707,21 +749,26 @@ class CortexBackend(BaseBackend):
         """POST ``/v1/videos/generations`` and return the parsed body."""
         target = model or self.default_model_id()
         payload = {"model": target, "prompt": prompt, **params}
-        response = self.client.post(self.api_url(VIDEO_GENERATION_PATH), json_body=payload,
-                                    raise_for_status=False)
+        response = self.client.post(
+            self.api_url(VIDEO_GENERATION_PATH), json_body=payload, raise_for_status=False
+        )
         self._raise_for_inference(response, target)
         return response.json({}) or {}
 
     # -- parsing and errors --------------------------------------------------
 
-    def _parse_completion(self, data: dict[str, Any], *, model: str, latency_ms: float) -> ChatResponse:
+    def _parse_completion(
+        self, data: dict[str, Any], *, model: str, latency_ms: float
+    ) -> ChatResponse:
         """Turn an OpenAI-shaped completion body into a :class:`ChatResponse`."""
         if not isinstance(data, dict):
             raise BackendError(f"Cortex returned a non-object completion body for {model!r}")
         if data.get("error"):
             error = data["error"]
             message = error.get("message") if isinstance(error, dict) else str(error)
-            raise BackendError(f"Cortex reported an inference error: {message}", details={"model": model})
+            raise BackendError(
+                f"Cortex reported an inference error: {message}", details={"model": model}
+            )
         choices = data.get("choices") or []
         if not choices or not isinstance(choices[0], dict):
             raise BackendError(
@@ -732,15 +779,11 @@ class CortexBackend(BaseBackend):
         message = choice.get("message") or {}
         content = message.get("content") if isinstance(message, dict) else None
         if isinstance(content, list):
-            text = "".join(
-                str(part.get("text", "")) for part in content if isinstance(part, dict)
-            )
+            text = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
         else:
             text = str(content or "")
         raw_calls = message.get("tool_calls") if isinstance(message, dict) else None
-        calls = [
-            ToolCall.from_dict(call) for call in (raw_calls or []) if isinstance(call, dict)
-        ]
+        calls = [ToolCall.from_dict(call) for call in (raw_calls or []) if isinstance(call, dict)]
         return ChatResponse(
             text=text,
             model=str(data.get("model") or model),
@@ -812,19 +855,21 @@ class CortexBackend(BaseBackend):
     def stats(self) -> dict[str, Any]:
         """Return backend telemetry including streaming latency stats."""
         base = super().stats()
-        base.update({
-            "base_url": self.settings.base_url,
-            "api_prefix": self.settings.api_prefix,
-            "authenticated": bool(self.settings.api_key),
-            "streams_opened": self.streams_opened,
-            "stream_bytes": self.stream_bytes,
-            "first_token_ms_avg": (
-                round(sum(self.first_token_ms) / len(self.first_token_ms), 2)
-                if self.first_token_ms
-                else 0.0
-            ),
-            "http": self.client.stats(),
-        })
+        base.update(
+            {
+                "base_url": self.settings.base_url,
+                "api_prefix": self.settings.api_prefix,
+                "authenticated": bool(self.settings.api_key),
+                "streams_opened": self.streams_opened,
+                "stream_bytes": self.stream_bytes,
+                "first_token_ms_avg": (
+                    round(sum(self.first_token_ms) / len(self.first_token_ms), 2)
+                    if self.first_token_ms
+                    else 0.0
+                ),
+                "http": self.client.stats(),
+            }
+        )
         return base
 
     def describe(self) -> dict[str, Any]:
@@ -855,8 +900,9 @@ def build_cortex_backend(**overrides: Any) -> CortexBackend:
 
 def cortex_health(url: str = DEFAULT_CORTEX_URL, *, timeout: float = 3.0) -> dict[str, Any]:
     """One-shot health probe that never raises, for scripts and ``doctor``."""
-    backend = CortexBackend(CortexSettings(base_url=normalize_base_url(url), timeout=timeout,
-                                           require_auth=False))
+    backend = CortexBackend(
+        CortexSettings(base_url=normalize_base_url(url), timeout=timeout, require_auth=False)
+    )
     try:
         return backend.health()
     finally:
@@ -866,8 +912,6 @@ def cortex_health(url: str = DEFAULT_CORTEX_URL, *, timeout: float = 3.0) -> dic
 __all__ = [
     "CHAT_COMPLETIONS_PATH",
     "COMPLETIONS_PATH",
-    "CortexBackend",
-    "CortexSettings",
     "DEFAULT_API_PREFIX",
     "DEFAULT_CORTEX_URL",
     "EMBEDDINGS_PATH",
@@ -882,6 +926,8 @@ __all__ = [
     "SPEECH_PATH",
     "TRANSCRIPTION_PATH",
     "VIDEO_GENERATION_PATH",
+    "CortexBackend",
+    "CortexSettings",
     "build_cortex_backend",
     "cortex_health",
 ]

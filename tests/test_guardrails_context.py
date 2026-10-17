@@ -5,14 +5,20 @@ from __future__ import annotations
 import json
 import unittest
 
-from magent.context import (ContextBlock, ContextBuilder, ContextCompressor, build_context,
-                            compress_text, scan_workspace)
-from magent.guardrails import (Guardrails, build_guardrails, worst)
+from magent.context import (
+    ContextBlock,
+    ContextBuilder,
+    ContextCompressor,
+    build_context,
+    compress_text,
+    scan_workspace,
+)
+from magent.guardrails import build_guardrails, worst
 from magent.guardrails.injection import InjectionScanner
 from magent.guardrails.pii import PIIScanner, luhn_valid
 from magent.guardrails.policy import PolicyEngine, Rule, rules_from_config
 from magent.guardrails.verdict import ACTIONS, SEVERITIES, Finding, Verdict
-from tests.support import MagentTestCase
+from tests.support import MAgentTestCase
 
 
 class InjectionTest(unittest.TestCase):
@@ -76,25 +82,43 @@ class PIITest(unittest.TestCase):
         self.assertTrue(findings)
 
 
-class PolicyTest(MagentTestCase):
+class PolicyTest(MAgentTestCase):
     """Policy rules and the rate limiter."""
 
     def test_tool_rule_blocks_a_tool(self) -> None:
-        engine = PolicyEngine([Rule(name="no-delete", kind="tool", pattern="delete_path",
-                                    action="block", reason="deletion is not allowed here")])
+        engine = PolicyEngine(
+            [
+                Rule(
+                    name="no-delete",
+                    kind="tool",
+                    pattern="delete_path",
+                    action="block",
+                    reason="deletion is not allowed here",
+                )
+            ]
+        )
         verdict = engine.check_tool_call("delete_path", {"path": "x"})
         self.assertFalse(verdict.ok)
         self.assertIn("delete_path", json.dumps(verdict.to_dict()))
 
     def test_block_pattern_rule_is_detected(self) -> None:
-        engine = PolicyEngine([Rule(name="secrets", kind="block_pattern",
-                                    pattern=r"AKIA[0-9A-Z]{16}", action="block")])
+        engine = PolicyEngine(
+            [
+                Rule(
+                    name="secrets",
+                    kind="block_pattern",
+                    pattern=r"AKIA[0-9A-Z]{16}",
+                    action="block",
+                )
+            ]
+        )
         self.assertFalse(engine.check_text("here is AKIAIOSFODNN7EXAMPLE").ok)
         self.assertTrue(engine.check_text("nothing sensitive here").ok)
 
     def test_max_chars_rule_blocks_long_prompts(self) -> None:
-        engine = PolicyEngine([Rule(name="cap", kind="max_chars", limit=10, applies_to="prompt",
-                                    action="block")])
+        engine = PolicyEngine(
+            [Rule(name="cap", kind="max_chars", limit=10, applies_to="prompt", action="block")]
+        )
         self.assertFalse(engine.check_text("x" * 50).ok)
 
     def test_rules_from_config_build_a_denylist(self) -> None:
@@ -116,8 +140,10 @@ class VerdictTest(unittest.TestCase):
     """Verdict merging picks the strictest outcome."""
 
     def test_worst_finding_is_returned(self) -> None:
-        findings = [Finding(rule="a", severity="low", reason="m"),
-                    Finding(rule="b", severity="critical", reason="n")]
+        findings = [
+            Finding(rule="a", severity="low", reason="m"),
+            Finding(rule="b", severity="critical", reason="n"),
+        ]
         self.assertEqual(worst(findings).rule, "b")
         self.assertIsNone(worst([]))
 
@@ -133,7 +159,7 @@ class VerdictTest(unittest.TestCase):
         self.assertIn("block", ACTIONS)
 
 
-class GuardrailsTest(MagentTestCase):
+class GuardrailsTest(MAgentTestCase):
     """The guardrail manager applies prompt, output and tool checks."""
 
     def setUp(self) -> None:
@@ -161,8 +187,17 @@ class GuardrailsTest(MagentTestCase):
         from magent.guardrails.policy import PolicyEngine, Rule
 
         config = self.config()
-        engine = PolicyEngine([Rule(name="no-shell", kind="tool", pattern="run_command",
-                                    action="block", reason="shell access is disabled")])
+        engine = PolicyEngine(
+            [
+                Rule(
+                    name="no-shell",
+                    kind="tool",
+                    pattern="run_command",
+                    action="block",
+                    reason="shell access is disabled",
+                )
+            ]
+        )
         verdict = engine.check_tool_call("run_command", {"command": "ls"})
         self.assertFalse(verdict.ok)
         self.assertEqual(verdict.action, "block")
@@ -170,8 +205,7 @@ class GuardrailsTest(MagentTestCase):
 
     def test_tool_result_stage_redacts_credentials(self) -> None:
         secret = "sk-abcdefghijklmnopqrstuvwxyz"
-        verdict = self.guardrails.inspect_tool_result(f"CORTEX_API_KEY={secret}",
-                                                      tool="read_file")
+        verdict = self.guardrails.inspect_tool_result(f"CORTEX_API_KEY={secret}", tool="read_file")
         self.assertTrue(verdict.findings)
         self.assertNotIn(secret, verdict.text or "")
         self.assertIn("[REDACTED", verdict.text or "")
@@ -200,7 +234,7 @@ class GuardrailsTest(MagentTestCase):
         self.guardrails.enable()
 
 
-class ContextTest(MagentTestCase):
+class ContextTest(MAgentTestCase):
     """Context assembly, prioritisation and compression."""
 
     def test_blocks_measure_their_own_tokens(self) -> None:
@@ -209,8 +243,9 @@ class ContextTest(MagentTestCase):
 
     def test_low_priority_blocks_are_dropped_first(self) -> None:
         builder = ContextBuilder(budget=120)
-        builder.add(ContextBlock(title="task", body="do the thing", kind="task", priority=9,
-                                required=True))
+        builder.add(
+            ContextBlock(title="task", body="do the thing", kind="task", priority=9, required=True)
+        )
         builder.add(ContextBlock(title="filler", body="noise " * 200, kind="custom", priority=1))
         assembly = builder.build()
         self.assertIn("do the thing", assembly.text)
@@ -222,8 +257,10 @@ class ContextTest(MagentTestCase):
 
     def test_compression_reports_savings(self) -> None:
         compressor = ContextCompressor(budget=100)
-        blocks = [ContextBlock(title="big", body="sentence " * 400, priority=2),
-                  ContextBlock(title="small", body="keep me", priority=9)]
+        blocks = [
+            ContextBlock(title="big", body="sentence " * 400, priority=2),
+            ContextBlock(title="small", body="keep me", priority=9),
+        ]
         kept, report = compressor.fit(blocks)
         self.assertLess(report.after_tokens, report.before_tokens)
         self.assertIn("small", [block.title for block in kept])
@@ -241,8 +278,9 @@ class ContextTest(MagentTestCase):
     def test_file_context_ranks_by_query(self) -> None:
         self.write("memory.md", "The memory subsystem keeps facts.")
         self.write("unrelated.md", "Bananas are yellow.")
-        assembly = build_context("how does memory work", workspace=self.workspace, budget=800,
-                                 include_files=True)
+        assembly = build_context(
+            "how does memory work", workspace=self.workspace, budget=800, include_files=True
+        )
         self.assertIn("memory", assembly.text.lower())
 
     def test_context_builder_recalls_memories(self) -> None:
@@ -263,8 +301,9 @@ class ContextTest(MagentTestCase):
 
             retriever = Retriever()
             retriever.ingest_directory(root)
-            assembly = build_context("which port does cortex use", workspace=root,
-                                     retriever=retriever, budget=600)
+            assembly = build_context(
+                "which port does cortex use", workspace=root, retriever=retriever, budget=600
+            )
             self.assertIn("8624", assembly.text)
 
 

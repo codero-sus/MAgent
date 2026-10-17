@@ -11,8 +11,9 @@ groundedness.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 from ..utils.text import ellipsize
 from .chunker import Chunk
@@ -124,9 +125,14 @@ def build_citations(chunks: Sequence[Chunk], *, preview_chars: int = 200) -> lis
     ]
 
 
-def render_context(chunks: Sequence[Chunk], *, style: str = "numbered",
-                   max_chars: int = MAX_CONTEXT_CHARS, include_heading: bool = True,
-                   instruction: str = "") -> str:
+def render_context(
+    chunks: Sequence[Chunk],
+    *,
+    style: str = "numbered",
+    max_chars: int = MAX_CONTEXT_CHARS,
+    include_heading: bool = True,
+    instruction: str = "",
+) -> str:
     """Render chunks into a context block for a prompt.
 
     Args:
@@ -151,14 +157,18 @@ def render_context(chunks: Sequence[Chunk], *, style: str = "numbered",
     for index, chunk in enumerate(chunks, start=1):
         location = chunk.location
         heading = f" - {chunk.heading}" if (include_heading and chunk.heading) else ""
-        prefix = f"[{index}] {location}{heading}" if style == "numbered" else f"--- {location}{heading}"
+        prefix = (
+            f"[{index}] {location}{heading}" if style == "numbered" else f"--- {location}{heading}"
+        )
         body = chunk.text.strip()
         remaining = budget - len(prefix) - 4
         if remaining <= 80:
             lines.append(f"{prefix}\n  (truncated to fit the context budget)")
             break
         lines.append(prefix)
-        lines.append(ellipsize(body, remaining) if style != "markdown" else _fence(chunk, remaining))
+        lines.append(
+            ellipsize(body, remaining) if style != "markdown" else _fence(chunk, remaining)
+        )
         lines.append("")
         budget -= len(prefix) + len(body) + 4
     if instruction:
@@ -173,8 +183,13 @@ def _fence(chunk: Chunk, limit: int) -> str:
     return f"```{language}\n{body}\n```"
 
 
-def cited_context(chunks: Sequence[Chunk], *, max_chars: int = MAX_CONTEXT_CHARS,
-                  preview_chars: int = 200, instruction: str = "") -> CitationSet:
+def cited_context(
+    chunks: Sequence[Chunk],
+    *,
+    max_chars: int = MAX_CONTEXT_CHARS,
+    preview_chars: int = 200,
+    instruction: str = "",
+) -> CitationSet:
     """Build a numbered context block and its citation list together."""
     citations = build_citations(chunks, preview_chars=preview_chars)
     context = render_context(chunks, style="numbered", max_chars=max_chars, instruction=instruction)
@@ -246,8 +261,14 @@ def verify_citations(text: str, citations: Sequence[Citation]) -> CitationCheck:
     dangling = sorted({number for number in used if number not in known})
     unused = sorted(known - set(used))
     coverage = len(valid) / len(known) if known else 0.0
-    return CitationCheck(used=sorted(set(used)), valid=valid, dangling=dangling, unused=unused,
-                         coverage=coverage, grounded=not dangling)
+    return CitationCheck(
+        used=sorted(set(used)),
+        valid=valid,
+        dangling=dangling,
+        unused=unused,
+        coverage=coverage,
+        grounded=not dangling,
+    )
 
 
 def strip_citations(text: str) -> str:

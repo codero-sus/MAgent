@@ -5,21 +5,31 @@ from __future__ import annotations
 import json
 import os
 import unittest
-from pathlib import Path
 
-from magent.config import (AgentConfig, Config, config_from_dict, default_config, load_config,
-                           load_toml, write_example_config)
+from magent.config import (
+    AgentConfig,
+    config_from_dict,
+    default_config,
+    load_config,
+    load_toml,
+    write_example_config,
+)
 from magent.errors import ConfigError
 from magent.events import EventBus, Subscription
 from magent.logging_ import LogCapture, get_logger, setup_logging
-from magent.secrets import (SecretStore, contains_secret, generate_api_key, is_secret_reference,
-                            redact_text, resolve_secret)
+from magent.secrets import (
+    SecretStore,
+    contains_secret,
+    generate_api_key,
+    is_secret_reference,
+    redact_text,
+    resolve_secret,
+)
 from magent.types import AgentEvent, EventKind, Message, Role, StopReason, ToolResult, Usage
+from tests.support import MAgentTestCase
 
-from tests.support import MagentTestCase
 
-
-class ConfigTest(MagentTestCase):
+class ConfigTest(MAgentTestCase):
     """Configuration loading, precedence and validation."""
 
     def test_defaults_are_valid(self) -> None:
@@ -43,17 +53,19 @@ class ConfigTest(MagentTestCase):
         self.assertEqual(config.output.format, "json")
 
     def test_unknown_profile_is_reported(self) -> None:
-        path = self.write("magent.toml",
-                          '[agent]\nmax_iterations = 3\n\n[profiles.fast.agent]\n'
-                          'max_iterations = 1\n')
+        path = self.write(
+            "magent.toml",
+            "[agent]\nmax_iterations = 3\n\n[profiles.fast.agent]\nmax_iterations = 1\n",
+        )
         with self.assertRaises(ConfigError) as caught:
             load_config(path=path, profile="does-not-exist")
         self.assertIn("fast", str(caught.exception))
 
     def test_profiles_deep_merge(self) -> None:
-        path = self.write("magent.toml",
-                          '[agent]\nmax_iterations = 4\n\n'
-                          '[profiles.fast.agent]\nmax_iterations = 1\n')
+        path = self.write(
+            "magent.toml",
+            "[agent]\nmax_iterations = 4\n\n[profiles.fast.agent]\nmax_iterations = 1\n",
+        )
         config = load_config(path=path, profile="fast")
         self.assertEqual(config.agent.max_iterations, 1)
 
@@ -85,7 +97,7 @@ class ConfigTest(MagentTestCase):
         AgentConfig().validate()
 
 
-class SecretsTest(MagentTestCase):
+class SecretsTest(MAgentTestCase):
     """Secret references, redaction and masking."""
 
     def test_reference_detection(self) -> None:
@@ -111,8 +123,9 @@ class SecretsTest(MagentTestCase):
             os.environ.pop("MAGENT_TEST_SECRET", None)
 
     def test_resolve_secret_uses_default_when_missing(self) -> None:
-        self.assertEqual(resolve_secret("env:MAGENT_DEFINITELY_MISSING", default="fallback"),
-                         "fallback")
+        self.assertEqual(
+            resolve_secret("env:MAGENT_DEFINITELY_MISSING", default="fallback"), "fallback"
+        )
 
     def test_secret_store_round_trip(self) -> None:
         path = self.home.path / "secrets.toml"
@@ -146,8 +159,9 @@ class EventsTest(unittest.TestCase):
     def test_subscribe_receives_and_records(self) -> None:
         bus = EventBus()
         seen: list[EventKind] = []
-        subscription = bus.subscribe(lambda event: seen.append(event.kind),
-                                     kinds=[EventKind.TOOL_CALL], name="collector")
+        subscription = bus.subscribe(
+            lambda event: seen.append(event.kind), kinds=[EventKind.TOOL_CALL], name="collector"
+        )
         self.assertIsInstance(subscription, Subscription)
         bus.emit(EventKind.TOOL_CALL, name="calculate")
         bus.emit(EventKind.STEP_STARTED)
@@ -228,7 +242,8 @@ class TypesTest(unittest.TestCase):
 
     def test_usage_merge_and_totals(self) -> None:
         merged = Usage(prompt_tokens=10, completion_tokens=5).merge(
-            Usage(prompt_tokens=1, completion_tokens=2))
+            Usage(prompt_tokens=1, completion_tokens=2)
+        )
         self.assertEqual(merged.prompt_tokens, 11)
         self.assertEqual(merged.total_tokens, 18)
 

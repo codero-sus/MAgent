@@ -13,8 +13,9 @@ keeps the flow explicit - ``payload = hooks.apply("before_prompt", payload)``.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 from ..logging_ import get_logger
 from .manifest import HOOK_POINTS
@@ -38,8 +39,10 @@ def _accepts_positional(fn: Callable[..., Any]) -> bool:
     except (TypeError, ValueError):
         return True
     for parameter in signature.parameters.values():
-        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                              inspect.Parameter.POSITIONAL_OR_KEYWORD):
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
             return True
         if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
             return True
@@ -102,9 +105,17 @@ class HookRegistry:
         self._handlers: dict[str, list[HookHandler]] = {}
         self.errors: list[str] = []
 
-    def register(self, point: str, fn: Callable[..., Any], *, priority: int = DEFAULT_PRIORITY,
-                 name: str = "", plugin: str = "", once: bool = False,
-                 **metadata: Any) -> HookHandler:
+    def register(
+        self,
+        point: str,
+        fn: Callable[..., Any],
+        *,
+        priority: int = DEFAULT_PRIORITY,
+        name: str = "",
+        plugin: str = "",
+        once: bool = False,
+        **metadata: Any,
+    ) -> HookHandler:
         """Register a handler.
 
         Args:
@@ -122,20 +133,28 @@ class HookRegistry:
         from ..errors import PluginError
 
         if point not in HOOK_POINTS:
-            raise PluginError(f"unknown hook point {point!r}",
-                              details={"known": list(HOOK_POINTS)})
+            raise PluginError(f"unknown hook point {point!r}", details={"known": list(HOOK_POINTS)})
         bucket = self._handlers.setdefault(point, [])
         if len(bucket) >= MAX_HANDLERS_PER_HOOK:
-            raise PluginError(f"too many handlers for hook {point!r}",
-                              details={"limit": MAX_HANDLERS_PER_HOOK})
-        handler = HookHandler(point=point, fn=fn, priority=priority, name=name, plugin=plugin,
-                              once=once, metadata=dict(metadata))
+            raise PluginError(
+                f"too many handlers for hook {point!r}", details={"limit": MAX_HANDLERS_PER_HOOK}
+            )
+        handler = HookHandler(
+            point=point,
+            fn=fn,
+            priority=priority,
+            name=name,
+            plugin=plugin,
+            once=once,
+            metadata=dict(metadata),
+        )
         bucket.append(handler)
         bucket.sort(key=lambda item: (item.priority, item.key))
         return handler
 
-    def register_many(self, points: Iterable[str], fn: Callable[..., Any],
-                      **kwargs: Any) -> list[HookHandler]:
+    def register_many(
+        self, points: Iterable[str], fn: Callable[..., Any], **kwargs: Any
+    ) -> list[HookHandler]:
         """Register the same handler on several hook points."""
         return [self.register(point, fn, **kwargs) for point in points]
 
@@ -175,9 +194,12 @@ class HookRegistry:
                 # The calling convention is decided once, at registration, so a
                 # TypeError raised *inside* a handler is not retried as a
                 # signature mismatch.
-                result = (handler.fn(current, **context) if handler.accepts_payload
-                          else handler.fn(**context))
-            except Exception as exc:  # noqa: BLE001 - failures are recorded, not raised
+                result = (
+                    handler.fn(current, **context)
+                    if handler.accepts_payload
+                    else handler.fn(**context)
+                )
+            except Exception as exc:
                 self._record_error(handler, exc, point)
                 continue
             handler.calls += 1
@@ -205,9 +227,12 @@ class HookRegistry:
         out: list[Any] = []
         for handler in list(self._handlers.get(point, [])):
             try:
-                value = (handler.fn(None, **context) if handler.accepts_payload
-                         else handler.fn(**context))
-            except Exception as exc:  # noqa: BLE001
+                value = (
+                    handler.fn(None, **context)
+                    if handler.accepts_payload
+                    else handler.fn(**context)
+                )
+            except Exception as exc:
                 self._record_error(handler, exc, point)
                 continue
             handler.calls += 1
@@ -245,9 +270,13 @@ class HookRegistry:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise every handler."""
-        return {"points": {point: [item.to_dict() for item in bucket]
-                           for point, bucket in sorted(self._handlers.items())},
-                "stats": self.stats()}
+        return {
+            "points": {
+                point: [item.to_dict() for item in bucket]
+                for point, bucket in sorted(self._handlers.items())
+            },
+            "stats": self.stats(),
+        }
 
     def __len__(self) -> int:
         """Number of registered handlers."""
@@ -277,11 +306,17 @@ def attach_to_agent(hooks: HookRegistry, agent: Any) -> Any:
         kind = str(getattr(getattr(event, "kind", ""), "value", getattr(event, "kind", "")))
         data = dict(getattr(event, "data", {}) or {})
         if kind == "run.started":
-            hooks.apply("before_run", {"agent": agent, **data}, agent=agent, run_id=data.get("run_id", ""))
+            hooks.apply(
+                "before_run", {"agent": agent, **data}, agent=agent, run_id=data.get("run_id", "")
+            )
         elif kind == "run.finished":
-            hooks.apply("after_run", {"agent": agent, **data}, agent=agent, run_id=data.get("run_id", ""))
+            hooks.apply(
+                "after_run", {"agent": agent, **data}, agent=agent, run_id=data.get("run_id", "")
+            )
         elif kind == "run.failed":
-            hooks.apply("on_error", {"agent": agent, **data}, agent=agent, run_id=data.get("run_id", ""))
+            hooks.apply(
+                "on_error", {"agent": agent, **data}, agent=agent, run_id=data.get("run_id", "")
+            )
         hooks.apply("on_event", event, agent=agent)
 
     return bus.subscribe(on_event, name="plugin-hooks", priority=300)
@@ -294,8 +329,9 @@ def chain_handlers(handlers: Sequence[HookHandler]) -> Callable[[Any], Any]:
     def composed(payload: Any = None, **context: Any) -> Any:
         current = payload
         for handler in ordered:
-            result = (handler.fn(current, **context) if handler.accepts_payload
-                      else handler.fn(**context))
+            result = (
+                handler.fn(current, **context) if handler.accepts_payload else handler.fn(**context)
+            )
             if result is not None:
                 current = result
         return current

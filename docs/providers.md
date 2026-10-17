@@ -52,8 +52,10 @@ from magent.llm.router import ModelRouter, Route
 from magent.llm.cortex import CortexBackend, CortexSettings
 
 router = ModelRouter([
-    Route(backend=CortexBackend(CortexSettings(model="big")), label="big", priority=10),
-    Route(backend=CortexBackend(CortexSettings(model="small")), label="small", priority=20),
+    Route(backend=CortexBackend(CortexSettings(default_model="big")),
+          label="big", priority=10),
+    Route(backend=CortexBackend(CortexSettings(default_model="small")),
+          label="small", priority=20),
 ], strategy="priority", max_failovers=2)
 ```
 

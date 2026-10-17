@@ -23,12 +23,36 @@ from ...utils.files import human_size
 from ...utils.timeutil import format_duration
 
 ENV_ALLOWLIST: tuple[str, ...] = (
-    "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL", "TZ", "TERM", "EDITOR", "PWD",
-    "PYTHONPATH", "PYTHON_VERSION", "VIRTUAL_ENV", "CONDA_DEFAULT_ENV",
-    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME",
-    "MAGENT_WORKSPACE", "MAGENT_CONFIG", "MAGENT_BACKEND", "MAGENT_CORTEX_URL",
-    "MAGENT_MODEL", "MAGENT_MEMORY_DIR", "MAGENT_CACHE_DIR", "MAGENT_LOG_DIR",
-    "MAGENT_TOOLS_ALLOW_NETWORK", "MAGENT_SANDBOX_ROOTS", "CORTEX_HOST", "CORTEX_PORT",
+    "PATH",
+    "HOME",
+    "USER",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "TERM",
+    "EDITOR",
+    "PWD",
+    "PYTHONPATH",
+    "PYTHON_VERSION",
+    "VIRTUAL_ENV",
+    "CONDA_DEFAULT_ENV",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+    "MAGENT_WORKSPACE",
+    "MAGENT_CONFIG",
+    "MAGENT_BACKEND",
+    "MAGENT_CORTEX_URL",
+    "MAGENT_MODEL",
+    "MAGENT_MEMORY_DIR",
+    "MAGENT_CACHE_DIR",
+    "MAGENT_LOG_DIR",
+    "MAGENT_TOOLS_ALLOW_NETWORK",
+    "MAGENT_SANDBOX_ROOTS",
+    "CORTEX_HOST",
+    "CORTEX_PORT",
 )
 """Environment variables the agent may read without an explicit allow flag."""
 
@@ -61,14 +85,20 @@ def system_info(include_env: bool = False) -> dict[str, Any]:
     }
     try:
         load1, load5, load15 = os.getloadavg()
-        info["load_average"] = {"1m": round(load1, 2), "5m": round(load5, 2), "15m": round(load15, 2)}
+        info["load_average"] = {
+            "1m": round(load1, 2),
+            "5m": round(load5, 2),
+            "15m": round(load15, 2),
+        }
     except (OSError, AttributeError):
         info["load_average"] = None
     memory = _memory_info()
     if memory:
         info["memory"] = memory
     if include_env:
-        info["environment"] = {name: os.environ[name] for name in ENV_ALLOWLIST if name in os.environ}
+        info["environment"] = {
+            name: os.environ[name] for name in ENV_ALLOWLIST if name in os.environ
+        }
     return info
 
 
@@ -123,8 +153,9 @@ def disk_space(path: str = ".", context: ToolContext | None = None) -> dict[str,
 
 
 @tool(category="system", risk="read", tags=["env", "variables"])
-def env_get(names: str, include_sensitive: bool = False,
-            context: ToolContext | None = None) -> dict[str, Any]:
+def env_get(
+    names: str, include_sensitive: bool = False, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Read specific environment variables, masking sensitive values.
 
     Args:
@@ -244,12 +275,22 @@ def wait(seconds: float, reason: str = "") -> dict[str, Any]:
     """
     bounded = max(0.0, min(float(seconds), 60.0))
     time.sleep(bounded)
-    return {"slept_seconds": round(bounded, 3), "requested": seconds,
-            "capped": bounded != float(seconds), "reason": reason}
+    return {
+        "slept_seconds": round(bounded, 3),
+        "requested": seconds,
+        "capped": bounded != float(seconds),
+        "reason": reason,
+    }
 
 
 TOOLS: list[Any] = [
-    system_info, disk_space, env_get, env_list, python_environment, uptime_and_time, wait,
+    system_info,
+    disk_space,
+    env_get,
+    env_list,
+    python_environment,
+    uptime_and_time,
+    wait,
 ]
 """Every tool defined in this module."""
 

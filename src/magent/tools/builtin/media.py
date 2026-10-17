@@ -218,14 +218,16 @@ def audio_info(path: str, context: ToolContext | None = None) -> dict[str, Any]:
             with wave.open(str(target), "rb") as wav:
                 frames = wav.getnframes()
                 rate = wav.getframerate()
-                info.update({
-                    "channels": wav.getnchannels(),
-                    "sample_width_bytes": wav.getsampwidth(),
-                    "sample_rate": rate,
-                    "frames": frames,
-                    "duration_seconds": round(frames / rate, 4) if rate else None,
-                    "duration_human": _duration(frames / rate) if rate else "",
-                })
+                info.update(
+                    {
+                        "channels": wav.getnchannels(),
+                        "sample_width_bytes": wav.getsampwidth(),
+                        "sample_rate": rate,
+                        "frames": frames,
+                        "duration_seconds": round(frames / rate, 4) if rate else None,
+                        "duration_human": _duration(frames / rate) if rate else "",
+                    }
+                )
         except (wave.Error, EOFError) as exc:
             info["warning"] = f"could not parse WAV headers: {exc}"
     elif head[:3] == b"ID3" or (head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):

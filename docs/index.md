@@ -19,7 +19,7 @@ what it did - with **zero mandatory dependencies** beyond the standard library.
 | Sessions | JSON records, transcripts, search, export, pruning, redaction |
 | Extensibility | presets, personas, prompt templates, skills, plugins with hooks |
 | Interface | a 26-command CLI, an interactive REPL, a REST API and a single-page web UI |
-| Quality | evaluation datasets with deterministic metrics, tracing, metrics, 438 tests, 3,266 verified improvements |
+| Quality | evaluation datasets with deterministic metrics, tracing, metrics, 487 tests, 3,335 verified improvements |
 
 ## Install
 

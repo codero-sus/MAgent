@@ -19,12 +19,18 @@ from __future__ import annotations
 import threading
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
-from ..errors import BackendError, BackendUnavailableError, CapabilityNotSupportedError, ModelNotFoundError
+from ..errors import (
+    BackendError,
+    BackendUnavailableError,
+    CapabilityNotSupportedError,
+    ModelNotFoundError,
+)
 from ..types import Capability, ChatResponse, ModelInfo
-from .base import BaseBackend, CompletionRequest, StreamChunk
+from .base import BaseBackend, CompletionRequest
 from .retry import CircuitBreaker
 
 STRATEGIES = ("priority", "round_robin", "least_used", "fastest", "cheapest", "random")
@@ -145,12 +151,24 @@ class ModelRouter(BaseBackend):
             self.routes.sort(key=lambda item: (item.priority, item.label))
         return self
 
-    def add_backend(self, backend: Any, *, model: str = "", priority: int = 100,
-                    capabilities: list[str] | None = None, **kwargs: Any) -> ModelRouter:
+    def add_backend(
+        self,
+        backend: Any,
+        *,
+        model: str = "",
+        priority: int = 100,
+        capabilities: list[str] | None = None,
+        **kwargs: Any,
+    ) -> ModelRouter:
         """Convenience wrapper building a :class:`Route` from a backend."""
         return self.add_route(
-            Route(backend=backend, model=model, priority=priority,
-                  capabilities=list(capabilities or []), **kwargs)
+            Route(
+                backend=backend,
+                model=model,
+                priority=priority,
+                capabilities=list(capabilities or []),
+                **kwargs,
+            )
         )
 
     def remove_route(self, label: str) -> bool:
@@ -187,8 +205,9 @@ class ModelRouter(BaseBackend):
 
     # -- selection -----------------------------------------------------------
 
-    def candidates(self, *, capability: Capability | str = Capability.CHAT,
-                   model: str = "") -> list[Route]:
+    def candidates(
+        self, *, capability: Capability | str = Capability.CHAT, model: str = ""
+    ) -> list[Route]:
         """Return enabled routes that can serve the request, best first."""
         with self._lock:
             pool = [route for route in self.routes if route.enabled]
@@ -199,7 +218,9 @@ class ModelRouter(BaseBackend):
         filtered = [route for route in pool if route.supports(capability)]
         if not filtered:
             filtered = [route for route in pool if not route.capabilities]
-        available = [route for route in filtered if self.breaker_for(route.label).state.allows_traffic()]
+        available = [
+            route for route in filtered if self.breaker_for(route.label).state.allows_traffic()
+        ]
         ordered = available or filtered
         return self._order(ordered)
 
@@ -216,9 +237,13 @@ class ModelRouter(BaseBackend):
                 self._round_robin_index = (self._round_robin_index + 1) % max(1, len(routes))
             return routes[start:] + routes[:start]
         if strategy == "least_used":
-            return sorted(routes, key=lambda route: (self._usage_counts.get(route.label, 0), route.priority))
+            return sorted(
+                routes, key=lambda route: (self._usage_counts.get(route.label, 0), route.priority)
+            )
         if strategy == "fastest":
-            return sorted(routes, key=lambda route: self._latency_ewma.get(route.label, route.latency_ms))
+            return sorted(
+                routes, key=lambda route: self._latency_ewma.get(route.label, route.latency_ms)
+            )
         if strategy == "cheapest":
             return sorted(routes, key=lambda route: (route.cost_weight, route.priority))
         if strategy == "random":
@@ -230,13 +255,13 @@ class ModelRouter(BaseBackend):
 
     def select(self, *, capability: Capability | str = Capability.CHAT, model: str = "") -> Route:
         """Return the single best route, raising when none can serve."""
-        if (
-            self.stickiness > 0
-            and self._sticky_label
-            and time.monotonic() < self._sticky_until
-        ):
+        if self.stickiness > 0 and self._sticky_label and time.monotonic() < self._sticky_until:
             for route in self.routes:
-                if route.label == self._sticky_label and route.enabled and route.supports(capability):
+                if (
+                    route.label == self._sticky_label
+                    and route.enabled
+                    and route.supports(capability)
+                ):
                     return route
         options = self.candidates(capability=capability, model=model)
         if not options:
@@ -275,13 +300,13 @@ class ModelRouter(BaseBackend):
                 attempts.append(RouteAttempt(label=route.label, ok=False, error="circuit open"))
                 continue
             try:
-                response = route.backend.complete(
-                    request.clone(model=route.model or request.model)
-                )
-            except Exception as exc:  # noqa: BLE001 - failover must see everything
+                response = route.backend.complete(request.clone(model=route.model or request.model))
+            except Exception as exc:
                 latency = (time.perf_counter() - started) * 1000.0
                 breaker.record_failure()
-                attempt = RouteAttempt(label=route.label, ok=False, error=str(exc)[:300], latency_ms=latency)
+                attempt = RouteAttempt(
+                    label=route.label, ok=False, error=str(exc)[:300], latency_ms=latency
+                )
                 attempts.append(attempt)
                 last_error = exc
                 self.failovers += 1
@@ -318,7 +343,7 @@ class ModelRouter(BaseBackend):
             try:
                 iterator = route.backend.stream(request.clone(model=route.model or request.model))
                 first = next(iterator, None)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 breaker.record_failure()
                 last_error = exc
                 self.failovers += 1
@@ -339,7 +364,9 @@ class ModelRouter(BaseBackend):
         with self._lock:
             previous = self._latency_ewma.get(label)
             alpha = 0.3
-            self._latency_ewma[label] = latency_ms if previous is None else alpha * latency_ms + (1 - alpha) * previous
+            self._latency_ewma[label] = (
+                latency_ms if previous is None else alpha * latency_ms + (1 - alpha) * previous
+            )
 
     # -- discovery -----------------------------------------------------------
 
@@ -353,7 +380,7 @@ class ModelRouter(BaseBackend):
                 discovered = route.backend.models()
             except BackendError:
                 continue
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             for info in discovered:
                 if route.model and info.id != route.model:
@@ -364,7 +391,11 @@ class ModelRouter(BaseBackend):
                     existing.capabilities = sorted(merged)
                 else:
                     info.metadata["route"] = route.label
-                    info.status = "running" if self.breaker_for(route.label).state.allows_traffic() else "degraded"
+                    info.status = (
+                        "running"
+                        if self.breaker_for(route.label).state.allows_traffic()
+                        else "degraded"
+                    )
                     seen[info.id] = info
         return list(seen.values())
 
@@ -374,7 +405,7 @@ class ModelRouter(BaseBackend):
         for route in self.routes:
             try:
                 results[route.label] = route.backend.health()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 results[route.label] = {"ok": False, "error": str(exc)[:200]}
             results[route.label]["breaker"] = self.breaker_for(route.label).snapshot()
         healthy = sum(1 for value in results.values() if value.get("ok"))
@@ -390,16 +421,20 @@ class ModelRouter(BaseBackend):
     def stats(self) -> dict[str, Any]:
         """Return router telemetry."""
         base = super().stats()
-        base.update({
-            "strategy": self.strategy,
-            "routes": [route.to_dict() for route in self.routes],
-            "selections": self.selections,
-            "failovers": self.failovers,
-            "usage_counts": dict(self._usage_counts),
-            "latency_ewma_ms": {k: round(v, 2) for k, v in self._latency_ewma.items()},
-            "breakers": {label: breaker.snapshot() for label, breaker in self._breakers.items()},
-            "last_attempts": [attempt.to_dict() for attempt in self.last_attempts],
-        })
+        base.update(
+            {
+                "strategy": self.strategy,
+                "routes": [route.to_dict() for route in self.routes],
+                "selections": self.selections,
+                "failovers": self.failovers,
+                "usage_counts": dict(self._usage_counts),
+                "latency_ewma_ms": {k: round(v, 2) for k, v in self._latency_ewma.items()},
+                "breakers": {
+                    label: breaker.snapshot() for label, breaker in self._breakers.items()
+                },
+                "last_attempts": [attempt.to_dict() for attempt in self.last_attempts],
+            }
+        )
         return base
 
     def close(self) -> None:
@@ -412,7 +447,7 @@ class ModelRouter(BaseBackend):
             closed.add(key)
             try:
                 route.backend.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
 
@@ -425,8 +460,13 @@ def route_from_backend(
     **kwargs: Any,
 ) -> Route:
     """Build a :class:`Route` from a backend instance."""
-    return Route(backend=backend, model=model, priority=priority,
-                 capabilities=list(capabilities or []), **kwargs)
+    return Route(
+        backend=backend,
+        model=model,
+        priority=priority,
+        capabilities=list(capabilities or []),
+        **kwargs,
+    )
 
 
 def single_backend_router(backend: Any, *, model: str = "") -> ModelRouter:
@@ -437,10 +477,10 @@ def single_backend_router(backend: Any, *, model: str = "") -> ModelRouter:
 
 
 __all__ = [
+    "STRATEGIES",
     "ModelRouter",
     "Route",
     "RouteAttempt",
-    "STRATEGIES",
     "route_from_backend",
     "single_backend_router",
 ]

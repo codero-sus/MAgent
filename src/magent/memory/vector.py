@@ -13,8 +13,9 @@ import json
 import math
 import threading
 import time
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..errors import IndexError_
 from ..utils.files import atomic_write_text, ensure_dir
@@ -96,8 +97,9 @@ class VectorIndex:
 
     # -- search --------------------------------------------------------------
 
-    def search(self, vector: Sequence[float], *, limit: int = 5,
-               min_score: float = 0.0) -> list[tuple[str, float]]:
+    def search(
+        self, vector: Sequence[float], *, limit: int = 5, min_score: float = 0.0
+    ) -> list[tuple[str, float]]:
         """Return the closest keys with their cosine similarities.
 
         Args:
@@ -147,13 +149,18 @@ class VectorIndex:
         stride = max(1, total // count)
         self._centroids = [list(self._vectors[index]) for index in range(0, total, stride)][:count]
         self._assignments = [
-            max(range(len(self._centroids)),
-                key=lambda index: cosine_similarity(vector, self._centroids[index]))
+            max(
+                range(len(self._centroids)),
+                key=lambda index: cosine_similarity(vector, self._centroids[index]),
+            )
             for vector in self._vectors
         ]
         for bucket in range(len(self._centroids)):
-            members = [self._vectors[i] for i, assignment in enumerate(self._assignments)
-                       if assignment == bucket]
+            members = [
+                self._vectors[i]
+                for i, assignment in enumerate(self._assignments)
+                if assignment == bucket
+            ]
             if members:
                 width = len(members[0])
                 self._centroids[bucket] = [
@@ -233,7 +240,9 @@ class VectorIndex:
         return index
 
     @classmethod
-    def from_items(cls, items: Iterable[tuple[str, Sequence[float]]], *, buckets: int = 0) -> VectorIndex:
+    def from_items(
+        cls, items: Iterable[tuple[str, Sequence[float]]], *, buckets: int = 0
+    ) -> VectorIndex:
         """Build an index from an iterable of ``(key, vector)`` pairs."""
         index = cls(buckets=buckets)
         index.add_many(items)

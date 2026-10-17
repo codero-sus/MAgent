@@ -16,9 +16,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..commands import Command
-from ...errors import EvalThresholdError, MAgentError
+from ...errors import EvalThresholdError
 from ...utils.text import ellipsize
+from ..commands import Command
 
 
 def eval_command(ctx: Any, args: argparse.Namespace) -> int:
@@ -44,8 +44,11 @@ def eval_command(ctx: Any, args: argparse.Namespace) -> int:
         if ctx.config.output.format != "text":
             ctx.emit(dataset.to_dict(), fmt=ctx.config.output.format)
             return 0
-        ctx.table([(case.id, case.prompt, ",".join(case.tags)) for case in dataset],
-                  ["id", "prompt", "tags"], title="sample dataset")
+        ctx.table(
+            [(case.id, case.prompt, ",".join(case.tags)) for case in dataset],
+            ["id", "prompt", "tags"],
+            title="sample dataset",
+        )
         return 0
     dataset = load_dataset(args.dataset) if args.dataset else sample_dataset("sample")
     if getattr(args, "tag", ""):
@@ -57,18 +60,31 @@ def eval_command(ctx: Any, args: argparse.Namespace) -> int:
         return 2
     preset = getattr(args, "preset", "") or ""
     factory = (lambda: ctx.build_preset_agent(preset)) if preset else (lambda: ctx.build_agent())
-    runner = EvalRunner(factory, metrics=tuple(args.metrics or ()), repeats=args.repeats,
-                        concurrency=args.concurrency, threshold=args.threshold or 0.0,
-                        run_options={"max_iterations": args.max_iterations}
-                        if getattr(args, "max_iterations", 0) else None)
+    runner = EvalRunner(
+        factory,
+        metrics=tuple(args.metrics or ()),
+        repeats=args.repeats,
+        concurrency=args.concurrency,
+        threshold=args.threshold or 0.0,
+        run_options={"max_iterations": args.max_iterations}
+        if getattr(args, "max_iterations", 0)
+        else None,
+    )
     machine_format = bool(args.report_format) or ctx.config.output.format != "text"
     show_progress = not ctx.quiet and not machine_format
-    report = runner.run(dataset, progress=(lambda done, total: ctx.write(
-        f"\r\033[Kevaluating {done}/{total}") if show_progress else None))
+    report = runner.run(
+        dataset,
+        progress=(
+            lambda done, total: (
+                ctx.write(f"\r\033[Kevaluating {done}/{total}") if show_progress else None
+            )
+        ),
+    )
     if show_progress:
         ctx.write("\r\033[K")
-    fmt = args.report_format or (ctx.config.output.format
-                                 if ctx.config.output.format != "text" else "text")
+    fmt = args.report_format or (
+        ctx.config.output.format if ctx.config.output.format != "text" else "text"
+    )
     if args.output:
         path = report.save(args.output, fmt=fmt)
         ctx.notice(f"wrote {path}", level="success")
@@ -103,17 +119,26 @@ def _price_book(config: Any) -> Any:
     section = pricing.get("pricing") if isinstance(pricing, dict) else {}
     if not isinstance(section, dict):
         return PriceBook()
-    prompt_rates = {str(key): float(value) for key, value in
-                    (section.get("prompt_per_million") or {}).items()} \
-        if isinstance(section.get("prompt_per_million"), dict) else {}
-    completion_rates = {str(key): float(value) for key, value in
-                        (section.get("completion_per_million") or {}).items()} \
-        if isinstance(section.get("completion_per_million"), dict) else {}
-    return PriceBook(prompt_per_million=prompt_rates,
-                     completion_per_million=completion_rates,
-                     default_prompt=float(section.get("default_prompt", 0.0) or 0.0),
-                     default_completion=float(section.get("default_completion", 0.0) or 0.0),
-                     currency=str(section.get("currency", "USD") or "USD"))
+    prompt_rates = (
+        {str(key): float(value) for key, value in (section.get("prompt_per_million") or {}).items()}
+        if isinstance(section.get("prompt_per_million"), dict)
+        else {}
+    )
+    completion_rates = (
+        {
+            str(key): float(value)
+            for key, value in (section.get("completion_per_million") or {}).items()
+        }
+        if isinstance(section.get("completion_per_million"), dict)
+        else {}
+    )
+    return PriceBook(
+        prompt_per_million=prompt_rates,
+        completion_per_million=completion_rates,
+        default_prompt=float(section.get("default_prompt", 0.0) or 0.0),
+        default_completion=float(section.get("default_completion", 0.0) or 0.0),
+        currency=str(section.get("currency", "USD") or "USD"),
+    )
 
 
 def bench_command(ctx: Any, args: argparse.Namespace) -> int:
@@ -143,13 +168,14 @@ def bench_command(ctx: Any, args: argparse.Namespace) -> int:
             usage = getattr(response, "usage", None)
             prompt_tokens += getattr(usage, "prompt_tokens", 0) or 0
             completion_tokens += getattr(usage, "completion_tokens", 0) or 0
-        except Exception as exc:  # noqa: BLE001 - a failed call is part of the measurement
+        except Exception as exc:
             failures.append(f"{type(exc).__name__}: {exc}")
     elapsed = time.perf_counter() - started
     model = getattr(backend, "default_model", "") or getattr(backend, "name", "")
     prices = _price_book(ctx.config)
-    estimate = prices.cost(model, Usage(prompt_tokens=prompt_tokens,
-                                        completion_tokens=completion_tokens))
+    estimate = prices.cost(
+        model, Usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+    )
     payload = {
         "backend": type(backend).__name__,
         "model": model,
@@ -171,17 +197,20 @@ def bench_command(ctx: Any, args: argparse.Namespace) -> int:
     if ctx.config.output.format != "text":
         ctx.emit(payload, fmt=ctx.config.output.format)
         return 0 if not failures else 1
-    ctx.key_values([
-        ("backend", payload["backend"]),
-        ("model", model),
-        ("calls", f"{payload['ok']}/{repeats}"),
-        ("p50", f"{payload['latency_ms']['p50']} ms"),
-        ("mean", f"{payload['latency_ms']['mean']} ms"),
-        ("tokens/s", payload["tokens_per_second"]),
-        ("tokens", f"{prompt_tokens} prompt + {completion_tokens} completion"),
-        ("cost", f"{estimate.total:.6f} {estimate.currency}"),
-        ("wall clock", f"{elapsed:.2f}s"),
-    ], title="benchmark")
+    ctx.key_values(
+        [
+            ("backend", payload["backend"]),
+            ("model", model),
+            ("calls", f"{payload['ok']}/{repeats}"),
+            ("p50", f"{payload['latency_ms']['p50']} ms"),
+            ("mean", f"{payload['latency_ms']['mean']} ms"),
+            ("tokens/s", payload["tokens_per_second"]),
+            ("tokens", f"{prompt_tokens} prompt + {completion_tokens} completion"),
+            ("cost", f"{estimate.total:.6f} {estimate.currency}"),
+            ("wall clock", f"{elapsed:.2f}s"),
+        ],
+        title="benchmark",
+    )
     if failures:
         ctx.notice(f"{len(failures)} call(s) failed: {failures[0]}", level="error")
     return 0 if not failures else 1
@@ -223,11 +252,16 @@ def improvements_command(ctx: Any, args: argparse.Namespace) -> int:
         if ctx.config.output.format != "text":
             ctx.emit(chosen[:limit], fmt=ctx.config.output.format)
             return 0
-        rows = [(str(item.get("id", "")), str(item.get("category", "")),
-                 ellipsize(str(item.get("title", "")), 60), str(item.get("ref", "")))
-                for item in chosen[:limit]]
-        ctx.table(rows, ["id", "category", "title", "ref"],
-                  title=f"{len(chosen)} improvements")
+        rows = [
+            (
+                str(item.get("id", "")),
+                str(item.get("category", "")),
+                ellipsize(str(item.get("title", "")), 60),
+                str(item.get("ref", "")),
+            )
+            for item in chosen[:limit]
+        ]
+        ctx.table(rows, ["id", "category", "title", "ref"], title=f"{len(chosen)} improvements")
         return 0
     verified = skipped = 0
     failures: list[str] = []
@@ -247,13 +281,27 @@ def improvements_command(ctx: Any, args: argparse.Namespace) -> int:
                 failures.append(f"{item.get('id')}: {symbol} not found in {path}")
                 continue
         verified += 1
-    summary = {"manifest": str(manifest), "total": len(entries), "verified": verified,
-               "skipped": skipped, "failures": failures[:20], "ok": not failures}
+    summary = {
+        "manifest": str(manifest),
+        "total": len(entries),
+        "verified": verified,
+        "skipped": skipped,
+        "failures": failures[:20],
+        "ok": not failures,
+    }
     if ctx.config.output.format != "text":
         ctx.emit(summary, fmt=ctx.config.output.format)
         return 0 if not failures else 1
-    ctx.key_values([("manifest", manifest), ("total", len(entries)), ("verified", verified),
-                    ("skipped", skipped), ("failures", len(failures))], title="improvements")
+    ctx.key_values(
+        [
+            ("manifest", manifest),
+            ("total", len(entries)),
+            ("verified", verified),
+            ("skipped", skipped),
+            ("failures", len(failures)),
+        ],
+        title="improvements",
+    )
     for line in failures[:10]:
         ctx.notice(line, level="error")
     if not failures:
@@ -263,8 +311,7 @@ def improvements_command(ctx: Any, args: argparse.Namespace) -> int:
 
 def prompts_command(ctx: Any, args: argparse.Namespace) -> int:
     """``magent prompts`` - list prompt templates and personas."""
-    from ...prompts import (PERSONAS, TEMPLATES, get_template, list_templates,
-                           template_categories)
+    from ...prompts import PERSONAS, TEMPLATES, get_template, list_templates, template_categories
 
     action = getattr(args, "action", "") or "templates"
     if action == "personas":
@@ -277,8 +324,10 @@ def prompts_command(ctx: Any, args: argparse.Namespace) -> int:
 
             ctx.write(persona_prompt(name) + "\n")
             return 0
-        rows = [(persona.name, ellipsize(persona.role, 40), ellipsize(persona.tone, 30))
-                for persona in PERSONAS.values()]
+        rows = [
+            (persona.name, ellipsize(persona.role, 40), ellipsize(persona.tone, 30))
+            for persona in PERSONAS.values()
+        ]
         ctx.table(rows, ["persona", "role", "tone"], title=f"{len(rows)} personas")
         return 0
     name = getattr(args, "name", "") or ""
@@ -289,28 +338,51 @@ def prompts_command(ctx: Any, args: argparse.Namespace) -> int:
             ctx.error(str(exc))
             return 1
         if ctx.config.output.format != "text":
-            ctx.emit({"name": template.name, "category": template.category,
-                      "description": template.description,
-                      "variables": list(template.variables), "text": template.text},
-                     fmt=ctx.config.output.format)
+            ctx.emit(
+                {
+                    "name": template.name,
+                    "category": template.category,
+                    "description": template.description,
+                    "variables": list(template.variables),
+                    "text": template.text,
+                },
+                fmt=ctx.config.output.format,
+            )
             return 0
-        ctx.key_values([("template", template.name), ("category", template.category),
-                        ("variables", ", ".join(template.variables) or "-"),
-                        ("chars", len(template.text))], title=f"template {template.name}")
+        ctx.key_values(
+            [
+                ("template", template.name),
+                ("category", template.category),
+                ("variables", ", ".join(template.variables) or "-"),
+                ("chars", len(template.text)),
+            ],
+            title=f"template {template.name}",
+        )
         ctx.print("")
         ctx.write(template.text.rstrip() + "\n")
         return 0
-    rows = [(item["name"], item["category"], ", ".join(item["variables"]),
-             ellipsize(item["description"], 48)) for item in list_templates()]
-    ctx.table(rows, ["template", "category", "variables", "description"],
-              title=f"{len(TEMPLATES)} templates in {len(template_categories())} categories")
+    rows = [
+        (
+            item["name"],
+            item["category"],
+            ", ".join(item["variables"]),
+            ellipsize(item["description"], 48),
+        )
+        for item in list_templates()
+    ]
+    ctx.table(
+        rows,
+        ["template", "category", "variables", "description"],
+        title=f"{len(TEMPLATES)} templates in {len(template_categories())} categories",
+    )
     return 0
 
 
 def _configure_eval(parser: argparse.ArgumentParser) -> None:
     """Arguments for ``magent eval``."""
-    parser.add_argument("action", nargs="?", default="run",
-                        choices=["run", "metrics", "sample"], help="what to do")
+    parser.add_argument(
+        "action", nargs="?", default="run", choices=["run", "metrics", "sample"], help="what to do"
+    )
     parser.add_argument("--dataset", default="", help="dataset file (.json/.jsonl/.md/.py)")
     parser.add_argument("--metrics", action="append", default=None, help="metric (repeatable)")
     parser.add_argument("--repeats", type=int, default=1, help="runs per case")
@@ -319,10 +391,19 @@ def _configure_eval(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tag", default="", help="only cases with this tag")
     parser.add_argument("--limit", type=int, default=0, help="maximum cases")
     parser.add_argument("--preset", default="", help="agent preset to evaluate")
-    parser.add_argument("--max-iterations", dest="max_iterations", type=int, default=0,
-                        help="ceiling on steps per case")
-    parser.add_argument("--report-format", dest="report_format", default="",
-                        help="report format: text|json|markdown|csv|junit")
+    parser.add_argument(
+        "--max-iterations",
+        dest="max_iterations",
+        type=int,
+        default=0,
+        help="ceiling on steps per case",
+    )
+    parser.add_argument(
+        "--report-format",
+        dest="report_format",
+        default="",
+        help="report format: text|json|markdown|csv|junit",
+    )
     parser.add_argument("--output", default="", help="write the report here")
 
 
@@ -330,14 +411,20 @@ def _configure_bench(parser: argparse.ArgumentParser) -> None:
     """Arguments for ``magent bench``."""
     parser.add_argument("--prompt", default="", help="prompt to send")
     parser.add_argument("--repeats", type=int, default=3, help="how many calls")
-    parser.add_argument("--max-tokens", dest="max_tokens", type=int, default=64,
-                        help="tokens per call")
+    parser.add_argument(
+        "--max-tokens", dest="max_tokens", type=int, default=64, help="tokens per call"
+    )
 
 
 def _configure_improvements(parser: argparse.ArgumentParser) -> None:
     """Arguments for ``magent improvements``."""
-    parser.add_argument("action", nargs="?", default="verify",
-                        choices=["verify", "count", "list"], help="what to do")
+    parser.add_argument(
+        "action",
+        nargs="?",
+        default="verify",
+        choices=["verify", "count", "list"],
+        help="what to do",
+    )
     parser.add_argument("--manifest", default="", help="path to the manifest JSON")
     parser.add_argument("--category", default="", help="filter by category")
     parser.add_argument("--limit", type=int, default=40, help="rows to show")
@@ -345,8 +432,13 @@ def _configure_improvements(parser: argparse.ArgumentParser) -> None:
 
 def _configure_prompts(parser: argparse.ArgumentParser) -> None:
     """Arguments for ``magent prompts``."""
-    parser.add_argument("action", nargs="?", default="templates",
-                        choices=["templates", "personas"], help="what to list")
+    parser.add_argument(
+        "action",
+        nargs="?",
+        default="templates",
+        choices=["templates", "personas"],
+        help="what to list",
+    )
     parser.add_argument("--name", default="", help="template or persona to render")
 
 
@@ -363,8 +455,11 @@ COMMANDS: tuple[Command, ...] = (
             "(substrings, regex, JSON, tool usage, budgets) and exit non-zero below a "
             "threshold, so it can gate a build."
         ),
-        examples=("magent eval", "magent eval --dataset evals/smoke.jsonl --threshold 0.9",
-                  "magent eval --dataset evals/retrieval.md --repeats 3 --concurrency 4"),
+        examples=(
+            "magent eval",
+            "magent eval --dataset evals/smoke.jsonl --threshold 0.9",
+            "magent eval --dataset evals/retrieval.md --repeats 3 --concurrency 4",
+        ),
     ),
     Command(
         name="bench",
@@ -386,8 +481,11 @@ COMMANDS: tuple[Command, ...] = (
             "`verify` re-checks each reference against the checkout and fails when one "
             "no longer exists."
         ),
-        examples=("magent improvements", "magent improvements count",
-                  "magent improvements list --category tools"),
+        examples=(
+            "magent improvements",
+            "magent improvements count",
+            "magent improvements list --category tools",
+        ),
     ),
     Command(
         name="prompts",
@@ -395,8 +493,11 @@ COMMANDS: tuple[Command, ...] = (
         run=prompts_command,
         group="tools",
         configure=_configure_prompts,
-        examples=("magent prompts", "magent prompts personas coder",
-                  "magent prompts templates summarize"),
+        examples=(
+            "magent prompts",
+            "magent prompts personas coder",
+            "magent prompts templates summarize",
+        ),
     ),
 )
 

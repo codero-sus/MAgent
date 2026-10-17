@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 from ..logging_ import get_logger
 from ..utils.files import ensure_dir
@@ -127,8 +128,13 @@ class Span:
 
     def child(self, name: str, *, kind: str = "internal", **attributes: Any) -> Span:
         """Create a nested span sharing this span's trace."""
-        span = Span(name=name, trace_id=self.trace_id, parent_id=self.span_id, kind=kind,
-                    attributes=dict(attributes))
+        span = Span(
+            name=name,
+            trace_id=self.trace_id,
+            parent_id=self.span_id,
+            kind=kind,
+            attributes=dict(attributes),
+        )
         if len(self.children) < MAX_SPANS_PER_TRACE:
             self.children.append(span)
         return span
@@ -169,8 +175,10 @@ class Span:
         """Render the subtree as an ASCII flame graph."""
         branch, last, pipe = ("├─", "└─", "│") if unicode else ("|-", "`-", "|")
         bar = _bar(self.duration_ms, width)
-        lines = [f"{'  ' * indent}{self.name}  {self.duration_ms:.0f}ms {bar}"
-                 f"{' ERR' if self.status == 'error' else ''}"]
+        lines = [
+            f"{'  ' * indent}{self.name}  {self.duration_ms:.0f}ms {bar}"
+            f"{' ERR' if self.status == 'error' else ''}"
+        ]
         for index, child in enumerate(self.children):
             connector = last if index == len(self.children) - 1 else branch
             child_lines = child.flame(indent=0, width=width, unicode=unicode).split("\n")
@@ -215,8 +223,9 @@ class Trace:
         if not self.trace_id:
             self.trace_id = new_trace_id()
         if self.root is None:
-            self.root = Span(name=self.name, trace_id=self.trace_id, kind="run",
-                             started_at=self.started_at)
+            self.root = Span(
+                name=self.name, trace_id=self.trace_id, kind="run", started_at=self.started_at
+            )
 
     @property
     def duration_ms(self) -> float:
@@ -275,15 +284,22 @@ class Trace:
         """Serialise every span as one JSON line."""
         import json
 
-        return "\n".join(json.dumps(span.to_dict(), default=str, ensure_ascii=False)
-                         for span in self.spans())
+        return "\n".join(
+            json.dumps(span.to_dict(), default=str, ensure_ascii=False) for span in self.spans()
+        )
 
 
 class Tracer:
     """Create traces and track the span currently in flight."""
 
-    def __init__(self, *, enabled: bool = True, export_path: str | Path | None = None,
-                 sample_rate: float = 1.0, service: str = "magent") -> None:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        export_path: str | Path | None = None,
+        sample_rate: float = 1.0,
+        service: str = "magent",
+    ) -> None:
         """Configure the tracer.
 
         Args:
@@ -344,8 +360,9 @@ class Tracer:
         finally:
             self.end_trace()
 
-    def start_span(self, name: str, *, kind: str = "internal", parent: Span | None = None,
-                   **attributes: Any) -> Span:
+    def start_span(
+        self, name: str, *, kind: str = "internal", parent: Span | None = None, **attributes: Any
+    ) -> Span:
         """Start a span inside the current trace."""
         if not self.enabled:
             return Span(name=name, kind=kind, status="ok", ended_at=time.time())
@@ -411,7 +428,7 @@ class Tracer:
     def traces(self, *, limit: int = 10) -> list[Trace]:
         """Recent traces, newest last."""
         with self._lock:
-            return list(self._traces[-max(1, limit):])
+            return list(self._traces[-max(1, limit) :])
 
     def last_trace(self) -> Trace | None:
         """Most recent trace."""
@@ -463,8 +480,9 @@ def trace_from_events(events: Sequence[Any], *, name: str = "run") -> Trace:
         data = getattr(event, "data", {}) or {}
         ts = float(getattr(event, "ts", time.time()) or time.time())
         if kind == "run.started":
-            trace.root.set_attributes({"run_id": data.get("run_id", ""),
-                                       "model": data.get("model", "")})
+            trace.root.set_attributes(
+                {"run_id": data.get("run_id", ""), "model": data.get("model", "")}
+            )
         elif kind == "step.started":
             span = stack[0].child(f"step.{data.get('index', 0)}", kind="step")
             span.started_at = ts
@@ -491,8 +509,13 @@ def trace_from_events(events: Sequence[Any], *, name: str = "run") -> Trace:
             span = stack[0].child(kind, kind="llm")
             span.started_at = ts
             span.ended_at = ts
-            span.set_attributes({key: value for key, value in data.items()
-                                 if isinstance(value, (str, int, float, bool))})
+            span.set_attributes(
+                {
+                    key: value
+                    for key, value in data.items()
+                    if isinstance(value, (str, int, float, bool))
+                }
+            )
             span.finish()
         elif kind == "run.finished":
             trace.root.set_attribute("stop_reason", data.get("stop_reason", ""))

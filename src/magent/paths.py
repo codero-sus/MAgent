@@ -10,8 +10,8 @@ a checkout marker, which is what lets the CLI find the generated
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 APP_NAME = "magent"
 """Directory name under the XDG roots."""
@@ -142,7 +142,9 @@ def ensure_layout(*, with_config: bool = False) -> dict[str, Path]:
     return layout
 
 
-def repo_root(start: str | Path | None = None, *, markers: Iterable[str] = REPO_MARKERS) -> Path | None:
+def repo_root(
+    start: str | Path | None = None, *, markers: Iterable[str] = REPO_MARKERS
+) -> Path | None:
     """Walk upwards looking for a checkout, returning ``None`` when there is none."""
     current = Path(start).expanduser().resolve() if start else package_dir()
     if current.is_file():

@@ -198,7 +198,9 @@ def split_camel(value: str) -> str:
     return _WORD_BOUNDARY.sub(" ", value).strip()
 
 
-def slugify(value: str, *, separator: str = "-", max_length: int = 60, lowercase: bool = True) -> str:
+def slugify(
+    value: str, *, separator: str = "-", max_length: int = 60, lowercase: bool = True
+) -> str:
     """Turn arbitrary text into a URL and anchor safe slug.
 
     Accents are stripped, non-alphanumeric runs collapse into the separator,
@@ -314,7 +316,9 @@ def common_suffix(values: Iterable[str]) -> str:
     return reversed_prefix[::-1]
 
 
-def find_balanced(text: str, open_char: str = "{", close_char: str = "}", start: int = 0) -> tuple[int, int]:
+def find_balanced(
+    text: str, open_char: str = "{", close_char: str = "}", start: int = 0
+) -> tuple[int, int]:
     """Locate the first balanced ``open_char..close_char`` span in ``text``.
 
     Returns ``(open_index, close_index)`` or ``(-1, -1)`` when unbalanced.

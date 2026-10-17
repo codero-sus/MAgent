@@ -73,6 +73,9 @@ jobs:
           names = zipfile.ZipFile(wheel).namelist()
           assert any(name.endswith("server/static/index.html") for name in names), names[:20]
           assert any("py.typed" in name for name in names)
+          assert any(name.endswith("_docs/index.md") for name in names)
+          assert any(name.endswith("agents/team.py") for name in names)
+          assert any(name.endswith("skills/library.py") for name in names)
           print(f"{wheel}: {len(names)} files")
           PY
 

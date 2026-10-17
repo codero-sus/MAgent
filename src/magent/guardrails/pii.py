@@ -14,8 +14,9 @@ it (``ada@***.com``), ``redact`` replaces it with a typed placeholder
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from .verdict import Finding, Verdict
 
@@ -96,9 +97,27 @@ LOOPBACK_PREFIXES = ("127.", "0.", "::1")
 DOCUMENTATION_PREFIXES = ("192.0.2.", "198.51.100.", "203.0.113.", "233.252.0.")
 """TEST-NET and MCAST-TEST ranges, which never identify a real host."""
 
-PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.",
-                    "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.",
-                    "172.29.", "172.30.", "172.31.", "192.168.", "169.254.")
+PRIVATE_PREFIXES = (
+    "10.",
+    "172.16.",
+    "172.17.",
+    "172.18.",
+    "172.19.",
+    "172.20.",
+    "172.21.",
+    "172.22.",
+    "172.23.",
+    "172.24.",
+    "172.25.",
+    "172.26.",
+    "172.27.",
+    "172.28.",
+    "172.29.",
+    "172.30.",
+    "172.31.",
+    "192.168.",
+    "169.254.",
+)
 """RFC1918 and link-local ranges, sensitive only inside a private network."""
 
 
@@ -158,7 +177,9 @@ def mask_value(value: str, *, keep_head: int = 2, keep_tail: int = 2, fill: str 
     text = str(value)
     if len(text) <= keep_head + keep_tail:
         return fill * len(text)
-    return f"{text[:keep_head]}{fill * min(20, len(text) - keep_head - keep_tail)}{text[-keep_tail:]}"
+    return (
+        f"{text[:keep_head]}{fill * min(20, len(text) - keep_head - keep_tail)}{text[-keep_tail:]}"
+    )
 
 
 def mask_email(value: str) -> str:
@@ -200,8 +221,14 @@ class PIIRules:
 class PIIScanner:
     """Find and rewrite personally identifiable information."""
 
-    def __init__(self, rules: PIIRules | None = None, *, action: str = "",
-                 include_private_ips: bool = False, extra_patterns: Iterable[tuple[str, str, str]] = ()) -> None:
+    def __init__(
+        self,
+        rules: PIIRules | None = None,
+        *,
+        action: str = "",
+        include_private_ips: bool = False,
+        extra_patterns: Iterable[tuple[str, str, str]] = (),
+    ) -> None:
         """Configure the scanner.
 
         Args:
@@ -240,17 +267,19 @@ class PIIScanner:
                 if not self._valid(kind, value, needs_validation):
                     continue
                 claimed.append((start, end))
-                found.append(Finding(
-                    rule=f"pii:{kind}",
-                    severity=severity,
-                    reason=f"contains a {kind.replace('_', ' ')}",
-                    score=1.0 if severity in {"high", "critical"} else 0.6,
-                    matched=value,
-                    start=start,
-                    end=end,
-                    category="pii",
-                    metadata={"kind": kind},
-                ))
+                found.append(
+                    Finding(
+                        rule=f"pii:{kind}",
+                        severity=severity,
+                        reason=f"contains a {kind.replace('_', ' ')}",
+                        score=1.0 if severity in {"high", "critical"} else 0.6,
+                        matched=value,
+                        start=start,
+                        end=end,
+                        category="pii",
+                        metadata={"kind": kind},
+                    )
+                )
                 if len(found) >= self.rules.max_findings:
                     break
         found.sort(key=lambda item: item.start)
@@ -291,7 +320,9 @@ class PIIScanner:
 
     # -- rewriting -----------------------------------------------------------
 
-    def redact(self, text: str, *, findings: Sequence[Finding] | None = None) -> tuple[str, list[Finding]]:
+    def redact(
+        self, text: str, *, findings: Sequence[Finding] | None = None
+    ) -> tuple[str, list[Finding]]:
         """Rewrite every finding according to the configured action.
 
         Returns ``(text, findings)``; the text is unchanged when nothing was
@@ -333,8 +364,14 @@ class PIIScanner:
         kinds = sorted({str(item.metadata.get("kind", "")) for item in findings})
         reason = f"found {len(findings)} PII span(s): {', '.join(kinds)}"
         if self.rules.action == "block":
-            return Verdict.block(reason, rule=top.rule, severity=top.severity, stage=stage,
-                                 findings=findings, text=text)
+            return Verdict.block(
+                reason,
+                rule=top.rule,
+                severity=top.severity,
+                stage=stage,
+                findings=findings,
+                text=text,
+            )
         if self.rules.action in {"off", "warn"}:
             verdict = Verdict.allow(text, stage=stage)
             verdict.findings = findings
@@ -343,9 +380,15 @@ class PIIScanner:
             verdict.metadata = {"pii_kinds": kinds, "warned": True}
             return verdict
         rewritten, detected = self.redact(text, findings=findings)
-        verdict = Verdict.rewrite(rewritten, action=self.rules.action, reason=reason,
-                                  rule=top.rule, findings=detected, stage=stage,
-                                  metadata={"pii_kinds": kinds})
+        verdict = Verdict.rewrite(
+            rewritten,
+            action=self.rules.action,
+            reason=reason,
+            rule=top.rule,
+            findings=detected,
+            stage=stage,
+            metadata={"pii_kinds": kinds},
+        )
         verdict.severity = top.severity
         return verdict
 
@@ -380,13 +423,13 @@ __all__ = [
     "IPV4",
     "LOOPBACK_PREFIXES",
     "MAC_ADDRESS",
-    "PRIVATE_PREFIXES",
     "PAN",
-    "PIIRules",
-    "PIIScanner",
     "PHONE",
     "PRIVATE_KEY",
+    "PRIVATE_PREFIXES",
     "SSN",
+    "PIIRules",
+    "PIIScanner",
     "iban_valid",
     "is_sensitive_ip",
     "luhn_valid",

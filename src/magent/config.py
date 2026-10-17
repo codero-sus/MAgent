@@ -17,10 +17,11 @@ resolved through :mod:`magent.secrets` and are never written back to disk.
 
 from __future__ import annotations
 
+import copy
 import os
 import sys
 import tomllib
-from dataclasses import asdict, dataclass, field, fields, replace
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -164,7 +165,14 @@ class ModelConfig:
             raise ConfigValidationError("[model] context_size must be positive")
         if self.max_output_tokens < 0:
             raise ConfigValidationError("[model] max_output_tokens cannot be negative")
-        if self.router_strategy not in ("priority", "round_robin", "least_used", "fastest", "cheapest", "random"):
+        if self.router_strategy not in (
+            "priority",
+            "round_robin",
+            "least_used",
+            "fastest",
+            "cheapest",
+            "random",
+        ):
             raise ConfigValidationError(f"[model] unknown router_strategy {self.router_strategy!r}")
 
     def model_for(self, role: str) -> str:
@@ -208,7 +216,9 @@ class GenerationConfig:
         if self.max_tokens < 1:
             raise ConfigValidationError("[generation] max_tokens must be at least 1")
         if self.request_format not in {"chat", "responses", "completion"}:
-            raise ConfigValidationError("[generation] request_format is chat, responses, or completion")
+            raise ConfigValidationError(
+                "[generation] request_format is chat, responses, or completion"
+            )
 
     def to_params(self) -> dict[str, Any]:
         """Return the subset of parameters that is non-default."""
@@ -332,9 +342,7 @@ class ToolsConfig:
     def validate(self) -> None:
         """Reject approval modes and limits that do not make sense."""
         if self.approval_mode not in {"never", "ask", "always", "dangerous"}:
-            raise ConfigValidationError(
-                "[tools] approval_mode is never, ask, always, or dangerous"
-            )
+            raise ConfigValidationError("[tools] approval_mode is never, ask, always, or dangerous")
         if self.max_file_read_bytes < 0 or self.max_file_write_bytes < 0:
             raise ConfigValidationError("[tools] file byte limits cannot be negative")
         if self.command_timeout <= 0:
@@ -369,7 +377,9 @@ class GuardrailsConfig:
     def validate(self) -> None:
         """Reject guardrail settings that would silently disable safety."""
         if self.injection_action not in {"warn", "block", "strip", "off"}:
-            raise ConfigValidationError("[guardrails] injection_action is warn, block, strip, or off")
+            raise ConfigValidationError(
+                "[guardrails] injection_action is warn, block, strip, or off"
+            )
         if self.pii_action not in {"redact", "mask", "block", "off"}:
             raise ConfigValidationError("[guardrails] pii_action is redact, mask, block, or off")
         if not 0.0 <= self.injection_threshold <= 1.0:
@@ -419,7 +429,9 @@ class OutputConfig:
     def validate(self) -> None:
         """Reject unknown output formats and verbosity levels."""
         if self.format not in {"text", "json", "markdown", "html", "csv", "jsonl"}:
-            raise ConfigValidationError("[output] format is text, json, markdown, html, csv, or jsonl")
+            raise ConfigValidationError(
+                "[output] format is text, json, markdown, html, csv, or jsonl"
+            )
         if self.verbosity not in {"quiet", "normal", "verbose", "debug"}:
             raise ConfigValidationError("[output] verbosity is quiet, normal, verbose, or debug")
 
@@ -504,7 +516,9 @@ class EvalConfig:
 
     dataset: str = "builtin"
     dataset_path: str = ""
-    metrics: list[str] = field(default_factory=lambda: ["exact_match", "contains", "tool_used", "latency"])
+    metrics: list[str] = field(
+        default_factory=lambda: ["exact_match", "contains", "tool_used", "latency"]
+    )
     repeats: int = 1
     concurrency: int = 4
     fail_below: float = 0.0
@@ -696,8 +710,18 @@ class Config:
         return "\n".join(lines)
 
     def clone(self, **overrides: Any) -> Config:
-        """Return a copy with selected top-level keys replaced."""
-        return replace(self, **overrides)
+        """Return an independent copy with selected top-level keys replaced.
+
+        Section objects contain mutable lists and maps. A shallow dataclass
+        replacement made policy changes on a clone mutate the process-wide
+        source configuration as well.
+        """
+        cloned = copy.deepcopy(self)
+        for name, value in overrides.items():
+            if not hasattr(cloned, name):
+                raise ConfigError(f"Unknown top-level configuration key {name!r}")
+            setattr(cloned, name, value)
+        return cloned
 
     def section(self, name: str) -> Any:
         """Return one configuration section by name."""
@@ -733,11 +757,13 @@ class Config:
             section = getattr(self, name)
             for item in fields(section):
                 value = getattr(section, item.name)
-                rows.append({
-                    "key": f"{name}.{item.name}",
-                    "value": value,
-                    "type": item.type if isinstance(item.type, str) else type(value).__name__,
-                })
+                rows.append(
+                    {
+                        "key": f"{name}.{item.name}",
+                        "value": value,
+                        "type": item.type if isinstance(item.type, str) else type(value).__name__,
+                    }
+                )
         return rows
 
 
@@ -824,9 +850,7 @@ def _apply_profiles(data: dict[str, Any], profile: str) -> dict[str, Any]:
                 f"Profile {profile!r} is not defined; available: {', '.join(sorted(profiles))}"
             )
         return data
-    merged = deep_merge(
-        {key: value for key, value in data.items() if key != "profiles"}, selected
-    )
+    merged = deep_merge({key: value for key, value in data.items() if key != "profiles"}, selected)
     return merged
 
 
@@ -843,7 +867,6 @@ def apply_env(config: Config, environ: dict[str, str] | None = None) -> list[str
         section = getattr(config, section_name, None)
         if section is None or not hasattr(section, key):
             continue
-        current = getattr(section, key)
         try:
             if caster is bool:
                 value: Any = str(raw).strip().lower() in {"1", "true", "yes", "on", "y"}
@@ -911,14 +934,22 @@ def build_config_data(
         if data:
             merged = deep_merge(merged, data)
             sources.append(str(path))
-    active_profile = profile or merged.get("profile") or os.environ.get(PROFILE_ENV_VAR) or "default"
+    active_profile = (
+        profile or merged.get("profile") or os.environ.get(PROFILE_ENV_VAR) or "default"
+    )
     merged = _apply_profiles(merged, str(active_profile))
     merged.setdefault("profile", str(active_profile))
     return merged, sources
 
 
 def config_from_dict(data: dict[str, Any]) -> Config:
-    """Build a :class:`Config` from a raw mapping, ignoring unknown keys."""
+    """Build a :class:`Config` while preserving extension-owned settings.
+
+    Unknown fields inside known sections are grouped under
+    ``extra['unknown_keys']``. Unknown top-level tables retain their original
+    names in :attr:`Config.extra`, allowing plugins to share the TOML file
+    without the core interpreting or silently deleting their configuration.
+    """
     config = Config()
     unknown: dict[str, Any] = {}
     for name, section_type in SECTION_TYPES.items():
@@ -928,11 +959,18 @@ def config_from_dict(data: dict[str, Any]) -> Config:
         section = getattr(config, name)
         for key, value in raw.items():
             if not hasattr(section, key):
-                unknown.setdefault(name, {})[key] = value
+                unknown.setdefault(name, {})[key] = copy.deepcopy(value)
                 continue
             current = getattr(section, key)
             setattr(section, key, _coerce(value, None, current))
     config.profile = str(data.get("profile", "default"))
+    supplied_extra = data.get("extra")
+    if isinstance(supplied_extra, dict):
+        config.extra.update(copy.deepcopy(supplied_extra))
+    metadata = {"profile", "profiles", "sources", "config_path", "data_dir", "cache_dir", "extra"}
+    for name, value in data.items():
+        if name not in SECTION_TYPES and name not in metadata:
+            config.extra[name] = copy.deepcopy(value)
     if unknown:
         config.extra["unknown_keys"] = unknown
     return config
@@ -955,7 +993,9 @@ def load_config(
     data, sources = build_config_data(paths=paths, profile=profile, required=required)
     config = config_from_dict(data)
     config.sources = sources
-    config.config_path = Path(path).expanduser() if path else (Path(sources[-1]) if sources else None)
+    config.config_path = (
+        Path(path).expanduser() if path else (Path(sources[-1]) if sources else None)
+    )
     if use_env:
         applied = apply_env(config)
         if applied:
@@ -984,7 +1024,7 @@ def write_example_config(path: str | Path, *, force: bool = False) -> Path:
     return target
 
 
-EXAMPLE_CONFIG = '''# MAgent configuration
+EXAMPLE_CONFIG = """# MAgent configuration
 # Every key is optional; uncomment and edit what you need.
 # Run `magent config list` to see effective values and where they came from.
 
@@ -1110,21 +1150,24 @@ guardrails = { injection_action = "block", pii_action = "block" }
 
 [profiles.offline]
 model = { backend = "echo", fallback_to_echo = true }
-'''
+"""
 """Commented example configuration written by ``magent config init``."""
 
 
 __all__ = [
-    "AgentConfig",
-    "CacheConfig",
     "CONFIG_ENV_VAR",
     "CONFIG_FILENAME",
-    "Config",
-    "ConfigError",
     "ENV_MAP",
     "ENV_PREFIX",
-    "EvalConfig",
     "EXAMPLE_CONFIG",
+    "PROFILE_ENV_VAR",
+    "SEARCH_ORDER",
+    "SECTION_TYPES",
+    "AgentConfig",
+    "CacheConfig",
+    "Config",
+    "ConfigError",
+    "EvalConfig",
     "GenerationConfig",
     "GuardrailsConfig",
     "HttpServerConfig",
@@ -1132,9 +1175,6 @@ __all__ = [
     "ModelConfig",
     "ObservabilityConfig",
     "OutputConfig",
-    "PROFILE_ENV_VAR",
-    "SEARCH_ORDER",
-    "SECTION_TYPES",
     "ServerConfig",
     "SessionConfig",
     "ToolsConfig",

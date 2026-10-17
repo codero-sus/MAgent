@@ -4,18 +4,34 @@ from __future__ import annotations
 
 import unittest
 
-from magent.memory import (ConversationWindow, HashingEmbedder, MemoryEntry, MemoryStore,
-                           ShortTermMemory, VectorIndex, build_store, rank_entries, tokenize)
+from magent.memory import (
+    ConversationWindow,
+    HashingEmbedder,
+    MemoryEntry,
+    ShortTermMemory,
+    VectorIndex,
+    build_store,
+    rank_entries,
+    tokenize,
+)
 from magent.memory.ranking import BM25Scorer, DecayPolicy
-from magent.rag import (Chunk, ChunkIndex, CitationSet, Retriever, chunk_markdown, chunk_python,
-                        chunk_text_blocks, cited_context, search_files, verify_citations)
+from magent.rag import (
+    Chunk,
+    CitationSet,
+    Retriever,
+    chunk_markdown,
+    chunk_python,
+    chunk_text_blocks,
+    cited_context,
+    search_files,
+    verify_citations,
+)
 from magent.testing.fixtures import build_sample_corpus, temp_workspace
 from magent.types import Message
+from tests.support import MAgentTestCase
 
-from tests.support import MagentTestCase
 
-
-class MemoryStoreTest(MagentTestCase):
+class MemoryStoreTest(MAgentTestCase):
     """Storing, searching and maintaining long-term memory."""
 
     def setUp(self) -> None:
@@ -23,8 +39,9 @@ class MemoryStoreTest(MagentTestCase):
         self.store = build_store(self.config(), root=self.home.path / "data")
 
     def test_add_and_get(self) -> None:
-        entry = self.store.add("the deploy key lives in ~/.config/magent", kind="fact",
-                               tags=["ops"])
+        entry = self.store.add(
+            "the deploy key lives in ~/.config/magent", kind="fact", tags=["ops"]
+        )
         self.assertTrue(entry.id)
         self.assertEqual(self.store.get(entry.id).content, entry.content)
         self.assertIn("ops", entry.tags)
@@ -62,8 +79,9 @@ class MemoryStoreTest(MagentTestCase):
         self.assertIn("merged", report)
 
     def test_entities_are_tracked(self) -> None:
-        self.store.add("Cortex runs at http://127.0.0.1:8624 and stores models in ~/models",
-                       kind="fact")
+        self.store.add(
+            "Cortex runs at http://127.0.0.1:8624 and stores models in ~/models", kind="fact"
+        )
         entities = self.store.entities()
         self.assertIsInstance(entities, dict)
         blob = str(entities)
@@ -94,8 +112,9 @@ class RankingTest(unittest.TestCase):
     """BM25, decay and hybrid ranking."""
 
     def test_bm25_prefers_the_matching_document(self) -> None:
-        scorer = BM25Scorer(["the cat sat on the mat", "a dog barked loudly",
-                             "cats and dogs are common pets"])
+        scorer = BM25Scorer(
+            ["the cat sat on the mat", "a dog barked loudly", "cats and dogs are common pets"]
+        )
         scores = scorer.scores("cat mat")
         self.assertEqual(scores.index(max(scores)), 0)
 
@@ -112,8 +131,10 @@ class RankingTest(unittest.TestCase):
         self.assertGreater(policy.factor(fresh), policy.min_score)
 
     def test_rank_entries_returns_the_best_first(self) -> None:
-        entries = [MemoryEntry(content="garden tools", kind="fact"),
-                   MemoryEntry(content="deployment runbook", kind="fact")]
+        entries = [
+            MemoryEntry(content="garden tools", kind="fact"),
+            MemoryEntry(content="deployment runbook", kind="fact"),
+        ]
         ranked = rank_entries(entries, "deployment runbook")
         self.assertIn("deployment", ranked[0].content)
 
@@ -142,7 +163,7 @@ class EmbeddingTest(unittest.TestCase):
         self.assertEqual(hits[0][0], "fruit")
 
 
-class ShortTermTest(MagentTestCase):
+class ShortTermTest(MAgentTestCase):
     """The conversation window trims and summarises."""
 
     def test_window_keeps_the_last_messages(self) -> None:
@@ -207,7 +228,7 @@ class ChunkerTest(unittest.TestCase):
         self.assertTrue(all(len(chunk.text) <= 400 for chunk in chunks))
 
 
-class RetrievalTest(MagentTestCase):
+class RetrievalTest(MAgentTestCase):
     """The retriever indexes a corpus and answers with citations."""
 
     def _retriever(self) -> tuple[Retriever, object]:
@@ -257,8 +278,10 @@ class RetrievalTest(MagentTestCase):
         self.assertTrue(hits)
 
     def test_cited_context_numbers_chunks(self) -> None:
-        chunks = [Chunk(text="alpha", source="a.txt", start_line=1, end_line=2),
-                  Chunk(text="beta", source="b.txt", start_line=3, end_line=4)]
+        chunks = [
+            Chunk(text="alpha", source="a.txt", start_line=1, end_line=2),
+            Chunk(text="beta", source="b.txt", start_line=3, end_line=4),
+        ]
         citation_set = cited_context(chunks)
         rendered = citation_set.render()
         self.assertIn("[1]", rendered)

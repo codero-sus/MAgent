@@ -14,9 +14,10 @@ still a skill (its name comes from the file stem).  Anything malformed raises
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from ..errors import SkillFormatError
 from ..utils.files import read_text_safe
@@ -65,8 +66,11 @@ class Skill:
             value = getattr(self, attr)
             if isinstance(value, str):
                 value = tuple(part.strip() for part in re.split(r"[,\n]", value) if part.strip())
-            setattr(self, attr, tuple(dict.fromkeys(str(item).strip() for item in value
-                                                    if str(item).strip())))
+            setattr(
+                self,
+                attr,
+                tuple(dict.fromkeys(str(item).strip() for item in value if str(item).strip())),
+            )
         self.priority = max(0, min(100, int(self.priority)))
 
     @property
@@ -249,9 +253,10 @@ def load_skill(path: str | Path) -> Skill:
     target = Path(path).expanduser()
     try:
         text = read_text_safe(target, limit=MAX_BODY_CHARS * 2)
-    except Exception as exc:  # noqa: BLE001 - reported as a format error
-        raise SkillFormatError(f"cannot read skill {target}: {exc}",
-                               details={"path": str(target)}) from exc
+    except Exception as exc:
+        raise SkillFormatError(
+            f"cannot read skill {target}: {exc}", details={"path": str(target)}
+        ) from exc
     return parse_skill(text, source=str(target))
 
 
@@ -290,8 +295,14 @@ def merge_skills(skills: Sequence[Skill], *, name: str = "combined") -> Skill:
     body = "\n\n".join(item.render(style="heading") for item in ordered if not item.is_empty)
     tags = tuple(dict.fromkeys(tag for item in ordered for tag in item.tags))
     tools = tuple(dict.fromkeys(tool for item in ordered for tool in item.tools))
-    return Skill(name=name, description=f"{len(ordered)} combined skills", body=body, tags=tags,
-                 tools=tools, metadata={"merged": [item.name for item in ordered]})
+    return Skill(
+        name=name,
+        description=f"{len(ordered)} combined skills",
+        body=body,
+        tags=tags,
+        tools=tools,
+        metadata={"merged": [item.name for item in ordered]},
+    )
 
 
 def iter_skill_files(root: str | Path) -> Iterable[Path]:

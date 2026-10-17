@@ -70,10 +70,10 @@ SAMPLE_DOCUMENTS: dict[str, str] = {
 SAMPLE_CODE: dict[str, str] = {
     "app.py": (
         "def add(a, b):\n"
-        "    \"\"\"Return the sum of two numbers.\"\"\"\n"
+        '    """Return the sum of two numbers."""\n'
         "    return a + b\n\n\n"
         "def divide(a, b):\n"
-        "    \"\"\"Return a divided by b, or None when b is zero.\"\"\"\n"
+        '    """Return a divided by b, or None when b is zero."""\n'
         "    if b == 0:\n"
         "        return None\n"
         "    return a / b\n"

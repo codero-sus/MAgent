@@ -53,17 +53,25 @@ class ImprovementsTest(unittest.TestCase):
     def test_verifier_accepts_the_manifest(self) -> None:
         completed = subprocess.run(
             [sys.executable, str(REPO_ROOT / "scripts" / "verify_improvements.py"), "--json"],
-            capture_output=True, text=True, cwd=REPO_ROOT, timeout=600,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            timeout=600,
         )
         payload = json.loads(completed.stdout or "{}")
-        self.assertEqual(completed.returncode, 0, completed.stdout[-2000:] + completed.stderr[-2000:])
+        self.assertEqual(
+            completed.returncode, 0, completed.stdout[-2000:] + completed.stderr[-2000:]
+        )
         self.assertTrue(payload.get("ok"))
         self.assertEqual(payload.get("verified"), self.manifest["total"])
 
     def test_counter_reports_the_same_number(self) -> None:
         completed = subprocess.run(
             [sys.executable, str(REPO_ROOT / "scripts" / "count_improvements.py")],
-            capture_output=True, text=True, cwd=REPO_ROOT, timeout=300,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            timeout=300,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr[-500:])
         self.assertEqual(int(completed.stdout.strip()), self.manifest["total"])

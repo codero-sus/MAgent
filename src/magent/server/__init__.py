@@ -2,7 +2,7 @@
 
 Public API:
 
-:class:`MagentServer`
+:class:`MAgentServer`
     binds a ``ThreadingHTTPServer``, exposes the REST API and serves the UI;
 :class:`Router` / :class:`Route`
     the tiny dependency-free routing table behind it;
@@ -11,17 +11,29 @@ Public API:
 :func:`build_server` / :func:`free_port` / :func:`wait_for_health`
     helpers used by ``magent serve`` and the tests.
 
->>> from magent.server import MagentServer
->>> server = MagentServer()
+>>> from magent.server import MAgentServer
+>>> server = MAgentServer()
 >>> server.router.resolve("GET", "/api/health").found
 True
 """
 
 from __future__ import annotations
 
-from .app import (DEFAULT_HOST, DEFAULT_PORT, INDEX_FILE, PUBLIC_ROUTES, SSE_HEADERS, STATIC_DIR,
-                  MagentServer, Request, ServerStats, build_server, free_port, static_files,
-                  wait_for_health)
+from .app import (
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    INDEX_FILE,
+    PUBLIC_ROUTES,
+    SSE_HEADERS,
+    STATIC_DIR,
+    MAgentServer,
+    Request,
+    ServerStats,
+    build_server,
+    free_port,
+    static_files,
+    wait_for_health,
+)
 from .routes import PARAM_RE, ROUTE_METHODS, Route, RouteMatch, Router, build_router
 
 __all__ = [
@@ -33,7 +45,7 @@ __all__ = [
     "ROUTE_METHODS",
     "SSE_HEADERS",
     "STATIC_DIR",
-    "MagentServer",
+    "MAgentServer",
     "Request",
     "Route",
     "RouteMatch",

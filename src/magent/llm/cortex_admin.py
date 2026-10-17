@@ -239,7 +239,9 @@ class CortexMetrics:
 class CortexAdmin:
     """Client for the Cortex ``/admin/api`` control plane."""
 
-    def __init__(self, backend: CortexBackend | None = None, settings: CortexSettings | None = None) -> None:
+    def __init__(
+        self, backend: CortexBackend | None = None, settings: CortexSettings | None = None
+    ) -> None:
         self.backend = backend or CortexBackend(settings or CortexSettings.from_env())
         self.settings = self.backend.settings
 
@@ -336,7 +338,9 @@ class CortexAdmin:
 
     # -- write operations ----------------------------------------------------
 
-    def start_model(self, model_id: str, *, wait: bool = True, timeout: float = 120.0) -> dict[str, Any]:
+    def start_model(
+        self, model_id: str, *, wait: bool = True, timeout: float = 120.0
+    ) -> dict[str, Any]:
         """Start a model's local runtime, optionally waiting for readiness."""
         result = self._post(MODEL_START_PATH, {"id": model_id}) or {}
         if wait:
@@ -360,9 +364,14 @@ class CortexAdmin:
         result = self._post(MODEL_STOP_ALL_PATH, {}) or {}
         return result if isinstance(result, dict) else {"ok": True}
 
-    def test_model(self, model_id: str, *, prompt: str = "ping", timeout: float = 60.0) -> dict[str, Any]:
+    def test_model(
+        self, model_id: str, *, prompt: str = "ping", timeout: float = 60.0
+    ) -> dict[str, Any]:
         """Run Cortex's own smoke test against a model."""
-        return self._post(MODEL_TEST_PATH, {"id": model_id, "prompt": prompt, "timeout": timeout}) or {}
+        return (
+            self._post(MODEL_TEST_PATH, {"id": model_id, "prompt": prompt, "timeout": timeout})
+            or {}
+        )
 
     def detect_capabilities(self, model_path: str) -> dict[str, Any]:
         """Ask Cortex to infer capabilities from a model file on disk."""
@@ -411,8 +420,14 @@ class CortexAdmin:
 
     # -- polling -------------------------------------------------------------
 
-    def wait_for_model(self, model_id: str, status: str = "running", *, timeout: float = 120.0,
-                       interval: float = 1.0) -> bool:
+    def wait_for_model(
+        self,
+        model_id: str,
+        status: str = "running",
+        *,
+        timeout: float = 120.0,
+        interval: float = 1.0,
+    ) -> bool:
         """Poll runtime state until a model reaches ``status`` or times out."""
         import time
 
@@ -458,9 +473,6 @@ __all__ = [
     "CONFIG_RELOAD_PATH",
     "CONFIG_RESET_PATH",
     "COOKBOOK_PATH",
-    "CortexAdmin",
-    "CortexMetrics",
-    "CortexState",
     "DETECT_CAPABILITIES_PATH",
     "METRICS_PATH",
     "METRICS_RESET_PATH",
@@ -475,4 +487,7 @@ __all__ = [
     "STATE_PATH",
     "UPDATE_CHECK_PATH",
     "UPDATE_INSTALL_PATH",
+    "CortexAdmin",
+    "CortexMetrics",
+    "CortexState",
 ]

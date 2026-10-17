@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
+from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 from ..logging_ import get_logger
 from ..utils.timeutil import backoff_schedule
@@ -153,9 +155,15 @@ class TaskOutcome:
             return self.value
         from ..errors import ToolError
 
-        raise ToolError(self.error or f"task {self.name!r} failed",
-                        details={"task": self.name, "type": self.error_type,
-                                 "timed_out": self.timed_out, "cancelled": self.cancelled})
+        raise ToolError(
+            self.error or f"task {self.name!r} failed",
+            details={
+                "task": self.name,
+                "type": self.error_type,
+                "timed_out": self.timed_out,
+                "cancelled": self.cancelled,
+            },
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the outcome, stringifying the value when it is not JSON-safe."""
@@ -184,8 +192,13 @@ class TaskOutcome:
 class WorkerPool:
     """A named, bounded thread pool with per-task outcomes."""
 
-    def __init__(self, max_workers: int = DEFAULT_WORKERS, *, name: str = "magent-pool",
-                 token: CancellationToken | None = None) -> None:
+    def __init__(
+        self,
+        max_workers: int = DEFAULT_WORKERS,
+        *,
+        name: str = "magent-pool",
+        token: CancellationToken | None = None,
+    ) -> None:
         """Create the pool lazily.
 
         Args:
@@ -210,8 +223,9 @@ class WorkerPool:
         """The underlying executor, created on first use."""
         with self._lock:
             if self._executor is None:
-                self._executor = ThreadPoolExecutor(max_workers=self.max_workers,
-                                                    thread_name_prefix=self.name)
+                self._executor = ThreadPoolExecutor(
+                    max_workers=self.max_workers, thread_name_prefix=self.name
+                )
             return self._executor
 
     def submit(self, name: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
@@ -226,14 +240,21 @@ class WorkerPool:
         last_error = ""
         last_type = ""
         timed_out = False
-        schedule = backoff_schedule(task.retries, base=task.backoff, factor=2.0,
-                                    cap=max(task.backoff * 8, 1.0))
+        schedule = backoff_schedule(
+            task.retries, base=task.backoff, factor=2.0, cap=max(task.backoff * 8, 1.0)
+        )
         for attempt in range(task.retries + 1):
             if self.token.cancelled:
-                return TaskOutcome(name=task.name, ok=False, cancelled=True, attempts=attempts + 1,
-                                   seconds=time.perf_counter() - started,
-                                   error=self.token.reason or "cancelled",
-                                   error_type="CancelledError", metadata=dict(task.metadata))
+                return TaskOutcome(
+                    name=task.name,
+                    ok=False,
+                    cancelled=True,
+                    attempts=attempts + 1,
+                    seconds=time.perf_counter() - started,
+                    error=self.token.reason or "cancelled",
+                    error_type="CancelledError",
+                    metadata=dict(task.metadata),
+                )
             attempts += 1
             future = self.submit(task.name, task.fn, *task.args, **task.kwargs)
             try:
@@ -244,7 +265,7 @@ class WorkerPool:
                 last_error = f"timed out after {task.timeout}s"
                 last_type = "TimeoutError"
                 timed_out = True
-            except Exception as exc:  # noqa: BLE001 - captured into the outcome
+            except Exception as exc:
                 last_error = str(exc) or type(exc).__name__
                 last_type = type(exc).__name__
                 timed_out = False
@@ -254,8 +275,14 @@ class WorkerPool:
                 seconds = time.perf_counter() - started
                 self.completed += 1
                 self.record_seconds(seconds)
-                return TaskOutcome(name=task.name, ok=True, value=value, seconds=seconds,
-                                   attempts=attempts, metadata=dict(task.metadata))
+                return TaskOutcome(
+                    name=task.name,
+                    ok=True,
+                    value=value,
+                    seconds=seconds,
+                    attempts=attempts,
+                    metadata=dict(task.metadata),
+                )
             if attempt < task.retries:
                 self.retries += 1
                 delay = schedule[attempt] if attempt < len(schedule) else task.backoff
@@ -263,14 +290,26 @@ class WorkerPool:
                     self.token.wait(delay)
                 continue
             self.failed += 1
-            return TaskOutcome(name=task.name, ok=False, error=last_error, error_type=last_type,
-                               timed_out=timed_out, attempts=attempts,
-                               seconds=time.perf_counter() - started,
-                               metadata=dict(task.metadata))
+            return TaskOutcome(
+                name=task.name,
+                ok=False,
+                error=last_error,
+                error_type=last_type,
+                timed_out=timed_out,
+                attempts=attempts,
+                seconds=time.perf_counter() - started,
+                metadata=dict(task.metadata),
+            )
         self.failed += 1
-        return TaskOutcome(name=task.name, ok=False, error=last_error, error_type=last_type,
-                           attempts=attempts, seconds=time.perf_counter() - started,
-                           metadata=dict(task.metadata))
+        return TaskOutcome(
+            name=task.name,
+            ok=False,
+            error=last_error,
+            error_type=last_type,
+            attempts=attempts,
+            seconds=time.perf_counter() - started,
+            metadata=dict(task.metadata),
+        )
 
     def run_many(self, tasks: Sequence[Task], *, timeout: float | None = None) -> list[TaskOutcome]:
         """Run tasks in parallel, returning one outcome per task in input order."""
@@ -291,29 +330,54 @@ class WorkerPool:
             except FutureTimeout:
                 future.cancel()
                 self.timeouts += 1
-                outcome = TaskOutcome(name=task.name, ok=False, timed_out=True,
-                                      error=f"batch timed out after {budget:.1f}s",
-                                      error_type="TimeoutError", metadata=dict(task.metadata))
-            except Exception as exc:  # noqa: BLE001
+                outcome = TaskOutcome(
+                    name=task.name,
+                    ok=False,
+                    timed_out=True,
+                    error=f"batch timed out after {budget:.1f}s",
+                    error_type="TimeoutError",
+                    metadata=dict(task.metadata),
+                )
+            except Exception as exc:
                 self.failed += 1
-                outcome = TaskOutcome(name=task.name, ok=False, error=str(exc) or type(exc).__name__,
-                                      error_type=type(exc).__name__, metadata=dict(task.metadata))
+                outcome = TaskOutcome(
+                    name=task.name,
+                    ok=False,
+                    error=str(exc) or type(exc).__name__,
+                    error_type=type(exc).__name__,
+                    metadata=dict(task.metadata),
+                )
             outcomes[id(task)] = outcome
         ordered: list[TaskOutcome] = []
         for index, (task, _) in enumerate(futures):
-            ordered.append(outcomes.get(id(task),
-                                        TaskOutcome(name=task.name, ok=False, error="not run")))
+            ordered.append(
+                outcomes.get(id(task), TaskOutcome(name=task.name, ok=False, error="not run"))
+            )
             ordered[-1].metadata["position"] = index
-        for task in tasks[len(futures):]:
-            ordered.append(TaskOutcome(name=task.name, ok=False, cancelled=True,
-                                       error=self.token.reason or "cancelled before start"))
+        for task in tasks[len(futures) :]:
+            ordered.append(
+                TaskOutcome(
+                    name=task.name,
+                    ok=False,
+                    cancelled=True,
+                    error=self.token.reason or "cancelled before start",
+                )
+            )
         return ordered
 
-    def map(self, fn: Callable[[Any], Any], items: Iterable[Any], *, timeout: float = DEFAULT_TIMEOUT,
-            name: str = "map") -> list[TaskOutcome]:
+    def map(
+        self,
+        fn: Callable[[Any], Any],
+        items: Iterable[Any],
+        *,
+        timeout: float = DEFAULT_TIMEOUT,
+        name: str = "map",
+    ) -> list[TaskOutcome]:
         """Apply ``fn`` to every item in parallel."""
-        tasks = [Task(name=f"{name}[{index}]", fn=fn, args=(item,), timeout=timeout)
-                 for index, item in enumerate(items)]
+        tasks = [
+            Task(name=f"{name}[{index}]", fn=fn, args=(item,), timeout=timeout)
+            for index, item in enumerate(items)
+        ]
         return self.run_many(tasks)
 
     def gather(self, *fns: Callable[[], Any], timeout: float = DEFAULT_TIMEOUT) -> list[Any]:
@@ -322,8 +386,10 @@ class WorkerPool:
         Failures become ``None`` in the corresponding position; use
         :meth:`run_many` when the error matters.
         """
-        tasks = [Task(name=getattr(fn, "__name__", f"task{i}"), fn=fn, timeout=timeout)
-                 for i, fn in enumerate(fns)]
+        tasks = [
+            Task(name=getattr(fn, "__name__", f"task{i}"), fn=fn, timeout=timeout)
+            for i, fn in enumerate(fns)
+        ]
         return [outcome.value if outcome.ok else None for outcome in self.run_many(tasks)]
 
     def record_seconds(self, seconds: float) -> None:
@@ -372,6 +438,7 @@ class WorkerPool:
 
 def _named(name: str, fn: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap a callable so thread dumps show the task name."""
+
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         threading.current_thread().name = f"{name}"
         return fn(*args, **kwargs)
@@ -383,19 +450,24 @@ def _named(name: str, fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def _with_retries(task: Task, pool: WorkerPool) -> TaskOutcome:
     """Run a task inside a worker thread, including its retries."""
-    schedule = backoff_schedule(task.retries, base=task.backoff, factor=2.0,
-                                cap=max(task.backoff * 8, 1.0))
+    schedule = backoff_schedule(
+        task.retries, base=task.backoff, factor=2.0, cap=max(task.backoff * 8, 1.0)
+    )
     last_error = ""
     last_type = ""
     started = time.perf_counter()
     for attempt in range(task.retries + 1):
         if pool.token.cancelled:
-            return TaskOutcome(name=task.name, cancelled=True, attempts=attempt + 1,
-                               error=pool.token.reason or "cancelled",
-                               seconds=time.perf_counter() - started)
+            return TaskOutcome(
+                name=task.name,
+                cancelled=True,
+                attempts=attempt + 1,
+                error=pool.token.reason or "cancelled",
+                seconds=time.perf_counter() - started,
+            )
         try:
             value = task.fn(*task.args, **task.kwargs)
-        except Exception as exc:  # noqa: BLE001 - converted into an outcome
+        except Exception as exc:
             last_error = str(exc) or type(exc).__name__
             last_type = type(exc).__name__
             if attempt < task.retries and isinstance(exc, task.retry_on):
@@ -405,22 +477,44 @@ def _with_retries(task: Task, pool: WorkerPool) -> TaskOutcome:
                     pool.token.wait(delay)
                 continue
             pool.failed += 1
-            return TaskOutcome(name=task.name, ok=False, error=last_error, error_type=last_type,
-                               attempts=attempt + 1, seconds=time.perf_counter() - started,
-                               metadata=dict(task.metadata))
+            return TaskOutcome(
+                name=task.name,
+                ok=False,
+                error=last_error,
+                error_type=last_type,
+                attempts=attempt + 1,
+                seconds=time.perf_counter() - started,
+                metadata=dict(task.metadata),
+            )
         pool.completed += 1
         pool.record_seconds(time.perf_counter() - started)
-        return TaskOutcome(name=task.name, ok=True, value=value, attempts=attempt + 1,
-                           seconds=time.perf_counter() - started, metadata=dict(task.metadata))
+        return TaskOutcome(
+            name=task.name,
+            ok=True,
+            value=value,
+            attempts=attempt + 1,
+            seconds=time.perf_counter() - started,
+            metadata=dict(task.metadata),
+        )
     pool.failed += 1
-    return TaskOutcome(name=task.name, ok=False, error=last_error or "exhausted retries",
-                       error_type=last_type, attempts=task.retries + 1,
-                       seconds=time.perf_counter() - started)
+    return TaskOutcome(
+        name=task.name,
+        ok=False,
+        error=last_error or "exhausted retries",
+        error_type=last_type,
+        attempts=task.retries + 1,
+        seconds=time.perf_counter() - started,
+    )
 
 
-def run_parallel(tasks: Sequence[Task] | Sequence[Callable[[], Any]], *, max_workers: int = DEFAULT_WORKERS,
-                 timeout: float = DEFAULT_TIMEOUT, token: CancellationToken | None = None,
-                 name: str = "parallel") -> list[TaskOutcome]:
+def run_parallel(
+    tasks: Sequence[Task] | Sequence[Callable[[], Any]],
+    *,
+    max_workers: int = DEFAULT_WORKERS,
+    timeout: float = DEFAULT_TIMEOUT,
+    token: CancellationToken | None = None,
+    name: str = "parallel",
+) -> list[TaskOutcome]:
     """Run several tasks in parallel without raising.
 
     Args:
@@ -438,35 +532,44 @@ def run_parallel(tasks: Sequence[Task] | Sequence[Callable[[], Any]], *, max_wor
         if isinstance(item, Task):
             prepared.append(item)
         elif callable(item):
-            prepared.append(Task(name=getattr(item, "__name__", f"{name}[{index}]"), fn=item,
-                                 timeout=timeout))
+            prepared.append(
+                Task(name=getattr(item, "__name__", f"{name}[{index}]"), fn=item, timeout=timeout)
+            )
         else:
             raise TypeError(f"task {index} is neither a Task nor callable: {type(item).__name__}")
     with WorkerPool(max_workers, name=name, token=token) as pool:
         return pool.run_many(prepared)
 
 
-def gather(*fns: Callable[[], Any], max_workers: int = DEFAULT_WORKERS,
-           timeout: float = DEFAULT_TIMEOUT) -> list[Any]:
+def gather(
+    *fns: Callable[[], Any], max_workers: int = DEFAULT_WORKERS, timeout: float = DEFAULT_TIMEOUT
+) -> list[Any]:
     """Run callables in parallel, returning values and ``None`` for failures."""
     outcomes = run_parallel(list(fns), max_workers=max_workers, timeout=timeout)
     return [outcome.value if outcome.ok else None for outcome in outcomes]
 
 
-def parallel_map(fn: Callable[[Any], Any], items: Iterable[Any], *,
-                 max_workers: int = DEFAULT_WORKERS, timeout: float = DEFAULT_TIMEOUT,
-                 token: CancellationToken | None = None) -> list[TaskOutcome]:
+def parallel_map(
+    fn: Callable[[Any], Any],
+    items: Iterable[Any],
+    *,
+    max_workers: int = DEFAULT_WORKERS,
+    timeout: float = DEFAULT_TIMEOUT,
+    token: CancellationToken | None = None,
+) -> list[TaskOutcome]:
     """Map a function over items in parallel."""
     materialised = list(items)
-    tasks = [Task(name=f"map[{index}]", fn=fn, args=(item,), timeout=timeout)
-             for index, item in enumerate(materialised)]
+    tasks = [
+        Task(name=f"map[{index}]", fn=fn, args=(item,), timeout=timeout)
+        for index, item in enumerate(materialised)
+    ]
     return run_parallel(tasks, max_workers=max_workers, token=token)
 
 
 def chunked(items: Sequence[Any], size: int) -> list[list[Any]]:
     """Split a sequence into chunks of at most ``size`` items."""
     step = max(1, int(size))
-    return [list(items[index:index + step]) for index in range(0, len(items), step)]
+    return [list(items[index : index + step]) for index in range(0, len(items), step)]
 
 
 __all__ = [

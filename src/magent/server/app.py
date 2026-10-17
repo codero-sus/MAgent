@@ -1,11 +1,11 @@
 """The embedded HTTP server: REST API plus the bundled web UI.
 
-``magent serve`` starts a :class:`MagentServer` - a stdlib
+``magent serve`` starts a :class:`MAgentServer` - a stdlib
 ``ThreadingHTTPServer`` with a small JSON API over the same objects the CLI
 uses.  It exists so MAgent can be driven from a browser, from a script in
 another language, or from a CI job, without adding a web framework dependency.
 
-Endpoints (see :meth:`MagentServer.routes` for the live list):
+Endpoints (see :meth:`MAgentServer.routes` for the live list):
 
 ``GET  /api/health``      liveness, version and uptime
 ``GET  /api/info``        configuration summary and capability counts
@@ -35,21 +35,19 @@ import json
 import socket
 import threading
 import time
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .._version import __version__
 from ..errors import MAgentError, ServerError_, ToolNotFoundError, ToolValidationError
 from ..logging_ import get_logger
-from ..types import EventKind
 from ..utils.files import iter_files, read_text_safe
-from ..utils.ids import ulid_like
 from ..utils.text import ellipsize
-from .routes import Router, RouteMatch
+from .routes import Router
 
 LOGGER = get_logger("server")
 """Logger for HTTP requests and errors."""
@@ -127,13 +125,23 @@ def _preset_names() -> list[str]:
     return preset_names()
 
 
-class MagentServer:
+class MAgentServer:
     """Owns the shared agent dependencies and the HTTP server socket."""
 
-    def __init__(self, config: Any = None, *, backend: Any = None, registry: Any = None,
-                 memory: Any = None, guardrails: Any = None, sessions: Any = None,
-                 retriever: Any = None, skills: Any = None, observability: Any = None,
-                 agent_factory: Any = None) -> None:
+    def __init__(
+        self,
+        config: Any = None,
+        *,
+        backend: Any = None,
+        registry: Any = None,
+        memory: Any = None,
+        guardrails: Any = None,
+        sessions: Any = None,
+        retriever: Any = None,
+        skills: Any = None,
+        observability: Any = None,
+        agent_factory: Any = None,
+    ) -> None:
         """Wire the server.
 
         Args:
@@ -234,10 +242,16 @@ class MagentServer:
             from ..tools import default_registry
 
             registry = default_registry()
-        return Agent(backend=backend, settings=self.config, registry=registry,
-                     memory=self.memory, guardrails=self.guardrails, session=None,
-                     name="MAgent[api]",
-                     workspace=getattr(getattr(self.config, "tools", None), "workspace", None))
+        return Agent(
+            backend=backend,
+            settings=self.config,
+            registry=registry,
+            memory=self.memory,
+            guardrails=self.guardrails,
+            session=None,
+            name="MAgent[api]",
+            workspace=getattr(getattr(self.config, "tools", None), "workspace", None),
+        )
 
     def run_prompt(self, prompt: str, *, session_id: str = "", **options: Any) -> dict[str, Any]:
         """Run one prompt and return a JSON-friendly result.
@@ -256,7 +270,7 @@ class MagentServer:
         if self.sessions is not None:
             try:
                 self.sessions.record_run(result, session_id=session_id or "")
-            except Exception as exc:  # noqa: BLE001 - persistence is best effort
+            except Exception as exc:
                 LOGGER.debug("session record failed: %s", exc)
         return {
             "run_id": result.run_id,
@@ -266,9 +280,12 @@ class MagentServer:
             "usage": result.usage.to_dict(),
             "cost": result.cost.to_dict(),
             "steps": [
-                {"index": step.index, "thought": ellipsize(step.thought, 400),
-                 "tools": [call.name for call in step.tool_calls],
-                 "seconds": round(step.duration_ms / 1000, 4)}
+                {
+                    "index": step.index,
+                    "thought": ellipsize(step.thought, 400),
+                    "tools": [call.name for call in step.tool_calls],
+                    "seconds": round(step.duration_ms / 1000, 4),
+                }
                 for step in result.steps
             ],
             "seconds": round(time.perf_counter() - started, 4),
@@ -288,8 +305,13 @@ class MagentServer:
         router.get("/api/tools", self.api_tools, description="Registered tools and schemas")
         router.post("/api/tools/{name}", self.api_tool_call, description="Dispatch one tool")
         router.post("/api/chat", self.api_chat, description="Run the agent on a prompt")
-        router.get("/api/chat/stream", self.api_chat_stream, description="Server-sent event stream",
-                   auth=True, stream=True)
+        router.get(
+            "/api/chat/stream",
+            self.api_chat_stream,
+            description="Server-sent event stream",
+            auth=True,
+            stream=True,
+        )
         router.get("/api/presets", self.api_presets, description="Agent presets")
         router.get("/api/skills", self.api_skills, description="Skill library")
         router.get("/api/sessions", self.api_sessions, description="Stored sessions")
@@ -306,19 +328,27 @@ class MagentServer:
 
     # -- handlers ------------------------------------------------------------
 
-    def api_index(self, request: "Request") -> tuple[int, Any]:
+    def api_index(self, request: Request) -> tuple[int, Any]:
         """Return the route table."""
         del request
-        return 200, {"name": "MAgent HTTP API", "version": __version__,
-                     "routes": self.router.describe()}
+        return 200, {
+            "name": "MAgent HTTP API",
+            "version": __version__,
+            "routes": self.router.describe(),
+        }
 
-    def api_health(self, request: "Request") -> tuple[int, Any]:
+    def api_health(self, request: Request) -> tuple[int, Any]:
         """Report liveness, version and uptime."""
         del request
-        return 200, {"status": "ok", "version": __version__, "uptime_seconds": self.stats.uptime,
-                     "runs": self.stats.runs, "started_at": self.stats.started_at}
+        return 200, {
+            "status": "ok",
+            "version": __version__,
+            "uptime_seconds": self.stats.uptime,
+            "runs": self.stats.runs,
+            "started_at": self.stats.started_at,
+        }
 
-    def api_info(self, request: "Request") -> tuple[int, Any]:
+    def api_info(self, request: Request) -> tuple[int, Any]:
         """Summarise the running configuration."""
         del request
         library = self.skills
@@ -346,7 +376,7 @@ class MagentServer:
             payload["current_session"] = sessions.current.id
         return 200, payload
 
-    def api_models(self, request: "Request") -> tuple[int, Any]:
+    def api_models(self, request: Request) -> tuple[int, Any]:
         """List models from the backend, with the Cortex admin view when available."""
         del request
         backend = self.backend
@@ -357,32 +387,41 @@ class MagentServer:
         models: list[dict[str, Any]] = []
         try:
             for model in backend.models() if hasattr(backend, "models") else []:
-                models.append({"id": getattr(model, "id", str(model)),
-                               "capabilities": list(getattr(model, "capabilities", []) or []),
-                               "runtime": getattr(model, "runtime", "")})
-        except Exception as exc:  # noqa: BLE001 - a probe failure is not an API failure
+                models.append(
+                    {
+                        "id": getattr(model, "id", str(model)),
+                        "capabilities": list(getattr(model, "capabilities", []) or []),
+                        "runtime": getattr(model, "runtime", ""),
+                    }
+                )
+        except Exception as exc:
             LOGGER.debug("model listing failed: %s", exc)
         health: dict[str, Any] = {}
         if hasattr(backend, "health"):
             try:
                 health = backend.health()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 health = {"ok": False, "error": str(exc)}
         return 200, {"models": models, "backend": type(backend).__name__, "health": health}
 
-    def api_tools(self, request: "Request") -> tuple[int, Any]:
+    def api_tools(self, request: Request) -> tuple[int, Any]:
         """List tools, optionally filtered by category or a text query."""
         registry = self._registry()
         category = request.query.get("category", "")
         search = request.query.get("q", "")
         if search:
-            return 200, {"tools": [item.to_openai() for item in registry.search(text=search)],
-                         "query": search}
+            return 200, {
+                "tools": [item.to_openai() for item in registry.search(text=search)],
+                "query": search,
+            }
         tools = registry.filter(categories=[category] if category else None)
-        return 200, {"tools": [item.to_openai() for item in tools], "count": len(tools),
-                     "categories": sorted(registry.categories())}
+        return 200, {
+            "tools": [item.to_openai() for item in tools],
+            "count": len(tools),
+            "categories": sorted(registry.categories()),
+        }
 
-    def api_tool_call(self, request: "Request") -> tuple[int, Any]:
+    def api_tool_call(self, request: Request) -> tuple[int, Any]:
         """Dispatch a single tool call."""
         registry = self._registry()
         name = request.params.get("name", "")
@@ -396,22 +435,37 @@ class MagentServer:
             result = tool.run(arguments, context=context)
         except ToolValidationError as exc:
             return 400, {"error": str(exc), "tool": name, "schema": tool.to_openai()}
-        return 200 if result.ok else 400, {"tool": name, "ok": result.ok,
-                                           "content": result.content, "error": result.error,
-                                           "error_code": result.error_code,
-                                           "seconds": round(result.duration_ms / 1000, 4)}
+        return 200 if result.ok else 400, {
+            "tool": name,
+            "ok": result.ok,
+            "content": result.content,
+            "error": result.error,
+            "error_code": result.error_code,
+            "seconds": round(result.duration_ms / 1000, 4),
+        }
 
-    def api_chat(self, request: "Request") -> tuple[int, Any]:
+    def api_chat(self, request: Request) -> tuple[int, Any]:
         """Run the agent on one prompt."""
         payload = request.json or {}
         prompt = str(payload.get("prompt") or request.query.get("prompt", ""))
         session_id = str(payload.get("session_id") or request.query.get("session_id", ""))
-        options = {key: value for key, value in payload.items()
-                   if key in {"loop_mode", "max_iterations", "temperature", "model", "persona",
-                              "include_files", "structured"}}
+        options = {
+            key: value
+            for key, value in payload.items()
+            if key
+            in {
+                "loop_mode",
+                "max_iterations",
+                "temperature",
+                "model",
+                "persona",
+                "include_files",
+                "structured",
+            }
+        }
         return 200, self.run_prompt(prompt, session_id=session_id, **options)
 
-    def api_chat_stream(self, request: "Request") -> tuple[int, Any]:
+    def api_chat_stream(self, request: Request) -> tuple[int, Any]:
         """Stream a run as server-sent events."""
         prompt = str(request.query.get("prompt", ""))
         session_id = str(request.query.get("session_id", ""))
@@ -428,21 +482,21 @@ class MagentServer:
                     payload = _event_payload(event)
                     stream_events.append(payload)
                     yield _sse(str(getattr(event.kind, "value", event.kind)), payload)
-            except Exception as exc:  # noqa: BLE001 - errors are part of the stream
+            except Exception as exc:
                 yield _sse("error", {"message": str(exc), "type": type(exc).__name__})
             self.stats.runs += 1
             yield _sse("done", {"seconds": round(time.perf_counter() - started, 4)})
 
         return 200, {"__sse__": generator()}
 
-    def api_presets(self, request: "Request") -> tuple[int, Any]:
+    def api_presets(self, request: Request) -> tuple[int, Any]:
         """List agent presets."""
         del request
         from ..agents.presets import describe_presets
 
         return 200, {"presets": describe_presets()}
 
-    def api_skills(self, request: "Request") -> tuple[int, Any]:
+    def api_skills(self, request: Request) -> tuple[int, Any]:
         """List skills, optionally matching a task."""
         library = self.skills
         if library is None:
@@ -451,23 +505,27 @@ class MagentServer:
             library = build_library(self.config)
         query = request.query.get("task", "")
         if query:
-            matches = [{"skill": match.skill.to_dict(), "score": match.score}
-                       for match in library.search(query)]
+            matches = [
+                {"skill": match.skill.to_dict(), "score": match.score}
+                for match in library.search(query)
+            ]
             return 200, {"matches": matches, "task": query}
-        return 200, {"skills": [skill.to_dict() for skill in library],
-                     "stats": library.stats()}
+        return 200, {"skills": [skill.to_dict() for skill in library], "stats": library.stats()}
 
-    def api_sessions(self, request: "Request") -> tuple[int, Any]:
+    def api_sessions(self, request: Request) -> tuple[int, Any]:
         """List stored sessions."""
         sessions = self._sessions()
         limit = _int(request.query.get("limit", 25), 25)
         query = request.query.get("q", "")
         tag = request.query.get("tag", "")
-        return 200, {"sessions": [info.to_dict() for info in sessions.list(limit=limit, tag=tag,
-                                                                          query=query)],
-                     "stats": sessions.store.stats() if hasattr(sessions, "store") else {}}
+        return 200, {
+            "sessions": [
+                info.to_dict() for info in sessions.list(limit=limit, tag=tag, query=query)
+            ],
+            "stats": sessions.store.stats() if hasattr(sessions, "store") else {},
+        }
 
-    def api_session(self, request: "Request") -> tuple[int, Any]:
+    def api_session(self, request: Request) -> tuple[int, Any]:
         """Return one session with its transcript."""
         from ..session import render_transcript
 
@@ -478,13 +536,13 @@ class MagentServer:
         fmt = request.query.get("format", "markdown")
         return 200, {"session": record.to_dict(), "transcript": render_transcript(record, fmt=fmt)}
 
-    def api_session_delete(self, request: "Request") -> tuple[int, Any]:
+    def api_session_delete(self, request: Request) -> tuple[int, Any]:
         """Delete one session."""
         sessions = self._sessions()
         removed = sessions.delete(request.params.get("id", ""))
         return (200 if removed else 404), {"deleted": removed}
 
-    def api_memory(self, request: "Request") -> tuple[int, Any]:
+    def api_memory(self, request: Request) -> tuple[int, Any]:
         """Search long-term memory."""
         if self.memory is None:
             return 200, {"entries": [], "enabled": False}
@@ -493,7 +551,7 @@ class MagentServer:
         entries = self.memory.search(query, limit=limit) if query else self.memory.recent(limit)
         return 200, {"entries": [entry.to_dict() for entry in entries], "query": query}
 
-    def api_memory_add(self, request: "Request") -> tuple[int, Any]:
+    def api_memory_add(self, request: Request) -> tuple[int, Any]:
         """Store one memory."""
         if self.memory is None:
             return 409, {"error": "memory is disabled"}
@@ -501,25 +559,32 @@ class MagentServer:
         content = str(payload.get("content", "")).strip()
         if not content:
             return 400, {"error": "content is required"}
-        entry = self.memory.add(content, kind=str(payload.get("kind", "fact")),
-                                tags=list(payload.get("tags", []) or []))
+        entry = self.memory.add(
+            content, kind=str(payload.get("kind", "fact")), tags=list(payload.get("tags", []) or [])
+        )
         return 201, {"entry": entry.to_dict()}
 
-    def api_metrics(self, request: "Request") -> tuple[int, Any]:
+    def api_metrics(self, request: Request) -> tuple[int, Any]:
         """Return metrics as Prometheus text or a JSON snapshot."""
         want = request.query.get("format", "json")
         if self.observability is not None:
             if want == "prometheus":
-                return 200, {"__text__": self.observability.prometheus(),
-                             "__content_type__": "text/plain; version=0.0.4; charset=utf-8"}
-            return 200, {"metrics": self.observability.report().to_dict(),
-                         "values": self.observability.metrics.flat()}
+                return 200, {
+                    "__text__": self.observability.prometheus(),
+                    "__content_type__": "text/plain; version=0.0.4; charset=utf-8",
+                }
+            return 200, {
+                "metrics": self.observability.report().to_dict(),
+                "values": self.observability.metrics.flat(),
+            }
         if want == "prometheus":
-            return 200, {"__text__": _prometheus_from_stats(self.stats),
-                         "__content_type__": "text/plain; charset=utf-8"}
+            return 200, {
+                "__text__": _prometheus_from_stats(self.stats),
+                "__content_type__": "text/plain; charset=utf-8",
+            }
         return 200, {"metrics": self.stats.to_dict()}
 
-    def api_rag_search(self, request: "Request") -> tuple[int, Any]:
+    def api_rag_search(self, request: Request) -> tuple[int, Any]:
         """Retrieve cited chunks for a query."""
         if self.retriever is None:
             return 200, {"chunks": [], "enabled": False}
@@ -528,10 +593,14 @@ class MagentServer:
             return 400, {"error": "q is required"}
         limit = _int(request.query.get("limit", 5), 5)
         result = self.retriever.retrieve(query, limit=limit)
-        return 200, {"query": query, "chunks": [chunk.to_dict() for chunk in result.chunks],
-                     "context": result.context, "stats": self.retriever.stats()}
+        return 200, {
+            "query": query,
+            "chunks": [chunk.to_dict() for chunk in result.chunks],
+            "context": result.context,
+            "stats": self.retriever.stats(),
+        }
 
-    def api_rag_ingest(self, request: "Request") -> tuple[int, Any]:
+    def api_rag_ingest(self, request: Request) -> tuple[int, Any]:
         """Index files or inline text for retrieval."""
         if self.retriever is None:
             return 200, {"ingested": 0, "enabled": False}
@@ -544,25 +613,28 @@ class MagentServer:
         report = self.retriever.ingest(paths, root=str(payload.get("root", "") or "") or None)
         return 201, {"report": report.to_dict(), "stats": self.retriever.stats()}
 
-    def serve_index(self, request: "Request") -> tuple[int, Any]:
+    def serve_index(self, request: Request) -> tuple[int, Any]:
         """Serve the bundled web UI (or a JSON hint when it is disabled)."""
         del request
         if not self.serve_ui:
             return 404, {"error": "the web UI is disabled (http.serve_ui = false)"}
         index = STATIC_DIR / INDEX_FILE
         if not index.is_file():
-            return 500, {"error": "the bundled UI file is missing",
-                         "path": str(index)}
-        return 200, {"__text__": read_text_safe(index, limit=2_000_000),
-                     "__content_type__": "text/html; charset=utf-8"}
+            return 500, {"error": "the bundled UI file is missing", "path": str(index)}
+        return 200, {
+            "__text__": read_text_safe(index, limit=2_000_000),
+            "__content_type__": "text/html; charset=utf-8",
+        }
 
-    def serve_favicon(self, request: "Request") -> tuple[int, Any]:
+    def serve_favicon(self, request: Request) -> tuple[int, Any]:
         """Answer the favicon request with an inline SVG-in-a-PNG-free 204."""
         del request
-        svg = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
-               "<rect width='32' height='32' rx='7' fill='#0f1115'/>"
-               "<text x='16' y='22' font-size='16' text-anchor='middle' fill='#7fd1ff'>M</text>"
-               "</svg>")
+        svg = (
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+            "<rect width='32' height='32' rx='7' fill='#0f1115'/>"
+            "<text x='16' y='22' font-size='16' text-anchor='middle' fill='#7fd1ff'>M</text>"
+            "</svg>"
+        )
         return 200, {"__text__": svg, "__content_type__": "image/svg+xml"}
 
     # -- helpers -------------------------------------------------------------
@@ -587,8 +659,14 @@ class MagentServer:
         """Build a tool context for API-dispatched calls."""
         from ..tools import ToolContext, build_sandbox
 
-        return ToolContext(config=self.config, registry=self.registry, sandbox=build_sandbox(
-            self.config, workspace=getattr(getattr(self.config, "tools", None), "workspace", None)))
+        return ToolContext(
+            config=self.config,
+            registry=self.registry,
+            sandbox=build_sandbox(
+                self.config,
+                workspace=getattr(getattr(self.config, "tools", None), "workspace", None),
+            ),
+        )
 
     # -- serving -------------------------------------------------------------
 
@@ -599,7 +677,7 @@ class MagentServer:
         bind_port = port or self.port
 
         class Handler(BaseHTTPRequestHandler):
-            """Request handler bound to one :class:`MagentServer`."""
+            """Request handler bound to one :class:`MAgentServer`."""
 
             server_version = f"MAgent/{__version__}"
             protocol_version = "HTTP/1.1"
@@ -608,31 +686,31 @@ class MagentServer:
                 """Route the stdlib access log into MAgent's logger."""
                 LOGGER.debug("http %s - %s", self.address_string(), fmt % args)
 
-            def do_GET(self) -> None:  # noqa: N802 - stdlib hook name
+            def do_GET(self) -> None:
                 """Handle GET."""
                 server._handle(self, "GET")
 
-            def do_POST(self) -> None:  # noqa: N802
+            def do_POST(self) -> None:
                 """Handle POST."""
                 server._handle(self, "POST")
 
-            def do_PUT(self) -> None:  # noqa: N802
+            def do_PUT(self) -> None:
                 """Handle PUT."""
                 server._handle(self, "PUT")
 
-            def do_PATCH(self) -> None:  # noqa: N802
+            def do_PATCH(self) -> None:
                 """Handle PATCH."""
                 server._handle(self, "PATCH")
 
-            def do_DELETE(self) -> None:  # noqa: N802
+            def do_DELETE(self) -> None:
                 """Handle DELETE."""
                 server._handle(self, "DELETE")
 
-            def do_HEAD(self) -> None:  # noqa: N802
+            def do_HEAD(self) -> None:
                 """Handle HEAD like GET without a body."""
                 server._handle(self, "HEAD")
 
-            def do_OPTIONS(self) -> None:  # noqa: N802
+            def do_OPTIONS(self) -> None:
                 """Answer CORS preflight requests."""
                 server._send_options(self)
 
@@ -642,7 +720,7 @@ class MagentServer:
         try:
             httpd.daemon_threads = True
             httpd.request_queue_size = int(getattr(self.http_config, "threads", 0) or 16)
-        except Exception:  # noqa: BLE001 - tuning is best effort
+        except Exception:
             pass
         self._httpd = httpd
         self._bound_port = int(httpd.server_address[1])
@@ -667,8 +745,12 @@ class MagentServer:
     def start_background(self, *, host: str = "", port: int = 0) -> str:
         """Start the server on a daemon thread and return its URL."""
         httpd = self.create_httpd(host, port)
-        self._thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.25},
-                                        name="magent-http", daemon=True)
+        self._thread = threading.Thread(
+            target=httpd.serve_forever,
+            kwargs={"poll_interval": 0.25},
+            name="magent-http",
+            daemon=True,
+        )
         self._thread.start()
         return f"http://{self.host}:{self.bound_port}"
 
@@ -708,8 +790,10 @@ class MagentServer:
         """Resolve and dispatch one request."""
         parsed = urlparse(handler.path)
         path = unquote(parsed.path or "/")
-        query = {key: values[0] if values else "" for key, values in
-                 parse_qs(parsed.query, keep_blank_values=True).items()}
+        query = {
+            key: values[0] if values else ""
+            for key, values in parse_qs(parsed.query, keep_blank_values=True).items()
+        }
         match = self.router.resolve(method, path)
         origin = handler.headers.get("Origin", "")
         if method == "OPTIONS":
@@ -717,8 +801,12 @@ class MagentServer:
             return
         if not match.found:
             if match.method_not_allowed:
-                self._send_json(handler, 405, {"error": f"method {method} not allowed",
-                                               "allowed": list(match.allowed)}, origin)
+                self._send_json(
+                    handler,
+                    405,
+                    {"error": f"method {method} not allowed", "allowed": list(match.allowed)},
+                    origin,
+                )
             else:
                 self._send_json(handler, 404, {"error": f"no route for {path}"}, origin)
             return
@@ -732,21 +820,39 @@ class MagentServer:
             if too_large:
                 self._send_json(handler, 413, {"error": "request body too large"}, origin)
                 return
-            request = Request(method=method, path=path, query=query, params=match.params,
-                              json=body, headers=dict(handler.headers), origin=origin,
-                              client=handler.client_address[0] if handler.client_address else "")
+            request = Request(
+                method=method,
+                path=path,
+                query=query,
+                params=match.params,
+                json=body,
+                headers=dict(handler.headers),
+                origin=origin,
+                client=handler.client_address[0] if handler.client_address else "",
+            )
             status, payload = route.handler(request)
         except MAgentError as exc:
             LOGGER.debug("api error on %s: %s", path, exc)
-            self._send_json(handler, _status_for(exc), {"error": str(exc),
-                                                        "type": type(exc).__name__,
-                                                        "details": getattr(exc, "details", {})}, origin)
+            self._send_json(
+                handler,
+                _status_for(exc),
+                {
+                    "error": str(exc),
+                    "type": type(exc).__name__,
+                    "details": getattr(exc, "details", {}),
+                },
+                origin,
+            )
             self.stats.record(path, _status_for(exc), 0)
             return
-        except Exception as exc:  # noqa: BLE001 - the server must never die on one request
+        except Exception as exc:
             LOGGER.warning("unhandled error on %s: %s", path, exc)
-            self._send_json(handler, 500, {"error": "internal error", "type": type(exc).__name__,
-                                           "message": str(exc)}, origin)
+            self._send_json(
+                handler,
+                500,
+                {"error": "internal error", "type": type(exc).__name__, "message": str(exc)},
+                origin,
+            )
             self.stats.record(path, 500, 0)
             return
         size = self._send(handler, status, payload, origin, head=(method == "HEAD"))
@@ -788,8 +894,11 @@ class MagentServer:
         if "*" in allowed:
             return [("Access-Control-Allow-Origin", "*")]
         if origin and origin in allowed:
-            return [("Access-Control-Allow-Origin", origin), ("Vary", "Origin"),
-                    ("Access-Control-Allow-Credentials", "true")]
+            return [
+                ("Access-Control-Allow-Origin", origin),
+                ("Vary", "Origin"),
+                ("Access-Control-Allow-Credentials", "true"),
+            ]
         return []
 
     def _send_options(self, handler: BaseHTTPRequestHandler) -> None:
@@ -797,19 +906,31 @@ class MagentServer:
         handler.send_response(204)
         for key, value in self._cors_headers(handler.headers.get("Origin", "")):
             handler.send_header(key, value)
-        handler.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-        handler.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
+        handler.send_header(
+            "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        )
+        handler.send_header(
+            "Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key"
+        )
         handler.send_header("Access-Control-Max-Age", "600")
         handler.send_header("Content-Length", "0")
         handler.end_headers()
 
-    def _send_json(self, handler: BaseHTTPRequestHandler, status: int, payload: Any,
-                   origin: str = "") -> int:
+    def _send_json(
+        self, handler: BaseHTTPRequestHandler, status: int, payload: Any, origin: str = ""
+    ) -> int:
         """Send a JSON response."""
         return self._send(handler, status, payload, origin)
 
-    def _send(self, handler: BaseHTTPRequestHandler, status: int, payload: Any, origin: str = "",
-              *, head: bool = False) -> int:
+    def _send(
+        self,
+        handler: BaseHTTPRequestHandler,
+        status: int,
+        payload: Any,
+        origin: str = "",
+        *,
+        head: bool = False,
+    ) -> int:
         """Write a response, handling SSE, raw text and JSON payloads."""
         if isinstance(payload, dict) and "__sse__" in payload:
             # The stream ends when the generator ends, so the connection must not
@@ -878,8 +999,14 @@ class Request:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the request without its body."""
-        return {"method": self.method, "path": self.path, "query": dict(self.query),
-                "params": dict(self.params), "origin": self.origin, "client": self.client}
+        return {
+            "method": self.method,
+            "path": self.path,
+            "query": dict(self.query),
+            "params": dict(self.params),
+            "origin": self.origin,
+            "client": self.client,
+        }
 
 
 def _status_for(exc: MAgentError) -> int:
@@ -936,7 +1063,7 @@ def _int(value: Any, default: int) -> int:
 def _sse(event: str, payload: Mapping[str, Any]) -> bytes:
     """Format one server-sent event."""
     body = json.dumps(_jsonable(payload), ensure_ascii=False, default=str)
-    return f"event: {event}\ndata: {body}\n\n".encode("utf-8")
+    return f"event: {event}\ndata: {body}\n\n".encode()
 
 
 def _event_payload(event: Any) -> dict[str, Any]:
@@ -947,8 +1074,12 @@ def _event_payload(event: Any) -> dict[str, Any]:
         if key in {"result", "response", "message", "call", "history"}:
             continue
         data[key] = _jsonable(value)
-    return {"kind": kind, "ts": getattr(event, "ts", time.time()), "run_id": getattr(event, "run_id", ""),
-            "data": data}
+    return {
+        "kind": kind,
+        "ts": getattr(event, "ts", time.time()),
+        "run_id": getattr(event, "run_id", ""),
+        "data": data,
+    }
 
 
 def _prometheus_from_stats(stats: ServerStats) -> str:
@@ -967,19 +1098,21 @@ def _prometheus_from_stats(stats: ServerStats) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build_server(config: Any = None, *, host: str = "", port: int = 0, **kwargs: Any) -> MagentServer:
+def build_server(
+    config: Any = None, *, host: str = "", port: int = 0, **kwargs: Any
+) -> MAgentServer:
     """Create a server, applying host/port overrides to its configuration.
 
     Args:
         config: loaded configuration
         host: bind address override
         port: bind port override
-        **kwargs: passed to :class:`MagentServer`
+        **kwargs: passed to :class:`MAgentServer`
     """
     if config is not None and (host or port):
         config.http.host = host or config.http.host
         config.http.port = port or config.http.port
-    return MagentServer(config, **kwargs)
+    return MAgentServer(config, **kwargs)
 
 
 def free_port(host: str = "127.0.0.1") -> int:
@@ -1017,7 +1150,7 @@ __all__ = [
     "PUBLIC_ROUTES",
     "SSE_HEADERS",
     "STATIC_DIR",
-    "MagentServer",
+    "MAgentServer",
     "Request",
     "ServerStats",
     "build_server",

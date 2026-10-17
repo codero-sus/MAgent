@@ -67,7 +67,9 @@ def _admin(context: ToolContext) -> CortexAdmin:
 
 
 @tool(category="cortex", risk="read", network=True, tags=["cortex", "health", "core"])
-def cortex_health(include_models: bool = True, context: ToolContext | None = None) -> dict[str, Any]:
+def cortex_health(
+    include_models: bool = True, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Check whether the Cortex LLMHoster instance is reachable and ready.
 
     Probes ``/health`` and ``/ready`` without invoking a model, so it is cheap
@@ -85,7 +87,7 @@ def cortex_health(include_models: bool = True, context: ToolContext | None = Non
     if include_models and probe.get("ok"):
         try:
             model_ids = backend.model_ids()
-        except Exception as exc:  # noqa: BLE001 - health must report, not raise
+        except Exception as exc:
             probe["models_error"] = f"{type(exc).__name__}: {exc}"
     return {
         "base_url": probe.get("base_url", ""),
@@ -102,8 +104,9 @@ def cortex_health(include_models: bool = True, context: ToolContext | None = Non
 
 
 @tool(category="cortex", risk="read", network=True, tags=["cortex", "models"])
-def cortex_models(capability: str = "", refresh: bool = False,
-                  context: ToolContext | None = None) -> dict[str, Any]:
+def cortex_models(
+    capability: str = "", refresh: bool = False, context: ToolContext | None = None
+) -> dict[str, Any]:
     """List the models a Cortex LLMHoster instance serves.
 
     Args:
@@ -119,15 +122,17 @@ def cortex_models(capability: str = "", refresh: bool = False,
         capabilities = [str(item) for item in record.get("capabilities", [])]
         if capability and capability.lower() not in [item.lower() for item in capabilities]:
             continue
-        entries.append({
-            "id": record.get("id", ""),
-            "owned_by": record.get("owned_by", ""),
-            "runtime": record.get("runtime", ""),
-            "capabilities": capabilities,
-            "default": bool(record.get("default", False)),
-            "context_length": record.get("context_length"),
-            "embedding": bool(record.get("embedding", False)),
-        })
+        entries.append(
+            {
+                "id": record.get("id", ""),
+                "owned_by": record.get("owned_by", ""),
+                "runtime": record.get("runtime", ""),
+                "capabilities": capabilities,
+                "default": bool(record.get("default", False)),
+                "context_length": record.get("context_length"),
+                "embedding": bool(record.get("embedding", False)),
+            }
+        )
     return {
         "base_url": backend.settings.base_url,
         "count": len(entries),
@@ -204,17 +209,34 @@ def cortex_hardware(context: ToolContext | None = None) -> dict[str, Any]:
         "auth_enabled": state.auth_enabled,
         "env_overrides": state.env_overrides,
         "model_states": runtimes,
-        "running": [name for name, value in runtimes.items()
-                    if isinstance(value, dict) and value.get("status") == "running"],
-        "stopped": [name for name, value in runtimes.items()
-                    if isinstance(value, dict) and value.get("status") == "stopped"],
+        "running": [
+            name
+            for name, value in runtimes.items()
+            if isinstance(value, dict) and value.get("status") == "running"
+        ],
+        "stopped": [
+            name
+            for name, value in runtimes.items()
+            if isinstance(value, dict) and value.get("status") == "stopped"
+        ],
     }
 
 
-@tool(category="cortex", risk="write", network=True, requires_approval=True,
-      timeout=300.0, tags=["cortex", "runtime", "control"])
-def cortex_model_control(model_id: str, action: str = "start", wait: bool = True,
-                           timeout: float = 120.0, context: ToolContext | None = None) -> dict[str, Any]:
+@tool(
+    category="cortex",
+    risk="write",
+    network=True,
+    requires_approval=True,
+    timeout=300.0,
+    tags=["cortex", "runtime", "control"],
+)
+def cortex_model_control(
+    model_id: str,
+    action: str = "start",
+    wait: bool = True,
+    timeout: float = 120.0,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Start, stop, or restart a Cortex model runtime.
 
     Args:
@@ -230,11 +252,14 @@ def cortex_model_control(model_id: str, action: str = "start", wait: bool = True
     if action not in actions:
         raise ToolExecutionError(f"action must be one of {sorted(actions)}")
     if action == "status":
-        return {"model_id": model_id, "action": action,
-                "status": admin.model_status(model_id)}
+        return {"model_id": model_id, "action": action, "status": admin.model_status(model_id)}
     if ctx.dry_run:
-        return {"model_id": model_id, "action": action, "dry_run": True,
-                "note": "no request would be sent"}
+        return {
+            "model_id": model_id,
+            "action": action,
+            "dry_run": True,
+            "note": "no request would be sent",
+        }
     if action == "stop-all":
         return {"model_id": None, "action": action, "response": admin.stop_all_models()}
     if action == "start":
@@ -261,7 +286,11 @@ def cortex_model_files(directory: str = "", context: ToolContext | None = None) 
     ctx = context or ToolContext()
     admin = _admin(ctx)
     files = admin.model_files(directory=directory or None)
-    total = sum(int(item.get("size_bytes") or item.get("size") or 0) for item in files if isinstance(item, dict))
+    total = sum(
+        int(item.get("size_bytes") or item.get("size") or 0)
+        for item in files
+        if isinstance(item, dict)
+    )
     from ...utils.files import human_size
 
     return {
@@ -301,8 +330,12 @@ def cortex_auth_options(context: ToolContext | None = None) -> dict[str, Any]:
 
 
 @tool(category="cortex", risk="read", network=True, timeout=180.0, tags=["cortex", "test"])
-def cortex_test_model(model_id: str = "", prompt: str = "ping", timeout: float = 60.0,
-                      context: ToolContext | None = None) -> dict[str, Any]:
+def cortex_test_model(
+    model_id: str = "",
+    prompt: str = "ping",
+    timeout: float = 60.0,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Send a one-token probe through a model to verify end-to-end inference.
 
     Args:
@@ -317,13 +350,18 @@ def cortex_test_model(model_id: str = "", prompt: str = "ping", timeout: float =
     if not target:
         raise ToolExecutionError("No model id supplied and Cortex reports no default model")
     response = admin.test_model(target, prompt=prompt, timeout=timeout)
-    return {"model_id": target, "prompt": prompt, "response": response,
-            "status": admin.model_status(target)}
+    return {
+        "model_id": target,
+        "prompt": prompt,
+        "response": response,
+        "status": admin.model_status(target),
+    }
 
 
 @tool(category="cortex", risk="read", network=True, tags=["cortex", "cookbook"])
-def cortex_cookbook(search: str = "", page: int = 1, limit: int = 20,
-                    context: ToolContext | None = None) -> dict[str, Any]:
+def cortex_cookbook(
+    search: str = "", page: int = 1, limit: int = 20, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Read Cortex's cookbook of example prompts and recipes.
 
     Args:
@@ -348,12 +386,15 @@ def cortex_diagnose(context: ToolContext | None = None) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     try:
         backend = _backend(ctx)
-        checks.append({"name": "configured", "ok": True,
-                       "detail": backend.settings.base_url})
-    except Exception as exc:  # noqa: BLE001 - diagnostics must not raise
+        checks.append({"name": "configured", "ok": True, "detail": backend.settings.base_url})
+    except Exception as exc:
         checks.append({"name": "configured", "ok": False, "detail": str(exc)})
-        return {"ok": False, "checks": checks, "summary": "no Cortex server configured",
-                "hint": "Set MAGENT_CORTEX_URL, or start Cortex LLMHoster on port 8624."}
+        return {
+            "ok": False,
+            "checks": checks,
+            "summary": "no Cortex server configured",
+            "hint": "Set MAGENT_CORTEX_URL, or start Cortex LLMHoster on port 8624.",
+        }
     admin = CortexAdmin(backend=backend)
     probes: list[tuple[str, Any]] = [
         ("liveness", lambda: backend.ping()),
@@ -369,11 +410,13 @@ def cortex_diagnose(context: ToolContext | None = None) -> dict[str, Any]:
             ok = bool(value) if isinstance(value, bool) else True
             checks.append({"name": name, "ok": ok, "detail": _summarize(value)})
             details[name] = value if not isinstance(value, dict) else _summarize(value)
-        except Exception as exc:  # noqa: BLE001 - diagnostics must not raise
+        except Exception as exc:
             checks.append({"name": name, "ok": False, "detail": f"{type(exc).__name__}: {exc}"})
     failures = [check for check in checks if not check["ok"]]
-    summary = "all checks passed" if not failures else "; ".join(
-        f"{check['name']}: {check['detail']}" for check in failures
+    summary = (
+        "all checks passed"
+        if not failures
+        else "; ".join(f"{check['name']}: {check['detail']}" for check in failures)
     )
     return {
         "ok": not failures,
@@ -389,14 +432,19 @@ def _diagnose_hint(failures: list[dict[str, Any]]) -> str:
     """Suggest a concrete next step based on which probes failed."""
     names = {failure["name"] for failure in failures}
     if "liveness" in names and "health" in names:
-        return ("Cortex is not answering on the configured URL. Start it with "
-                "'cortex-llmhoster' or set MAGENT_CORTEX_URL.")
+        return (
+            "Cortex is not answering on the configured URL. Start it with "
+            "'cortex-llmhoster' or set MAGENT_CORTEX_URL."
+        )
     if "models" in names:
-        return ("Cortex is up but serves no models. Configure one in Cortex and "
-                "start it, then retry.")
+        return (
+            "Cortex is up but serves no models. Configure one in Cortex and start it, then retry."
+        )
     if "admin_state" in names or "metrics" in names:
-        return ("The inference API answered but the admin API did not. Check "
-                "MAGENT_CORTEX_API_KEY and CORTEX_API_AUTH_ENABLED.")
+        return (
+            "The inference API answered but the admin API did not. Check "
+            "MAGENT_CORTEX_API_KEY and CORTEX_API_AUTH_ENABLED."
+        )
     return "Inspect the failing check above."
 
 
@@ -421,9 +469,18 @@ def ellipsize_json(value: Any, limit: int = 200) -> str:
 
 
 TOOLS: list[Any] = [
-    cortex_health, cortex_models, cortex_metrics, cortex_state, cortex_hardware,
-    cortex_model_control, cortex_model_files, cortex_update_check, cortex_auth_options,
-    cortex_test_model, cortex_cookbook, cortex_diagnose,
+    cortex_health,
+    cortex_models,
+    cortex_metrics,
+    cortex_state,
+    cortex_hardware,
+    cortex_model_control,
+    cortex_model_files,
+    cortex_update_check,
+    cortex_auth_options,
+    cortex_test_model,
+    cortex_cookbook,
+    cortex_diagnose,
 ]
 """Every tool defined in this module."""
 

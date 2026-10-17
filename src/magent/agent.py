@@ -28,9 +28,10 @@ import dataclasses
 import json
 import threading
 import time
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Sequence
+from typing import Any
 
 from .config import AgentConfig, Config, GenerationConfig, load_config
 from .errors import (
@@ -45,12 +46,12 @@ from .errors import (
     UserAbortError,
 )
 from .events import EventBus
-from .llm.base import CompletionRequest, StreamChunk
+from .llm.base import CompletionRequest
 from .llm.tokens import TokenEstimator, trim_messages
-from .llm.usage import BudgetConfig, PriceBook, UsageTracker
+from .llm.usage import BudgetConfig, UsageTracker
 from .logging_ import get_logger
-from .prompts.builder import build_system_prompt, describe_environment, tool_prompt_block
-from .prompts.personas import DEFAULT_PERSONA, get_persona
+from .prompts.builder import build_system_prompt, describe_environment
+from .prompts.personas import DEFAULT_PERSONA
 from .prompts.templates import (
     CONTEXT_HANDOFF,
     ERROR_RECOVERY_PROMPT,
@@ -60,7 +61,6 @@ from .prompts.templates import (
     PLANNING_PROMPT,
     REFLECTION_PROMPT,
     REPLAN_PROMPT,
-    STRUCTURED_OUTPUT_PROMPT,
     STRUCTURED_REPAIR_PROMPT,
     TOOL_FAILURE_BLOCK,
 )
@@ -197,7 +197,9 @@ class Plan:
 
     def is_complete(self) -> bool:
         """Report whether every step has finished, successfully or not."""
-        return bool(self.steps) and all(step.status in {"done", "failed", "skipped"} for step in self.steps)
+        return bool(self.steps) and all(
+            step.status in {"done", "failed", "skipped"} for step in self.steps
+        )
 
     def progress(self) -> tuple[int, int]:
         """Return ``(completed, total)`` step counts."""
@@ -209,9 +211,14 @@ class Plan:
         for step in self.steps[:max_steps]:
             if step.status == "pending":
                 continue
-            marker = {"done": "OK", "failed": "FAILED", "skipped": "skipped", "running": "..."}[step.status]
+            marker = {"done": "OK", "failed": "FAILED", "skipped": "skipped", "running": "..."}[
+                step.status
+            ]
             detail = step.result or step.error or ""
-            lines.append(f"{step.index}. [{marker}] {step.title}" + (f" - {ellipsize(detail, 200)}" if detail else ""))
+            lines.append(
+                f"{step.index}. [{marker}] {step.title}"
+                + (f" - {ellipsize(detail, 200)}" if detail else "")
+            )
         return "\n".join(lines) or "(nothing completed yet)"
 
     def to_dict(self) -> dict[str, Any]:
@@ -230,7 +237,10 @@ class Plan:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Plan:
         """Rebuild a plan from a serialized dictionary."""
-        steps = [PlanStep.from_dict(item, index) for index, item in enumerate(raw.get("steps") or [], start=1)]
+        steps = [
+            PlanStep.from_dict(item, index)
+            for index, item in enumerate(raw.get("steps") or [], start=1)
+        ]
         return cls(goal=str(raw.get("goal", "")), steps=steps, revised=int(raw.get("revised", 0)))
 
 
@@ -247,8 +257,14 @@ class Reflection:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the reflection."""
-        return {"step": self.step, "progress": self.progress, "gaps": self.gaps,
-                "next": self.next_action, "stop": self.stop, "raw": ellipsize(self.raw, 4000)}
+        return {
+            "step": self.step,
+            "progress": self.progress,
+            "gaps": self.gaps,
+            "next": self.next_action,
+            "stop": self.stop,
+            "raw": ellipsize(self.raw, 4000),
+        }
 
 
 def parse_reflection(text: str, step: int) -> Reflection:
@@ -258,8 +274,12 @@ def parse_reflection(text: str, step: int) -> Reflection:
     for line in str(text or "").splitlines():
         lowered = line.strip().lower()
         matched = ""
-        for key, prefixes in (("progress", ("progress:",)), ("gaps", ("gaps:", "gap:")),
-                              ("next", ("next:",)), ("stop", ("stop:",))):
+        for key, prefixes in (
+            ("progress", ("progress:",)),
+            ("gaps", ("gaps:", "gap:")),
+            ("next", ("next:",)),
+            ("stop", ("stop:",)),
+        ):
             if lowered.startswith(prefixes):
                 matched = key
                 break
@@ -312,9 +332,11 @@ class RunOptions:
     recall_memories: bool | None = None
     remember_outcome: bool | None = None
 
-    def merge_into(self, base: "RunOptions") -> "RunOptions":
+    def merge_into(self, base: RunOptions) -> RunOptions:
         """Return a copy of ``base`` with this run's non-empty values applied."""
-        merged = RunOptions(**{f.name: getattr(base, f.name) for f in __import__("dataclasses").fields(base)})
+        merged = RunOptions(
+            **{f.name: getattr(base, f.name) for f in __import__("dataclasses").fields(base)}
+        )
         for item in __import__("dataclasses").fields(self):
             value = getattr(self, item.name)
             if value in (None, "", (), [], {}):
@@ -425,9 +447,7 @@ class Agent:
         disabled = list(self.settings.tools.disabled or [])
         if enabled or disabled:
             for instance in list(registry.tools()):
-                if enabled and instance.name not in enabled:
-                    registry.unregister(instance.name)
-                elif instance.name in disabled:
+                if (enabled and instance.name not in enabled) or instance.name in disabled:
                     registry.unregister(instance.name)
         return registry
 
@@ -455,12 +475,12 @@ class Agent:
         )
         try:
             self.events.publish(event)
-        except Exception:  # noqa: BLE001 - telemetry must never break a run
+        except Exception:
             self.logger.debug("event publish failed for %s", event.kind)
         if self.on_event is not None:
             try:
                 self.on_event(event)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self.logger.debug("on_event callback failed for %s", event.kind)
         return event
 
@@ -493,8 +513,15 @@ class Agent:
 
     # -- context -------------------------------------------------------------
 
-    def tool_context(self, *, run_id: str = "", session_id: str = "", step_index: int = 0,
-                     dry_run: bool = False, secrets: Sequence[str] | None = None) -> ToolContext:
+    def tool_context(
+        self,
+        *,
+        run_id: str = "",
+        session_id: str = "",
+        step_index: int = 0,
+        dry_run: bool = False,
+        secrets: Sequence[str] | None = None,
+    ) -> ToolContext:
         """Build the :class:`ToolContext` handed to every tool call."""
         return ToolContext(
             workspace=self.workspace,
@@ -554,8 +581,10 @@ class Agent:
         if store is None or not hasattr(store, "search"):
             return ""
         try:
-            entries = store.search(query, limit=int(getattr(self.settings.memory, "recall_limit", 5)))
-        except Exception as exc:  # noqa: BLE001 - memory must never break a run
+            entries = store.search(
+                query, limit=int(getattr(self.settings.memory, "recall_limit", 5))
+            )
+        except Exception as exc:
             self.logger.debug("memory recall failed: %s", exc)
             return ""
         if not entries:
@@ -576,8 +605,13 @@ class Agent:
         if verdict is None:
             return
         if getattr(verdict, "blocked", False):
-            self.emit(EventKind.GUARDRAIL_BLOCKED, run_id=run_id, stage="prompt",
-                      reason=getattr(verdict, "reason", ""), rule=getattr(verdict, "rule", ""))
+            self.emit(
+                EventKind.GUARDRAIL_BLOCKED,
+                run_id=run_id,
+                stage="prompt",
+                reason=getattr(verdict, "reason", ""),
+                rule=getattr(verdict, "rule", ""),
+            )
             raise GuardrailError(getattr(verdict, "reason", "prompt blocked by guardrail"))
 
     def _inspect_output(self, text: str, run_id: str) -> str:
@@ -586,8 +620,12 @@ class Agent:
         if verdict is None:
             return text
         if getattr(verdict, "blocked", False):
-            self.emit(EventKind.GUARDRAIL_BLOCKED, run_id=run_id, stage="output",
-                      reason=getattr(verdict, "reason", ""))
+            self.emit(
+                EventKind.GUARDRAIL_BLOCKED,
+                run_id=run_id,
+                stage="output",
+                reason=getattr(verdict, "reason", ""),
+            )
             raise GuardrailError(getattr(verdict, "reason", "output blocked by guardrail"))
         replaced = getattr(verdict, "text", None)
         return str(replaced) if isinstance(replaced, str) and replaced else text
@@ -603,7 +641,7 @@ class Agent:
             return hook(text)
         except GuardrailError:
             raise
-        except Exception as exc:  # noqa: BLE001 - a broken guardrail must not kill the run
+        except Exception as exc:
             self.logger.warning("guardrail %s failed: %s", method, exc)
             return None
 
@@ -613,7 +651,9 @@ class Agent:
         """Run the agent and return only the final text."""
         return self.run(prompt, **kwargs).output
 
-    def chat(self, messages: Sequence[Message] | Sequence[dict[str, Any]], **kwargs: Any) -> RunResult:
+    def chat(
+        self, messages: Sequence[Message] | Sequence[dict[str, Any]], **kwargs: Any
+    ) -> RunResult:
         """Run the agent over an existing conversation instead of a new prompt."""
         parsed = [
             message if isinstance(message, Message) else Message.from_dict(message)
@@ -646,7 +686,7 @@ class Agent:
             """Run the loop in the background, then signal completion."""
             try:
                 self.run(prompt, on_event=collector, **kwargs)
-            except Exception as exc:  # noqa: BLE001 - surface failures as events
+            except Exception as exc:
                 # ``run`` has already restored the agent's own callback, so the
                 # failure event is emitted (which publishes it to the bus) and
                 # then handed to the collector explicitly.
@@ -710,8 +750,9 @@ class Agent:
 
     # -- the loop ------------------------------------------------------------
 
-    def _run(self, prompt: str, *, messages: Sequence[Message] | None,
-             options: RunOptions) -> RunResult:
+    def _run(
+        self, prompt: str, *, messages: Sequence[Message] | None, options: RunOptions
+    ) -> RunResult:
         """Implement :meth:`run`; separated so event wiring stays readable."""
         run_id = new_id("run")
         with self._lock:
@@ -723,17 +764,28 @@ class Agent:
         max_iterations = int(options.max_iterations or self.config.max_iterations)
         tracker = self.tracker
         tracker.reset()
-        self.emit(EventKind.RUN_STARTED, run_id=run_id, mode=mode, model=options.model or self.model,
-                  prompt=ellipsize(prompt, 500), max_iterations=max_iterations)
+        self.emit(
+            EventKind.RUN_STARTED,
+            run_id=run_id,
+            mode=mode,
+            model=options.model or self.model,
+            prompt=ellipsize(prompt, 500),
+            max_iterations=max_iterations,
+        )
         if prompt:
             self._inspect_prompt(prompt, run_id)
 
         conversation: list[Message] = self._initial_messages(prompt, messages, options, run_id)
         registry = self._run_registry(options)
-        context = self.tool_context(run_id=run_id, session_id=options.session_id,
-                                    dry_run=options.dry_run)
-        result = RunResult(run_id=run_id, started_at=started, model=options.model or self.model,
-                           messages=list(conversation))
+        context = self.tool_context(
+            run_id=run_id, session_id=options.session_id, dry_run=options.dry_run
+        )
+        result = RunResult(
+            run_id=run_id,
+            started_at=started,
+            model=options.model or self.model,
+            messages=list(conversation),
+        )
         stop_reason = StopReason.COMPLETED
         error_text: str | None = None
         plan: Plan | None = None
@@ -741,8 +793,12 @@ class Agent:
 
         try:
             if mode == "plan":
-                plan = self.plan(prompt or _last_user_text(conversation), registry=registry,
-                                 run_id=run_id, options=options)
+                plan = self.plan(
+                    prompt or _last_user_text(conversation),
+                    registry=registry,
+                    run_id=run_id,
+                    options=options,
+                )
                 self.last_plan = plan
             index = 0
             while index < max_iterations:
@@ -754,8 +810,11 @@ class Agent:
                 if violations:
                     stop_reason = StopReason.BUDGET
                     error_text = "; ".join(item.message for item in violations)
-                    self.emit(EventKind.BUDGET_WARNING, run_id=run_id,
-                              violations=[item.to_dict() for item in violations])
+                    self.emit(
+                        EventKind.BUDGET_WARNING,
+                        run_id=run_id,
+                        violations=[item.to_dict() for item in violations],
+                    )
                     break
                 step_prompt = prompt
                 if plan is not None:
@@ -764,12 +823,17 @@ class Agent:
                         stop_reason = StopReason.COMPLETED
                         if not result.output:
                             result.output = self._final_answer(
-                                prompt or _last_user_text(conversation), conversation, options, run_id
+                                prompt or _last_user_text(conversation),
+                                conversation,
+                                options,
+                                run_id,
                             )
                         break
                     current.mark_running()
                     step_prompt = PLAN_STEP_PROMPT.render(
-                        index=current.index, total=len(plan.steps), title=current.title,
+                        index=current.index,
+                        total=len(plan.steps),
+                        title=current.title,
                         detail=current.detail or "(no detail)",
                         done_when=current.done_when or "(implicit)",
                         history=plan.history_text(),
@@ -788,11 +852,22 @@ class Agent:
                 step.stop_reason = response.finish_reason
                 step.cache_hit = response.cache_hit
                 step.usage = response.usage
-                tracker.record_response(step.model, response.usage, latency_ms=response.latency_ms,
-                                        cache_hit=response.cache_hit)
-                self.emit(EventKind.LLM_RESPONSE, run_id=run_id, index=index, model=step.model,
-                          usage=response.usage.to_dict(), finish_reason=response.finish_reason,
-                          latency_ms=response.latency_ms, chars=len(response.text or ""))
+                tracker.record_response(
+                    step.model,
+                    response.usage,
+                    latency_ms=response.latency_ms,
+                    cache_hit=response.cache_hit,
+                )
+                self.emit(
+                    EventKind.LLM_RESPONSE,
+                    run_id=run_id,
+                    index=index,
+                    model=step.model,
+                    usage=response.usage.to_dict(),
+                    finish_reason=response.finish_reason,
+                    latency_ms=response.latency_ms,
+                    chars=len(response.text or ""),
+                )
                 assistant_message = response.to_message()
                 conversation.append(assistant_message)
                 step.message = assistant_message
@@ -803,20 +878,30 @@ class Agent:
                     allowed = response.tool_calls[: max(1, self.config.max_tool_calls_per_step)]
                     dropped = len(response.tool_calls) - len(allowed)
                     if dropped:
-                        self.logger.warning("dropped %d tool call(s) above the per-step limit", dropped)
+                        self.logger.warning(
+                            "dropped %d tool call(s) above the per-step limit", dropped
+                        )
                     step.tool_calls = list(allowed)
-                    tool_results = self._execute_tools(allowed, context.sub(step_index=index), run_id)
+                    tool_results = self._execute_tools(
+                        allowed, context.sub(step_index=index), run_id
+                    )
                     step.tool_results = tool_results
                     for tool_result in tool_results:
                         conversation.append(Message.tool(tool_result))
                         tracker.record_tool_call(1)
                     failures = sum(1 for item in tool_results if not item.ok)
-                    consecutive_failures = consecutive_failures + 1 if failures == len(tool_results) else 0
+                    consecutive_failures = (
+                        consecutive_failures + 1 if failures == len(tool_results) else 0
+                    )
                     if plan is not None:
                         current = plan.next_step()
                         if current is not None and current.status == "running":
                             if failures:
-                                current.mark_failed("; ".join(item.error or "" for item in tool_results if not item.ok)[:400])
+                                current.mark_failed(
+                                    "; ".join(
+                                        item.error or "" for item in tool_results if not item.ok
+                                    )[:400]
+                                )
                             else:
                                 current.mark_done(_summarize_results(tool_results))
                     if consecutive_failures >= self.config.max_consecutive_failures:
@@ -850,10 +935,18 @@ class Agent:
                     self._finish_step(step, run_id)
                     break
 
-                if mode == "reflect" and self.config.reflection and index % max(1, self.config.reflection_every) == 0:
-                    reflection = self.reflect(goal=prompt or _last_user_text(conversation),
-                                              history=_transcript_text(conversation), step=index,
-                                              options=options, run_id=run_id)
+                if (
+                    mode == "reflect"
+                    and self.config.reflection
+                    and index % max(1, self.config.reflection_every) == 0
+                ):
+                    reflection = self.reflect(
+                        goal=prompt or _last_user_text(conversation),
+                        history=_transcript_text(conversation),
+                        step=index,
+                        options=options,
+                        run_id=run_id,
+                    )
                     if reflection.stop:
                         stop_reason = StopReason.COMPLETED
                         step.duration_ms = (time.perf_counter() - step_started) * 1000.0
@@ -861,7 +954,9 @@ class Agent:
                         result.steps.append(step)
                         self._finish_step(step, run_id)
                         if not result.output:
-                            result.output = self._final_answer(prompt, conversation, options, run_id)
+                            result.output = self._final_answer(
+                                prompt, conversation, options, run_id
+                            )
                         break
 
                 step.duration_ms = (time.perf_counter() - step_started) * 1000.0
@@ -899,9 +994,18 @@ class Agent:
         result.stop_reason = stop_reason
         result.error = error_text
         result.messages = list(conversation)
-        result.usage = Usage(**{f: getattr(tracker.usage, f) for f in
-                                ("prompt_tokens", "completion_tokens", "total_tokens",
-                                 "cached_tokens", "reasoning_tokens")})
+        result.usage = Usage(
+            **{
+                f: getattr(tracker.usage, f)
+                for f in (
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "cached_tokens",
+                    "reasoning_tokens",
+                )
+            }
+        )
         result.cost = tracker.cost
         result.metadata = {
             "mode": mode,
@@ -918,33 +1022,54 @@ class Agent:
         }
         self.history = list(conversation)
         self.last_run = result
-        if options.remember_outcome or (options.remember_outcome is None and
-                                        bool(getattr(self.settings.memory, "remember_outcomes", False))):
+        if options.remember_outcome or (
+            options.remember_outcome is None
+            and bool(getattr(self.settings.memory, "remember_outcomes", False))
+        ):
             self._remember_outcome(result)
         if self.session is not None:
             self._persist_session(result, options)
         if stop_reason is StopReason.CANCELLED:
             self.reset_cancel()
         kind = EventKind.RUN_FINISHED if stop_reason.is_success() else EventKind.RUN_FAILED
-        self.emit(kind, run_id=run_id, stop_reason=stop_reason.value, error=error_text,
-                  output=ellipsize(result.output, 2000), steps=len(result.steps),
-                  tool_calls=result.tool_call_count, usage=result.usage.to_dict(),
-                  duration_ms=result.duration_ms, result=result)
-        # Captured after the terminal event so a consumer replaying
-        # ``result.events`` sees the run finish rather than a run that never did.
-        result.events = list(self.events.history(limit=500))
+        self.emit(
+            kind,
+            run_id=run_id,
+            stop_reason=stop_reason.value,
+            error=error_text,
+            output=ellipsize(result.output, 2000),
+            steps=len(result.steps),
+            tool_calls=result.tool_call_count,
+            usage=result.usage.to_dict(),
+            duration_ms=result.duration_ms,
+            result=result,
+        )
+        # Captured after the terminal event so replay sees the run finish. The
+        # bus belongs to the reusable Agent, however, so filter its history:
+        # otherwise the second RunResult also contained every event from run one.
+        result.events = [
+            event for event in self.events.history(limit=500) if event.run_id == run_id
+        ]
         return result
 
     def _finish_step(self, step: StepRecord, run_id: str) -> None:
         """Emit the ``step.finished`` event for one iteration."""
-        self.emit(EventKind.STEP_FINISHED, run_id=run_id, index=step.index, model=step.model,
-                  tool_calls=len(step.tool_calls),
-                  tool_errors=sum(1 for item in step.tool_results if not item.ok),
-                  usage=step.usage.to_dict(), duration_ms=round(step.duration_ms, 2),
-                  stop_reason=step.stop_reason, thought=ellipsize(step.thought, 1000))
+        self.emit(
+            EventKind.STEP_FINISHED,
+            run_id=run_id,
+            index=step.index,
+            model=step.model,
+            tool_calls=len(step.tool_calls),
+            tool_errors=sum(1 for item in step.tool_results if not item.ok),
+            usage=step.usage.to_dict(),
+            duration_ms=round(step.duration_ms, 2),
+            stop_reason=step.stop_reason,
+            thought=ellipsize(step.thought, 1000),
+        )
 
-    def _initial_messages(self, prompt: str, messages: Sequence[Message] | None,
-                          options: RunOptions, run_id: str) -> list[Message]:
+    def _initial_messages(
+        self, prompt: str, messages: Sequence[Message] | None, options: RunOptions, run_id: str
+    ) -> list[Message]:
         """Build the opening conversation for a run."""
         conversation: list[Message] = []
         system_text = self.system_prompt(options)
@@ -956,10 +1081,16 @@ class Agent:
             conversation.append(Message.user(prompt))
         if self.history and getattr(self.settings.session, "carry_history", False):
             carry = CONTEXT_HANDOFF.render(summary=_transcript_text(self.history[-6:]))
-            conversation.insert(1 if conversation and conversation[0].role is Role.SYSTEM else 0,
-                                Message.system(carry))
-        self.emit(EventKind.LLM_REQUEST, run_id=run_id, messages=len(conversation),
-                  tokens=self.estimator.estimate_messages(conversation))
+            conversation.insert(
+                1 if conversation and conversation[0].role is Role.SYSTEM else 0,
+                Message.system(carry),
+            )
+        self.emit(
+            EventKind.LLM_REQUEST,
+            run_id=run_id,
+            messages=len(conversation),
+            tokens=self.estimator.estimate_messages(conversation),
+        )
         return conversation
 
     def _run_registry(self, options: RunOptions) -> ToolRegistry:
@@ -977,8 +1108,14 @@ class Agent:
             subset.register(instance)
         return subset
 
-    def _call_model(self, conversation: list[Message], registry: ToolRegistry,
-                    options: RunOptions, run_id: str, index: int) -> ChatResponse:
+    def _call_model(
+        self,
+        conversation: list[Message],
+        registry: ToolRegistry,
+        options: RunOptions,
+        run_id: str,
+        index: int,
+    ) -> ChatResponse:
         """Build one :class:`CompletionRequest` and call the backend."""
         params = self.generation.to_params()
         if options.temperature is not None:
@@ -998,17 +1135,24 @@ class Agent:
             **{key: value for key, value in params.items() if key != "extra"},
             extra=params.get("extra", {}),
         )
-        self.emit(EventKind.LLM_REQUEST, run_id=run_id, index=index, model=model,
-                  messages=len(conversation),
-                  tokens=self.estimator.estimate_messages(conversation),
-                  tools=len(request.tools or []))
+        self.emit(
+            EventKind.LLM_REQUEST,
+            run_id=run_id,
+            index=index,
+            model=model,
+            messages=len(conversation),
+            tokens=self.estimator.estimate_messages(conversation),
+            tools=len(request.tools or []),
+        )
         if self._cancel.is_set():
             raise CancelledError("Run cancelled before the model call")
         if request.stream and hasattr(self.backend, "stream"):
             return self._stream_completion(request, run_id, index)
         return self.backend.complete(request)
 
-    def _stream_completion(self, request: CompletionRequest, run_id: str, index: int) -> ChatResponse:
+    def _stream_completion(
+        self, request: CompletionRequest, run_id: str, index: int
+    ) -> ChatResponse:
         """Consume a streamed completion, emitting deltas as they arrive."""
         text_parts: list[str] = []
         final: ChatResponse | None = None
@@ -1017,17 +1161,25 @@ class Agent:
                 text_parts.append(chunk.text)
                 self.emit(EventKind.TEXT_DELTA, run_id=run_id, index=index, text=chunk.text)
             if chunk.tool_calls and final is None:
-                final = ChatResponse(text="".join(text_parts), model=chunk.model or request.model,
-                                     tool_calls=list(chunk.tool_calls),
-                                     finish_reason=chunk.finish_reason or "tool_calls",
-                                     usage=chunk.usage or Usage())
+                final = ChatResponse(
+                    text="".join(text_parts),
+                    model=chunk.model or request.model,
+                    tool_calls=list(chunk.tool_calls),
+                    finish_reason=chunk.finish_reason or "tool_calls",
+                    usage=chunk.usage or Usage(),
+                )
             if chunk.is_final and final is None:
-                final = ChatResponse(text="".join(text_parts), model=chunk.model or request.model,
-                                     finish_reason=chunk.finish_reason or "stop",
-                                     usage=chunk.usage or Usage(), raw=dict(chunk.raw))
+                final = ChatResponse(
+                    text="".join(text_parts),
+                    model=chunk.model or request.model,
+                    finish_reason=chunk.finish_reason or "stop",
+                    usage=chunk.usage or Usage(),
+                    raw=dict(chunk.raw),
+                )
         if final is None:
-            final = ChatResponse(text="".join(text_parts), model=request.model,
-                                 finish_reason="stop", usage=Usage())
+            final = ChatResponse(
+                text="".join(text_parts), model=request.model, finish_reason="stop", usage=Usage()
+            )
         if final.text:
             self.emit(EventKind.TEXT_DONE, run_id=run_id, index=index, chars=len(final.text))
         return final
@@ -1042,13 +1194,20 @@ class Agent:
 
     # -- tools ---------------------------------------------------------------
 
-    def _execute_tools(self, calls: list[ToolCall], context: ToolContext, run_id: str) -> list[ToolResult]:
+    def _execute_tools(
+        self, calls: list[ToolCall], context: ToolContext, run_id: str
+    ) -> list[ToolResult]:
         """Approve, dispatch, and record a batch of tool calls."""
         approved: list[ToolCall] = []
         results: list[ToolResult] = []
         for call in calls:
-            self.emit(EventKind.TOOL_CALL, run_id=run_id, tool=call.name,
-                      arguments=call.arguments, call_id=call.id)
+            self.emit(
+                EventKind.TOOL_CALL,
+                run_id=run_id,
+                tool=call.name,
+                arguments=call.arguments,
+                call_id=call.id,
+            )
             decision = self._approve(call, context, run_id)
             if decision is not None:
                 results.append(decision)
@@ -1058,14 +1217,21 @@ class Agent:
             return results
         parallel = self.config.parallel_tools and len(approved) > 1
         dispatched = self.registry.dispatch_many(
-            approved, context, parallel=parallel, max_workers=8,
+            approved,
+            context,
+            parallel=parallel,
+            max_workers=8,
             on_result=lambda item: self._on_tool_result(item, run_id),
         )
         merged: dict[str, ToolResult] = {item.call_id: item for item in dispatched}
         for call in approved:
             result = merged.get(call.id) or ToolResult(
-                call_id=call.id, name=call.name, ok=False, error="tool produced no result",
-                error_code="no_result")
+                call_id=call.id,
+                name=call.name,
+                ok=False,
+                error="tool produced no result",
+                error_code="no_result",
+            )
             results.append(self._guard_tool_result(result, run_id))
         order = {call.id: position for position, call in enumerate(calls)}
         results.sort(key=lambda item: order.get(item.call_id, len(order)))
@@ -1081,25 +1247,39 @@ class Agent:
         substituted. Scanning is capped so a large read does not cost more than
         the read itself.
         """
-        if self.guardrails is None or not result.ok or not hasattr(self.guardrails, "inspect_tool_result"):
+        if (
+            self.guardrails is None
+            or not result.ok
+            or not hasattr(self.guardrails, "inspect_tool_result")
+        ):
             return result
         rendered = _render_content(result.content)
         if not rendered.strip():
             return result
-        verdict = self._guardrail_tool_result(rendered[:MAX_SCANNED_RESULT_CHARS], result.name, run_id)
+        verdict = self._guardrail_tool_result(
+            rendered[:MAX_SCANNED_RESULT_CHARS], result.name, run_id
+        )
         if verdict is None:
             return result
         if verdict.blocked:
-            self.emit(EventKind.GUARDRAIL_BLOCKED, run_id=run_id, stage="tool_result",
-                      tool=result.name, reason=verdict.reason, rules=verdict.rules())
+            self.emit(
+                EventKind.GUARDRAIL_BLOCKED,
+                run_id=run_id,
+                stage="tool_result",
+                tool=result.name,
+                reason=verdict.reason,
+                rules=verdict.rules(),
+            )
             return ToolResult(
                 call_id=result.call_id,
                 name=result.name,
                 ok=False,
                 content=None,
-                error=(f"The output of {result.name} was withheld by a guardrail: "
-                       f"{verdict.reason}. Treat the source as untrusted and continue "
-                       "with a different approach."),
+                error=(
+                    f"The output of {result.name} was withheld by a guardrail: "
+                    f"{verdict.reason}. Treat the source as untrusted and continue "
+                    "with a different approach."
+                ),
                 error_code="guardrail_tool_result",
                 duration_ms=result.duration_ms,
                 metadata={**result.metadata, "guardrail": verdict.to_dict()},
@@ -1112,8 +1292,11 @@ class Agent:
                 content=verdict.text,
                 duration_ms=result.duration_ms,
                 truncated=result.truncated,
-                metadata={**result.metadata, "guardrail_sanitized": True,
-                          "guardrail": verdict.to_dict()},
+                metadata={
+                    **result.metadata,
+                    "guardrail_sanitized": True,
+                    "guardrail": verdict.to_dict(),
+                },
             )
         if verdict.findings:
             result.metadata.setdefault("guardrail_warnings", []).extend(
@@ -1128,19 +1311,31 @@ class Agent:
             return None
         try:
             return hook(text, tool=tool, run_id=run_id, agent=self.name)
-        except Exception as exc:  # noqa: BLE001 - a broken guardrail must not kill the run
+        except Exception as exc:
             self.logger.warning("tool-result guardrail failed: %s", exc)
             return None
 
     def _on_tool_result(self, result: ToolResult, run_id: str) -> None:
         """Emit the event for one finished tool call."""
         if result.ok:
-            self.emit(EventKind.TOOL_RESULT, run_id=run_id, tool=result.name, call_id=result.call_id,
-                      duration_ms=round(result.duration_ms, 2), truncated=result.truncated,
-                      content=ellipsize(_render_content(result.content), 2000))
+            self.emit(
+                EventKind.TOOL_RESULT,
+                run_id=run_id,
+                tool=result.name,
+                call_id=result.call_id,
+                duration_ms=round(result.duration_ms, 2),
+                truncated=result.truncated,
+                content=ellipsize(_render_content(result.content), 2000),
+            )
         else:
-            self.emit(EventKind.TOOL_ERROR, run_id=run_id, tool=result.name, call_id=result.call_id,
-                      error=result.error, error_code=result.error_code)
+            self.emit(
+                EventKind.TOOL_ERROR,
+                run_id=run_id,
+                tool=result.name,
+                call_id=result.call_id,
+                error=result.error,
+                error_code=result.error_code,
+            )
 
     def _approve(self, call: ToolCall, context: ToolContext, run_id: str) -> ToolResult | None:
         """Gate one tool call through the approval manager.
@@ -1171,8 +1366,14 @@ class Agent:
         if record.decision in {ApprovalDecision.APPROVE, ApprovalDecision.APPROVE_SESSION}:
             return None
         reason = record.reason or "denied by approval policy"
-        self.emit(EventKind.APPROVAL_DECIDED, run_id=run_id, tool=call.name,
-                  decision=record.decision.value, reason=reason, by=record.by)
+        self.emit(
+            EventKind.APPROVAL_DECIDED,
+            run_id=run_id,
+            tool=call.name,
+            decision=record.decision.value,
+            reason=reason,
+            by=record.by,
+        )
         return self._denial_result(call, f"{reason} ({record.decision.value})", record.by)
 
     def _denial_result(self, call: ToolCall, reason: str, decided_by: str) -> ToolResult:
@@ -1193,8 +1394,9 @@ class Agent:
 
     # -- structured output ---------------------------------------------------
 
-    def _structured_output(self, text: str, options: RunOptions, conversation: list[Message],
-                           run_id: str) -> Any:
+    def _structured_output(
+        self, text: str, options: RunOptions, conversation: list[Message], run_id: str
+    ) -> Any:
         """Parse and validate a structured response, repairing it once if needed.
 
         ``structured=True`` asks for JSON without a schema; a dict is validated
@@ -1222,11 +1424,14 @@ class Agent:
         )
         conversation.append(Message.user(repair))
         self.emit(EventKind.CUSTOM, run_id=run_id, kind_label="structured.repair", error=error)
-        response = self.backend.complete(CompletionRequest(
-            messages=list(conversation),
-            model=options.model or self.model,
-            response_format=response_format_for(schema),
-            max_tokens=options.max_tokens))
+        response = self.backend.complete(
+            CompletionRequest(
+                messages=list(conversation),
+                model=options.model or self.model,
+                response_format=response_format_for(schema),
+                max_tokens=options.max_tokens,
+            )
+        )
         retry_text = response.text or ""
         retry = parse_json_payload(retry_text)
         if retry is None:
@@ -1244,8 +1449,15 @@ class Agent:
 
     # -- planning and reflection --------------------------------------------
 
-    def plan(self, goal: str, *, registry: ToolRegistry | None = None, run_id: str = "",
-             options: RunOptions | None = None, max_steps: int = 6) -> Plan:
+    def plan(
+        self,
+        goal: str,
+        *,
+        registry: ToolRegistry | None = None,
+        run_id: str = "",
+        options: RunOptions | None = None,
+        max_steps: int = 6,
+    ) -> Plan:
         """Ask the model for an ordered, checkable plan.
 
         Falls back to a single-step plan when the model does not return a JSON
@@ -1253,67 +1465,116 @@ class Agent:
         """
         active = registry if registry is not None else self.registry
         names = ", ".join(active.names()) or "(none)"
-        prompt = PLANNING_PROMPT.render(goal=goal, tools=ellipsize(names, 3000),
-                                        max_steps=str(min(max_steps, MAX_PLAN_STEPS)))
-        response = self.backend.complete(CompletionRequest(
-            messages=[Message.system("You produce concise, verifiable plans as JSON arrays."),
-                      Message.user(prompt)],
-            model=(options.model if options else "") or self.model,
-            temperature=0.2,
-            max_tokens=1024,
-        ))
-        self.tracker.record_response(response.model or self.model, response.usage,
-                                     latency_ms=response.latency_ms)
+        prompt = PLANNING_PROMPT.render(
+            goal=goal, tools=ellipsize(names, 3000), max_steps=str(min(max_steps, MAX_PLAN_STEPS))
+        )
+        response = self.backend.complete(
+            CompletionRequest(
+                messages=[
+                    Message.system("You produce concise, verifiable plans as JSON arrays."),
+                    Message.user(prompt),
+                ],
+                model=(options.model if options else "") or self.model,
+                temperature=0.2,
+                max_tokens=1024,
+            )
+        )
+        self.tracker.record_response(
+            response.model or self.model, response.usage, latency_ms=response.latency_ms
+        )
         steps = _parse_plan_steps(response.text or "", max_steps=min(max_steps, MAX_PLAN_STEPS))
         plan = Plan(goal=goal, steps=steps, raw=ellipsize(response.text or "", 4000))
         self.emit(EventKind.PLAN_CREATED, run_id=run_id, plan=plan.to_dict())
         return plan
 
-    def replan(self, plan: Plan, failed_step: PlanStep, *, options: RunOptions | None = None,
-               run_id: str = "") -> Plan:
+    def replan(
+        self,
+        plan: Plan,
+        failed_step: PlanStep,
+        *,
+        options: RunOptions | None = None,
+        run_id: str = "",
+    ) -> Plan:
         """Revise a plan after a step failed."""
         prompt = REPLAN_PROMPT.render(
             plan="\n".join(f"{step.index}. {step.title}" for step in plan.steps),
             failed_step=failed_step.title,
             error=failed_step.error or "(unknown)",
         )
-        response = self.backend.complete(CompletionRequest(
-            messages=[Message.user(prompt)], model=(options.model if options else "") or self.model,
-            temperature=0.3, max_tokens=1024))
+        response = self.backend.complete(
+            CompletionRequest(
+                messages=[Message.user(prompt)],
+                model=(options.model if options else "") or self.model,
+                temperature=0.3,
+                max_tokens=1024,
+            )
+        )
         steps = _parse_plan_steps(response.text or "")
         if not steps:
             return plan
-        revised = Plan(goal=plan.goal, steps=steps, revised=plan.revised + 1,
-                       raw=ellipsize(response.text or "", 4000))
+        revised = Plan(
+            goal=plan.goal,
+            steps=steps,
+            revised=plan.revised + 1,
+            raw=ellipsize(response.text or "", 4000),
+        )
         self.emit(EventKind.PLAN_CREATED, run_id=run_id, plan=revised.to_dict(), revised=True)
         return revised
 
-    def reflect(self, *, goal: str, history: str, step: int, options: RunOptions | None = None,
-                run_id: str = "") -> Reflection:
+    def reflect(
+        self,
+        *,
+        goal: str,
+        history: str,
+        step: int,
+        options: RunOptions | None = None,
+        run_id: str = "",
+    ) -> Reflection:
         """Run one reflection checkpoint and return the parsed assessment."""
         prompt = REFLECTION_PROMPT.render(goal=goal, history=ellipsize(history, 6000))
-        response = self.backend.complete(CompletionRequest(
-            messages=[Message.user(prompt)], model=(options.model if options else "") or self.model,
-            temperature=0.2, max_tokens=512))
-        self.tracker.record_response(response.model or self.model, response.usage,
-                                     latency_ms=response.latency_ms)
+        response = self.backend.complete(
+            CompletionRequest(
+                messages=[Message.user(prompt)],
+                model=(options.model if options else "") or self.model,
+                temperature=0.2,
+                max_tokens=512,
+            )
+        )
+        self.tracker.record_response(
+            response.model or self.model, response.usage, latency_ms=response.latency_ms
+        )
         reflection = parse_reflection(response.text or "", step)
         self.emit(EventKind.REFLECTION, run_id=run_id, **reflection.to_dict())
         return reflection
 
-    def critique(self, question: str, answer: str, *, options: RunOptions | None = None) -> dict[str, Any]:
+    def critique(
+        self, question: str, answer: str, *, options: RunOptions | None = None
+    ) -> dict[str, Any]:
         """Ask the model to review a draft answer and report whether it is sound."""
         from .prompts.templates import CRITIQUE_PROMPT
 
-        response = self.backend.complete(CompletionRequest(
-            messages=[Message.user(CRITIQUE_PROMPT.render(question=question, answer=answer))],
-            model=(options.model if options else "") or self.model, temperature=0.1, max_tokens=512))
+        response = self.backend.complete(
+            CompletionRequest(
+                messages=[Message.user(CRITIQUE_PROMPT.render(question=question, answer=answer))],
+                model=(options.model if options else "") or self.model,
+                temperature=0.1,
+                max_tokens=512,
+            )
+        )
         text = (response.text or "").strip()
-        return {"sound": text.upper().startswith("LGTM"), "critique": text,
-                "usage": response.usage.to_dict()}
+        return {
+            "sound": text.upper().startswith("LGTM"),
+            "critique": text,
+            "usage": response.usage.to_dict(),
+        }
 
-    def summarize(self, messages: Sequence[Message] | None = None, *, max_words: int = 300,
-                  options: RunOptions | None = None) -> str:
+    def summarize(
+        self,
+        messages: Sequence[Message] | None = None,
+        *,
+        max_words: int = 300,
+        options: RunOptions | None = None,
+    ) -> str:
         """Compress a conversation into a carry-over summary."""
         from .prompts.templates import SUMMARIZE_PROMPT
 
@@ -1321,34 +1582,59 @@ class Agent:
         transcript = _transcript_text(source)
         if not transcript.strip():
             return ""
-        response = self.backend.complete(CompletionRequest(
-            messages=[Message.user(SUMMARIZE_PROMPT.render(transcript=ellipsize(transcript, 12000),
-                                                           max_words=str(max_words)))],
-            model=(options.model if options else "") or self.model, temperature=0.2,
-            max_tokens=max_words * 2))
+        response = self.backend.complete(
+            CompletionRequest(
+                messages=[
+                    Message.user(
+                        SUMMARIZE_PROMPT.render(
+                            transcript=ellipsize(transcript, 12000), max_words=str(max_words)
+                        )
+                    )
+                ],
+                model=(options.model if options else "") or self.model,
+                temperature=0.2,
+                max_tokens=max_words * 2,
+            )
+        )
         return (response.text or "").strip()
 
-    def _final_answer(self, prompt: str, conversation: list[Message], options: RunOptions,
-                      run_id: str) -> str:
+    def _final_answer(
+        self, prompt: str, conversation: list[Message], options: RunOptions, run_id: str
+    ) -> str:
         """Force a user-facing answer when the loop ran out of iterations."""
         findings = _transcript_text(conversation[-8:])
-        response = self.backend.complete(CompletionRequest(
-            messages=[Message.system(self.system_prompt(options)),
-                      Message.user(FINAL_ANSWER_PROMPT.render(
-                          goal=prompt or _last_user_text(conversation),
-                          findings=ellipsize(findings, 6000)))],
-            model=options.model or self.model, temperature=self.generation.temperature,
-            max_tokens=self.generation.max_tokens))
-        self.tracker.record_response(response.model or self.model, response.usage,
-                                     latency_ms=response.latency_ms)
-        self.emit(EventKind.CUSTOM, run_id=run_id, kind_label="agent.final_answer",
-                  chars=len(response.text or ""))
+        response = self.backend.complete(
+            CompletionRequest(
+                messages=[
+                    Message.system(self.system_prompt(options)),
+                    Message.user(
+                        FINAL_ANSWER_PROMPT.render(
+                            goal=prompt or _last_user_text(conversation),
+                            findings=ellipsize(findings, 6000),
+                        )
+                    ),
+                ],
+                model=options.model or self.model,
+                temperature=self.generation.temperature,
+                max_tokens=self.generation.max_tokens,
+            )
+        )
+        self.tracker.record_response(
+            response.model or self.model, response.usage, latency_ms=response.latency_ms
+        )
+        self.emit(
+            EventKind.CUSTOM,
+            run_id=run_id,
+            kind_label="agent.final_answer",
+            chars=len(response.text or ""),
+        )
         return self._inspect_output(response.text or "", run_id)
 
     # -- context management --------------------------------------------------
 
-    def _manage_context(self, conversation: list[Message], run_id: str,
-                        options: RunOptions) -> list[Message]:
+    def _manage_context(
+        self, conversation: list[Message], run_id: str, options: RunOptions
+    ) -> list[Message]:
         """Trim the conversation when it approaches the model context window."""
         window = int(getattr(self.settings.model, "context_size", 0) or 0)
         if window <= 0:
@@ -1377,7 +1663,7 @@ class Agent:
                 metadata={"steps": len(result.steps), "tool_calls": result.tool_call_count},
             )
             self.emit(EventKind.MEMORY_WRITE, run_id=result.run_id, kind="outcome")
-        except Exception as exc:  # noqa: BLE001 - memory is best effort
+        except Exception as exc:
             self.logger.debug("could not remember outcome: %s", exc)
 
     def _persist_session(self, result: RunResult, options: RunOptions) -> None:
@@ -1390,7 +1676,7 @@ class Agent:
                 store.record_run(result, session_id=options.session_id or "default")
             elif hasattr(store, "append_messages"):
                 store.append_messages(result.messages, session_id=options.session_id or "default")
-        except Exception as exc:  # noqa: BLE001 - persistence must not fail a run
+        except Exception as exc:
             self.logger.warning("session persistence failed: %s", exc)
 
     # -- introspection -------------------------------------------------------
@@ -1424,9 +1710,11 @@ class Agent:
             "tools": self.registry.count(),
             "categories": self.registry.categories(),
             "workspace": str(self.workspace),
-            "sandbox": {"roots": [str(root) for root in self.sandbox.roots()],
-                        "allow_network": self.sandbox.policy.allow_network,
-                        "command_policy": self.sandbox.policy.command_policy},
+            "sandbox": {
+                "roots": [str(root) for root in self.sandbox.roots()],
+                "allow_network": self.sandbox.policy.allow_network,
+                "command_policy": self.sandbox.policy.command_policy,
+            },
             "approval_mode": self.approval.policy.mode,
             "memory": type(self.memory).__name__ if self.memory else None,
             "guardrails": type(self.guardrails).__name__ if self.guardrails else None,
@@ -1440,13 +1728,13 @@ class Agent:
         if callable(close):
             try:
                 close()
-            except Exception as exc:  # noqa: BLE001 - shutdown must not raise
+            except Exception as exc:
                 self.logger.debug("backend close failed: %s", exc)
         shutdown = getattr(self.events, "shutdown", None)
         if callable(shutdown):
             try:
                 shutdown()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
     def __enter__(self) -> Agent:
@@ -1459,9 +1747,11 @@ class Agent:
 
     def __repr__(self) -> str:
         """Show the agent name, model, and tool count."""
-        return (f"<Agent name={self.name!r} model={self.model!r} "
-                f"backend={getattr(self.backend, 'name', '?')!r} tools={self.registry.count()} "
-                f"mode={self.config.loop_mode!r}>")
+        return (
+            f"<Agent name={self.name!r} model={self.model!r} "
+            f"backend={getattr(self.backend, 'name', '?')!r} tools={self.registry.count()} "
+            f"mode={self.config.loop_mode!r}>"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1539,13 +1829,17 @@ def _parse_plan_steps(text: str, *, max_steps: int = MAX_PLAN_STEPS) -> list[Pla
         if isinstance(item, str):
             steps.append(PlanStep(index=index, title=item))
         elif isinstance(item, dict):
-            steps.append(PlanStep(
-                index=index,
-                title=str(item.get("title") or item.get("step") or item.get("task") or f"step {index}"),
-                detail=str(item.get("detail") or item.get("description") or ""),
-                tool=str(item.get("tool") or ""),
-                done_when=str(item.get("done_when") or item.get("verify") or ""),
-            ))
+            steps.append(
+                PlanStep(
+                    index=index,
+                    title=str(
+                        item.get("title") or item.get("step") or item.get("task") or f"step {index}"
+                    ),
+                    detail=str(item.get("detail") or item.get("description") or ""),
+                    tool=str(item.get("tool") or ""),
+                    done_when=str(item.get("done_when") or item.get("verify") or ""),
+                )
+            )
     return steps
 
 

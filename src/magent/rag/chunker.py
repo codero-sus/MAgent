@@ -25,9 +25,9 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Iterable, Sequence
 from typing import Any
 
 from ..utils.files import read_text_safe
@@ -46,10 +46,29 @@ DEFAULT_OVERLAP = 120
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 """Markdown ATX heading."""
 
-TEXT_SUFFIXES: frozenset[str] = frozenset({
-    ".md", ".markdown", ".txt", ".rst", ".py", ".js", ".ts", ".json", ".yaml", ".yml",
-    ".toml", ".ini", ".cfg", ".csv", ".html", ".css", ".sh", ".sql", ".tex",
-})
+TEXT_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".md",
+        ".markdown",
+        ".txt",
+        ".rst",
+        ".py",
+        ".js",
+        ".ts",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".csv",
+        ".html",
+        ".css",
+        ".sh",
+        ".sql",
+        ".tex",
+    }
+)
 """File extensions treated as text for chunking."""
 
 
@@ -151,9 +170,16 @@ def _line_of(text: str, offset: int) -> int:
     return text.count("\n", 0, min(offset, len(text))) + 1
 
 
-def chunk_text_blocks(text: str, *, source: str = "", strategy: str = "paragraph",
-                      max_chars: int = DEFAULT_MAX_CHARS, overlap: int = DEFAULT_OVERLAP,
-                      keep_headings: bool = True, metadata: dict[str, Any] | None = None) -> list[Chunk]:
+def chunk_text_blocks(
+    text: str,
+    *,
+    source: str = "",
+    strategy: str = "paragraph",
+    max_chars: int = DEFAULT_MAX_CHARS,
+    overlap: int = DEFAULT_OVERLAP,
+    keep_headings: bool = True,
+    metadata: dict[str, Any] | None = None,
+) -> list[Chunk]:
     """Split one string into :class:`Chunk` objects.
 
     Args:
@@ -172,30 +198,35 @@ def chunk_text_blocks(text: str, *, source: str = "", strategy: str = "paragraph
     if active == "code" and source.endswith(".py"):
         return chunk_python(body, source=source, max_chars=max_chars, metadata=metadata)
     if active == "markdown":
-        return chunk_markdown(body, source=source, max_chars=max_chars,
-                              keep_headings=keep_headings, metadata=metadata)
+        return chunk_markdown(
+            body, source=source, max_chars=max_chars, keep_headings=keep_headings, metadata=metadata
+        )
     if active == "sentence":
         pieces = _merge(sentence_split(body), max_chars)
     elif active == "fixed":
-        pieces = [(match.start(), match.group(0))
-                  for match in re.finditer(rf"[\s\S]{{1,{max(64, max_chars)}}}", body)]
+        pieces = [
+            (match.start(), match.group(0))
+            for match in re.finditer(rf"[\s\S]{{1,{max(64, max_chars)}}}", body)
+        ]
         pieces = _add_overlap(body, pieces, overlap)
     else:
         pieces = _merge(_paragraph_spans(body), max_chars)
     chunks: list[Chunk] = []
     for index, (start, piece) in enumerate(pieces):
         end = start + len(piece)
-        chunks.append(Chunk(
-            text=piece.strip(),
-            source=source,
-            index=index,
-            start=start,
-            end=end,
-            start_line=_line_of(body, start),
-            end_line=max(_line_of(body, end - 1), _line_of(body, start)),
-            strategy=active,
-            metadata=dict(metadata or {}),
-        ))
+        chunks.append(
+            Chunk(
+                text=piece.strip(),
+                source=source,
+                index=index,
+                start=start,
+                end=end,
+                start_line=_line_of(body, start),
+                end_line=max(_line_of(body, end - 1), _line_of(body, start)),
+                strategy=active,
+                metadata=dict(metadata or {}),
+            )
+        )
     return [chunk for chunk in chunks if chunk.text]
 
 
@@ -211,7 +242,9 @@ def _paragraph_spans(text: str) -> list[tuple[int, str]]:
     return [(start, block) for start, block in spans if block.strip()]
 
 
-def _merge(spans: Sequence[tuple[int, str]] | Sequence[str], max_chars: int) -> list[tuple[int, str]]:
+def _merge(
+    spans: Sequence[tuple[int, str]] | Sequence[str], max_chars: int
+) -> list[tuple[int, str]]:
     """Merge small pieces until each is close to ``max_chars``."""
     normalized: list[tuple[int, str]] = []
     for item in spans:
@@ -250,8 +283,14 @@ def _add_overlap(text: str, spans: list[tuple[int, str]], overlap: int) -> list[
     return out
 
 
-def chunk_markdown(text: str, *, source: str = "", max_chars: int = DEFAULT_MAX_CHARS,
-                   keep_headings: bool = True, metadata: dict[str, Any] | None = None) -> list[Chunk]:
+def chunk_markdown(
+    text: str,
+    *,
+    source: str = "",
+    max_chars: int = DEFAULT_MAX_CHARS,
+    keep_headings: bool = True,
+    metadata: dict[str, Any] | None = None,
+) -> list[Chunk]:
     """Split Markdown on headings, carrying the heading path into each chunk."""
     lines = normalize_newlines(text or "").split("\n")
     sections: list[tuple[int, str, list[str]]] = []
@@ -285,18 +324,20 @@ def chunk_markdown(text: str, *, source: str = "", max_chars: int = DEFAULT_MAX_
         body_text = _strip_leading_heading(body, headings)
         rendered = f"{trail}\n\n{body_text}" if (keep_headings and trail) else body
         for piece_index, piece in enumerate(chunk_text(rendered, max_chars=max_chars, overlap=0)):
-            chunks.append(Chunk(
-                text=piece.strip(),
-                source=source,
-                index=index * 100 + piece_index,
-                start=start,
-                end=min(len(text or ""), start + len(body)),
-                start_line=_line_of(text, start),
-                end_line=_line_of(text, min(len(text), start + len(body))),
-                heading=trail,
-                strategy="markdown",
-                metadata=dict(metadata or {}),
-            ))
+            chunks.append(
+                Chunk(
+                    text=piece.strip(),
+                    source=source,
+                    index=index * 100 + piece_index,
+                    start=start,
+                    end=min(len(text or ""), start + len(body)),
+                    start_line=_line_of(text, start),
+                    end_line=_line_of(text, min(len(text), start + len(body))),
+                    heading=trail,
+                    strategy="markdown",
+                    metadata=dict(metadata or {}),
+                )
+            )
     return [chunk for chunk in chunks if chunk.text]
 
 
@@ -308,8 +349,13 @@ def _safe_docstring(node: ast.AST) -> str:
         return ""
 
 
-def chunk_python(source_code: str, *, source: str = "", max_chars: int = DEFAULT_MAX_CHARS,
-                 metadata: dict[str, Any] | None = None) -> list[Chunk]:
+def chunk_python(
+    source_code: str,
+    *,
+    source: str = "",
+    max_chars: int = DEFAULT_MAX_CHARS,
+    metadata: dict[str, Any] | None = None,
+) -> list[Chunk]:
     """Split a Python module into one chunk per top-level definition.
 
     Falls back to paragraph chunking when the file does not parse, so a syntax
@@ -319,8 +365,9 @@ def chunk_python(source_code: str, *, source: str = "", max_chars: int = DEFAULT
     try:
         tree = ast.parse(text)
     except SyntaxError:
-        return chunk_text_blocks(text, source=source, strategy="paragraph", max_chars=max_chars,
-                                 metadata=metadata)
+        return chunk_text_blocks(
+            text, source=source, strategy="paragraph", max_chars=max_chars, metadata=metadata
+        )
     lines = text.split("\n")
     chunks: list[Chunk] = []
     for index, node in enumerate(tree.body):
@@ -333,26 +380,37 @@ def chunk_python(source_code: str, *, source: str = "", max_chars: int = DEFAULT
         name = getattr(node, "name", "") or type(node).__name__
         docstring = _safe_docstring(node)
         for piece_index, piece in enumerate(chunk_text(body, max_chars=max_chars, overlap=0)):
-            chunks.append(Chunk(
-                text=piece.strip(),
-                source=source,
-                index=index * 100 + piece_index,
-                start=text.find(body),
-                end=text.find(body) + len(body),
-                start_line=node.lineno,
-                end_line=end_line,
-                heading=name,
-                strategy="code",
-                metadata={**(metadata or {}), "symbol": name,
-                          "symbol_type": type(node).__name__,
-                          "docstring": ellipsize(docstring, 300)},
-            ))
+            chunks.append(
+                Chunk(
+                    text=piece.strip(),
+                    source=source,
+                    index=index * 100 + piece_index,
+                    start=text.find(body),
+                    end=text.find(body) + len(body),
+                    start_line=node.lineno,
+                    end_line=end_line,
+                    heading=name,
+                    strategy="code",
+                    metadata={
+                        **(metadata or {}),
+                        "symbol": name,
+                        "symbol_type": type(node).__name__,
+                        "docstring": ellipsize(docstring, 300),
+                    },
+                )
+            )
     return [chunk for chunk in chunks if chunk.text]
 
 
-def chunk_file(path: str | Path, *, strategy: str = "", max_chars: int = DEFAULT_MAX_CHARS,
-               overlap: int = DEFAULT_OVERLAP, limit: int = 2_000_000,
-               metadata: dict[str, Any] | None = None) -> list[Chunk]:
+def chunk_file(
+    path: str | Path,
+    *,
+    strategy: str = "",
+    max_chars: int = DEFAULT_MAX_CHARS,
+    overlap: int = DEFAULT_OVERLAP,
+    limit: int = 2_000_000,
+    metadata: dict[str, Any] | None = None,
+) -> list[Chunk]:
     """Read one file and chunk it, choosing a strategy from the extension."""
     target = Path(path).expanduser()
     if not target.is_file():
@@ -362,8 +420,10 @@ def chunk_file(path: str | Path, *, strategy: str = "", max_chars: int = DEFAULT
         return []
     active = strategy
     if not active:
-        active = "markdown" if target.suffix.lower() in {".md", ".markdown", ".rst"} else (
-            "code" if target.suffix.lower() == ".py" else "paragraph"
+        active = (
+            "markdown"
+            if target.suffix.lower() in {".md", ".markdown", ".rst"}
+            else ("code" if target.suffix.lower() == ".py" else "paragraph")
         )
     return chunk_text_blocks(
         text,
@@ -371,13 +431,23 @@ def chunk_file(path: str | Path, *, strategy: str = "", max_chars: int = DEFAULT
         strategy=active,
         max_chars=max_chars,
         overlap=overlap,
-        metadata={**(metadata or {}), "suffix": target.suffix.lower(), "bytes": target.stat().st_size},
+        metadata={
+            **(metadata or {}),
+            "suffix": target.suffix.lower(),
+            "bytes": target.stat().st_size,
+        },
     )
 
 
-def chunk_files(paths: Iterable[str | Path], *, strategy: str = "",
-                max_chars: int = DEFAULT_MAX_CHARS, overlap: int = DEFAULT_OVERLAP,
-                max_files: int = 500, limit: int = 2_000_000) -> tuple[list[Chunk], list[str]]:
+def chunk_files(
+    paths: Iterable[str | Path],
+    *,
+    strategy: str = "",
+    max_chars: int = DEFAULT_MAX_CHARS,
+    overlap: int = DEFAULT_OVERLAP,
+    max_files: int = 500,
+    limit: int = 2_000_000,
+) -> tuple[list[Chunk], list[str]]:
     """Chunk many files; return the chunks and the paths that were skipped.
 
     Args:
@@ -402,8 +472,9 @@ def chunk_files(paths: Iterable[str | Path], *, strategy: str = "",
         if target.suffix.lower() not in TEXT_SUFFIXES and strategy != "fixed":
             skipped.append(str(target))
             continue
-        chunks.extend(chunk_file(target, strategy=strategy, max_chars=max_chars, overlap=overlap,
-                                 limit=limit))
+        chunks.extend(
+            chunk_file(target, strategy=strategy, max_chars=max_chars, overlap=overlap, limit=limit)
+        )
     return chunks, skipped
 
 
@@ -426,10 +497,10 @@ __all__ = [
     "STRATEGIES",
     "TEXT_SUFFIXES",
     "Chunk",
+    "choose_strategy",
     "chunk_file",
     "chunk_files",
     "chunk_markdown",
     "chunk_python",
     "chunk_text_blocks",
-    "choose_strategy",
 ]

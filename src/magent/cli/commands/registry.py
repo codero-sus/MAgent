@@ -7,8 +7,6 @@ adding a module means adding one import.
 
 from __future__ import annotations
 
-from typing import Sequence
-
 from . import Command
 from .agent_cmds import COMMANDS as AGENT_COMMANDS
 from .knowledge_cmds import COMMANDS as KNOWLEDGE_COMMANDS
@@ -35,8 +33,14 @@ def all_commands() -> list[Command]:
     distribution can shadow a built-in subcommand.
     """
     merged: dict[str, Command] = {}
-    for group in (AGENT_COMMANDS, KNOWLEDGE_COMMANDS, TOOLS_COMMANDS, SYSTEM_COMMANDS,
-                  QUALITY_COMMANDS, SERVER_COMMANDS):
+    for group in (
+        AGENT_COMMANDS,
+        KNOWLEDGE_COMMANDS,
+        TOOLS_COMMANDS,
+        SYSTEM_COMMANDS,
+        QUALITY_COMMANDS,
+        SERVER_COMMANDS,
+    ):
         for item in group:
             merged[item.name] = item
     return list(merged.values())

@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Iterator, Sequence
+from typing import Any
 
 from ..logging_ import get_logger
 
@@ -74,8 +75,14 @@ class LimitStats:
 class TokenBucket:
     """Classic token bucket rate limiter."""
 
-    def __init__(self, rate: float = DEFAULT_RATE, capacity: float | None = None, *,
-                 initial: float | None = None, name: str = "bucket") -> None:
+    def __init__(
+        self,
+        rate: float = DEFAULT_RATE,
+        capacity: float | None = None,
+        *,
+        initial: float | None = None,
+        name: str = "bucket",
+    ) -> None:
         """Create a bucket.
 
         Args:
@@ -252,13 +259,16 @@ class Throttle:
 
     def wrap(self, fn: Callable[..., Any]) -> Callable[..., Any]:
         """Return a throttled version of ``fn`` that skips suppressed calls."""
+
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             if not self.allow():
                 return None
             return fn(*args, **kwargs)
 
         wrapper.__name__ = getattr(fn, "__name__", "throttled")
-        wrapper.__doc__ = f"Throttled to one call per {self.interval}s: {getattr(fn, '__doc__', '')}"
+        wrapper.__doc__ = (
+            f"Throttled to one call per {self.interval}s: {getattr(fn, '__doc__', '')}"
+        )
         return wrapper
 
     def reset(self) -> None:
@@ -268,8 +278,12 @@ class Throttle:
 
     def describe(self) -> dict[str, Any]:
         """Serialise the throttle state."""
-        return {"name": self.name, "interval": self.interval, "remaining": round(self.remaining, 4),
-                **self.stats.to_dict()}
+        return {
+            "name": self.name,
+            "interval": self.interval,
+            "remaining": round(self.remaining, 4),
+            **self.stats.to_dict(),
+        }
 
     def __repr__(self) -> str:
         """Compact developer representation."""
@@ -329,7 +343,7 @@ class Debouncer:
             self._first_call = 0.0
         try:
             fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 - a background call must not crash the process
+        except Exception as exc:
             LOGGER.warning("debounced call %s failed: %s", self.name, exc)
 
     def flush(self) -> bool:
@@ -362,8 +376,13 @@ class Debouncer:
 
     def describe(self) -> dict[str, Any]:
         """Serialise the debouncer state."""
-        return {"name": self.name, "delay": self.delay, "max_wait": self.max_wait,
-                "pending": self.pending, **self.stats.to_dict()}
+        return {
+            "name": self.name,
+            "delay": self.delay,
+            "max_wait": self.max_wait,
+            "pending": self.pending,
+            **self.stats.to_dict(),
+        }
 
     def __repr__(self) -> str:
         """Compact developer representation."""
@@ -373,7 +392,9 @@ class Debouncer:
 class ConcurrencyLimiter:
     """Bound how many threads may be inside a section at once."""
 
-    def __init__(self, limit: int = 1, *, name: str = "limiter", timeout: float | None = None) -> None:
+    def __init__(
+        self, limit: int = 1, *, name: str = "limiter", timeout: float | None = None
+    ) -> None:
         """Create the limiter.
 
         Args:
@@ -441,8 +462,9 @@ class ConcurrencyLimiter:
             if acquired:
                 self.release()
 
-    def map(self, fn: Callable[[Any], Any], items: Iterable[Any], *,
-            max_workers: int | None = None) -> list[Any]:
+    def map(
+        self, fn: Callable[[Any], Any], items: Iterable[Any], *, max_workers: int | None = None
+    ) -> list[Any]:
         """Map over items in parallel while respecting the slot limit."""
         from .pool import Task, WorkerPool
 
@@ -458,14 +480,23 @@ class ConcurrencyLimiter:
                 return fn(item)
 
         with WorkerPool(max(1, workers), name=self.name) as pool:
-            outcomes = pool.run_many([Task(name=f"{self.name}[{index}]", fn=guarded, args=(item,))
-                                      for index, item in enumerate(materialised)])
+            outcomes = pool.run_many(
+                [
+                    Task(name=f"{self.name}[{index}]", fn=guarded, args=(item,))
+                    for index, item in enumerate(materialised)
+                ]
+            )
         return [outcome.value for outcome in outcomes]
 
     def describe(self) -> dict[str, Any]:
         """Serialise the limiter state."""
-        return {"name": self.name, "limit": self.limit, "active": self.active,
-                "peak": self.peak, **self.stats.to_dict()}
+        return {
+            "name": self.name,
+            "limit": self.limit,
+            "active": self.active,
+            "peak": self.peak,
+            **self.stats.to_dict(),
+        }
 
     def __repr__(self) -> str:
         """Compact developer representation."""
@@ -491,14 +522,26 @@ class BatchResult:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the batch result."""
-        return {"total": self.total, "succeeded": self.succeeded, "failed": self.failed,
-                "skipped": self.skipped, "seconds": round(self.seconds, 4),
-                "errors": list(self.errors[:20])}
+        return {
+            "total": self.total,
+            "succeeded": self.succeeded,
+            "failed": self.failed,
+            "skipped": self.skipped,
+            "seconds": round(self.seconds, 4),
+            "errors": list(self.errors[:20]),
+        }
 
 
-def run_rate_limited(items: Sequence[Any], fn: Callable[[Any], Any], *, rate: float = 10.0,
-                     capacity: float | None = None, max_workers: int = 1,
-                     timeout: float = 30.0, token: Any = None) -> BatchResult:
+def run_rate_limited(
+    items: Sequence[Any],
+    fn: Callable[[Any], Any],
+    *,
+    rate: float = 10.0,
+    capacity: float | None = None,
+    max_workers: int = 1,
+    timeout: float = 30.0,
+    token: Any = None,
+) -> BatchResult:
     """Process items through a token bucket, optionally in parallel.
 
     Args:
@@ -535,15 +578,18 @@ def run_rate_limited(items: Sequence[Any], fn: Callable[[Any], Any], *, rate: fl
                 result.skipped += len(items) - index
                 result.errors.append(str(exc))
                 break
-            except Exception as exc:  # noqa: BLE001 - one bad item must not stop the batch
+            except Exception as exc:
                 result.failed += 1
                 result.values.append(None)
                 result.errors.append(f"{type(exc).__name__}: {exc}")
     else:
         with WorkerPool(max_workers, name="rate-limited", token=token) as pool:
-            outcomes = pool.run_many([Task(name=f"item[{index}]", fn=call, args=(item,),
-                                           timeout=timeout)
-                                      for index, item in enumerate(items)])
+            outcomes = pool.run_many(
+                [
+                    Task(name=f"item[{index}]", fn=call, args=(item,), timeout=timeout)
+                    for index, item in enumerate(items)
+                ]
+            )
             for outcome in outcomes:
                 result.values.append(outcome.value if outcome.ok else None)
                 if outcome.ok:

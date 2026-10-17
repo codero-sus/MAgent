@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..llm.tokens import estimate_tokens
 from ..logging_ import get_logger
@@ -44,8 +45,19 @@ CONVENTION_FILES: tuple[str, ...] = (
 DEFAULT_PATTERNS: tuple[str, ...] = ("*.md", "*.txt", "*.py", "*.json", "*.toml", "*.yaml", "*.yml")
 """Extensions considered for query-driven context."""
 
-SKIP_DIRS: tuple[str, ...] = (".git", "__pycache__", "node_modules", ".venv", "venv", "dist",
-                              "build", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox")
+SKIP_DIRS: tuple[str, ...] = (
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+)
 """Directories never walked."""
 
 MAX_FILE_CHARS = 6_000
@@ -86,15 +98,25 @@ class FileRef:
         heading = title or f"File: {self.relative}"
         body = self.text.strip()
         if not body:
-            return ContextBlock(title=heading, body=f"(empty or unreadable: {self.error or 'no text'})",
-                                kind="files", priority=3, source=str(self.path))
+            return ContextBlock(
+                title=heading,
+                body=f"(empty or unreadable: {self.error or 'no text'})",
+                kind="files",
+                priority=3,
+                source=str(self.path),
+            )
         tokens = estimate_tokens(body)
         if tokens > max_tokens:
             body = ellipsize(body, max_tokens * 4)
-        return ContextBlock(title=heading, body=body, kind="files", priority=4,
-                            source=str(self.path), max_tokens=max_tokens,
-                            metadata={"reason": self.reason, "score": round(self.score, 4),
-                                      "path": self.relative})
+        return ContextBlock(
+            title=heading,
+            body=body,
+            kind="files",
+            priority=4,
+            source=str(self.path),
+            max_tokens=max_tokens,
+            metadata={"reason": self.reason, "score": round(self.score, 4), "path": self.relative},
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the reference without the file text."""
@@ -130,10 +152,15 @@ class WorkspaceSnapshot:
 
     def listing(self, *, limit: int = 60, patterns: Sequence[str] = ()) -> str:
         """Render a short tree-style listing of the workspace."""
-        selected = [item for item in self.files
-                    if not patterns or any(item.relative.endswith(p.lstrip("*")) or
-                                           Path(item.relative).suffix == p.lstrip("*")
-                                           for p in patterns)]
+        selected = [
+            item
+            for item in self.files
+            if not patterns
+            or any(
+                item.relative.endswith(p.lstrip("*")) or Path(item.relative).suffix == p.lstrip("*")
+                for p in patterns
+            )
+        ]
         selected = selected[: max(1, limit)]
         lines = [item.header() for item in selected]
         if self.truncated or len(lines) < len(self.files):
@@ -167,9 +194,14 @@ def _relative_age(seconds: float) -> str:
     return f"{int(seconds // (86_400 * 30))}mo ago"
 
 
-def scan_workspace(root: str | Path, *, patterns: Iterable[str] = ("*",),
-                   max_files: int = MAX_FILES_SCANNED, max_depth: int | None = 4,
-                   sandbox: Any = None) -> WorkspaceSnapshot:
+def scan_workspace(
+    root: str | Path,
+    *,
+    patterns: Iterable[str] = ("*",),
+    max_files: int = MAX_FILES_SCANNED,
+    max_depth: int | None = 4,
+    sandbox: Any = None,
+) -> WorkspaceSnapshot:
     """Walk a workspace and collect file metadata without reading contents.
 
     Args:
@@ -187,8 +219,9 @@ def scan_workspace(root: str | Path, *, patterns: Iterable[str] = ("*",),
         snapshot.seconds = time.perf_counter() - started
         return snapshot
     dirs: set[str] = set()
-    for path in iter_files(base, patterns=tuple(patterns), exclude=SKIP_DIRS,
-                           max_depth=max_depth, limit=max_files + 1):
+    for path in iter_files(
+        base, patterns=tuple(patterns), exclude=SKIP_DIRS, max_depth=max_depth, limit=max_files + 1
+    ):
         if snapshot.scanned >= max_files:
             snapshot.truncated = True
             break
@@ -197,7 +230,7 @@ def scan_workspace(root: str | Path, *, patterns: Iterable[str] = ("*",),
         if sandbox is not None:
             try:
                 decision = sandbox.check_read(path)
-            except Exception as exc:  # noqa: BLE001 - a broken sandbox must not break scanning
+            except Exception as exc:
                 LOGGER.debug("sandbox check failed for %s: %s", path, exc)
                 continue
             if not getattr(decision, "allowed", True):
@@ -211,8 +244,9 @@ def scan_workspace(root: str | Path, *, patterns: Iterable[str] = ("*",),
             continue
         dirs.update(part for part in Path(relative).parts[:-1])
         snapshot.total_bytes += stat.st_size
-        snapshot.files.append(FileRef(path=path, relative=relative, size=stat.st_size,
-                                      modified=stat.st_mtime))
+        snapshot.files.append(
+            FileRef(path=path, relative=relative, size=stat.st_size, modified=stat.st_mtime)
+        )
     snapshot.directories = len(dirs)
     for name in CONVENTION_FILES:
         candidate = base / name
@@ -231,13 +265,12 @@ def _relative_to(base: Path, path: Path) -> str:
         return str(path)
 
 
-def read_file_ref(ref: FileRef, *, max_chars: int = MAX_FILE_CHARS,
-                  sandbox: Any = None) -> FileRef:
+def read_file_ref(ref: FileRef, *, max_chars: int = MAX_FILE_CHARS, sandbox: Any = None) -> FileRef:
     """Read one file into its reference, recording any failure."""
     if sandbox is not None:
         try:
             decision = sandbox.check_read(ref.path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             ref.error = f"sandbox error: {exc}"
             return ref
         if not getattr(decision, "allowed", False):
@@ -245,7 +278,7 @@ def read_file_ref(ref: FileRef, *, max_chars: int = MAX_FILE_CHARS,
             return ref
     try:
         text = read_text_safe(ref.path, limit=max_chars)
-    except Exception as exc:  # noqa: BLE001 - unreadable files are reported, not raised
+    except Exception as exc:
         ref.error = str(exc)
         return ref
     ref.text = text
@@ -259,13 +292,16 @@ def rank_files(refs: Iterable[FileRef], query: str, *, limit: int = 5) -> list[F
     This is deliberately cheap - a keyword overlap, not an embedding - because
     it runs on every turn to decide which open files are worth quoting.
     """
-    terms = {term for term in query.lower().replace("?", " ").replace(",", " ").split()
-             if len(term) > 2}
+    terms = {
+        term for term in query.lower().replace("?", " ").replace(",", " ").split() if len(term) > 2
+    }
     scored: list[FileRef] = []
     for ref in refs:
         if not terms:
             continue
-        name_terms = set(Path(ref.relative).stem.lower().replace("_", " ").replace("-", " ").split())
+        name_terms = set(
+            Path(ref.relative).stem.lower().replace("_", " ").replace("-", " ").split()
+        )
         haystack = f"{ref.relative}\n{ref.text[:4_000]}".lower()
         hits = sum(1 for term in terms if term in haystack)
         if not hits:
@@ -280,10 +316,17 @@ def rank_files(refs: Iterable[FileRef], query: str, *, limit: int = 5) -> list[F
     return scored[: max(1, limit)]
 
 
-def file_context_blocks(root: str | Path, *, query: str = "", named: Sequence[str] = (),
-                        include_conventions: bool = True, limit: int = 4,
-                        max_chars: int = MAX_FILE_CHARS, max_tokens: int = 900,
-                        sandbox: Any = None) -> tuple[list[ContextBlock], dict[str, Any]]:
+def file_context_blocks(
+    root: str | Path,
+    *,
+    query: str = "",
+    named: Sequence[str] = (),
+    include_conventions: bool = True,
+    limit: int = 4,
+    max_chars: int = MAX_FILE_CHARS,
+    max_tokens: int = 900,
+    sandbox: Any = None,
+) -> tuple[list[ContextBlock], dict[str, Any]]:
     """Build context blocks from the files most relevant to a turn.
 
     Args:
@@ -309,10 +352,17 @@ def file_context_blocks(root: str | Path, *, query: str = "", named: Sequence[st
         candidate = (base / name).expanduser() if not Path(name).is_absolute() else Path(name)
         if not candidate.is_file():
             continue
-        ref = read_file_ref(FileRef(path=candidate, relative=_relative_to(base, candidate),
-                                    size=candidate.stat().st_size,
-                                    modified=candidate.stat().st_mtime, reason="named by user"),
-                            max_chars=max_chars, sandbox=sandbox)
+        ref = read_file_ref(
+            FileRef(
+                path=candidate,
+                relative=_relative_to(base, candidate),
+                size=candidate.stat().st_size,
+                modified=candidate.stat().st_mtime,
+                reason="named by user",
+            ),
+            max_chars=max_chars,
+            sandbox=sandbox,
+        )
         ref.included = True
         blocks.append(ref.to_block(max_tokens=max_tokens))
         stats["named"].append(ref.to_dict())
@@ -322,19 +372,27 @@ def file_context_blocks(root: str | Path, *, query: str = "", named: Sequence[st
             candidate = base / name
             if not candidate.is_file():
                 continue
-            ref = read_file_ref(FileRef(path=candidate, relative=name,
-                                        size=candidate.stat().st_size,
-                                        modified=candidate.stat().st_mtime,
-                                        reason="project convention"),
-                                max_chars=min(max_chars, 4_000), sandbox=sandbox)
+            ref = read_file_ref(
+                FileRef(
+                    path=candidate,
+                    relative=name,
+                    size=candidate.stat().st_size,
+                    modified=candidate.stat().st_mtime,
+                    reason="project convention",
+                ),
+                max_chars=min(max_chars, 4_000),
+                sandbox=sandbox,
+            )
             ref.included = True
-            blocks.append(ref.to_block(max_tokens=min(max_tokens, 500),
-                                       title=f"Project conventions: {name}"))
+            blocks.append(
+                ref.to_block(max_tokens=min(max_tokens, 500), title=f"Project conventions: {name}")
+            )
             stats["conventions"].append(ref.to_dict())
 
     if query.strip():
-        snapshot = scan_workspace(base, patterns=DEFAULT_PATTERNS, max_files=400, max_depth=4,
-                                  sandbox=sandbox)
+        snapshot = scan_workspace(
+            base, patterns=DEFAULT_PATTERNS, max_files=400, max_depth=4, sandbox=sandbox
+        )
         already = {str(item.metadata.get("path", "")) for item in blocks}
         already |= {str(block.source) for block in blocks if block.source}
         candidates: list[FileRef] = []
@@ -355,8 +413,9 @@ def file_context_blocks(root: str | Path, *, query: str = "", named: Sequence[st
     return blocks, stats
 
 
-def describe_workspace(root: str | Path, *, limit: int = 40, include_listing: bool = True,
-                       sandbox: Any = None) -> str:
+def describe_workspace(
+    root: str | Path, *, limit: int = 40, include_listing: bool = True, sandbox: Any = None
+) -> str:
     """Return a short textual description of a workspace for the system prompt."""
     base = Path(root or ".").expanduser()
     if not base.is_dir():
@@ -400,7 +459,7 @@ def open_editor_files(*, limit: int = 10) -> list[str]:
             for match in _href_re().finditer(text):
                 target = match.group(1)
                 if target.startswith("file://") and len(found) < limit:
-                    found.append(target[len("file://"):])
+                    found.append(target[len("file://") :])
         elif path.is_dir():
             for swap in sorted(path.glob("*.sw?"), key=lambda p: -p.stat().st_mtime)[:limit]:
                 found.append(swap.name)
@@ -414,17 +473,22 @@ def _href_re() -> Any:
     return re.compile(r'href="([^"]+)"')
 
 
-def files_listing_block(root: str | Path, *, limit: int = 40, sandbox: Any = None,
-                        priority: int = 4) -> ContextBlock:
+def files_listing_block(
+    root: str | Path, *, limit: int = 40, sandbox: Any = None, priority: int = 4
+) -> ContextBlock:
     """Build a block listing workspace files with sizes and ages."""
     snapshot = scan_workspace(root, max_files=400, max_depth=3, sandbox=sandbox)
-    return files_block([item.header() for item in snapshot.files[:limit]],
-                       title="Workspace files", priority=priority,
-                       metadata={"scanned": snapshot.scanned})
+    return files_block(
+        [item.header() for item in snapshot.files[:limit]],
+        title="Workspace files",
+        priority=priority,
+        metadata={"scanned": snapshot.scanned},
+    )
 
 
-def touched_recently(root: str | Path, *, hours: float = 24.0, limit: int = 10,
-                     sandbox: Any = None) -> list[FileRef]:
+def touched_recently(
+    root: str | Path, *, hours: float = 24.0, limit: int = 10, sandbox: Any = None
+) -> list[FileRef]:
     """Return files modified within the last ``hours``."""
     snapshot = scan_workspace(root, max_files=MAX_FILES_SCANNED, max_depth=5, sandbox=sandbox)
     cutoff = time.time() - hours * 3_600
@@ -436,8 +500,8 @@ def touched_recently(root: str | Path, *, hours: float = 24.0, limit: int = 10,
 __all__ = [
     "CONVENTION_FILES",
     "DEFAULT_PATTERNS",
-    "MAX_FILE_CHARS",
     "MAX_FILES_SCANNED",
+    "MAX_FILE_CHARS",
     "SKIP_DIRS",
     "FileRef",
     "WorkspaceSnapshot",

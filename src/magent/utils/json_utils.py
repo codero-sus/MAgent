@@ -78,8 +78,12 @@ def repair_json(text: str) -> str:
         cleaned = fence.group(1).strip()
     cleaned = _BLOCK_COMMENT.sub("", cleaned)
     cleaned = _LINE_COMMENT.sub("", cleaned)
-    cleaned = _PY_LITERALS.sub(lambda m: {"True": "true", "False": "false", "None": "null"}[m.group(1)], cleaned)
-    cleaned = _NAN_INF.sub(lambda m: {"NaN": "null", "Infinity": "1e999", "-Infinity": "-1e999"}[m.group(1)], cleaned)
+    cleaned = _PY_LITERALS.sub(
+        lambda m: {"True": "true", "False": "false", "None": "null"}[m.group(1)], cleaned
+    )
+    cleaned = _NAN_INF.sub(
+        lambda m: {"NaN": "null", "Infinity": "1e999", "-Infinity": "-1e999"}[m.group(1)], cleaned
+    )
     cleaned = _UNQUOTED_KEY.sub(r'\1"\2":', cleaned)
     cleaned = _TRAILING_COMMA.sub(r"\1", cleaned)
     try:
@@ -130,7 +134,11 @@ def loads_lenient(text: str, *, default: Any = None) -> Any:
         value = ast.literal_eval(stripped)
     except (ValueError, SyntaxError, MemoryError, RecursionError):
         return default
-    return value if isinstance(value, (dict, list, tuple, str, int, float, bool, type(None))) else default
+    return (
+        value
+        if isinstance(value, (dict, list, tuple, str, int, float, bool, type(None)))
+        else default
+    )
 
 
 class JsonCodec:

@@ -80,11 +80,18 @@ class BudgetConfig:
 
     def is_unlimited(self) -> bool:
         """Report whether no ceiling at all is configured."""
-        return not any([
-            self.max_tokens, self.max_prompt_tokens, self.max_completion_tokens,
-            self.max_cost, self.max_steps, self.max_tool_calls,
-            self.max_seconds, self.max_requests,
-        ])
+        return not any(
+            [
+                self.max_tokens,
+                self.max_prompt_tokens,
+                self.max_completion_tokens,
+                self.max_cost,
+                self.max_steps,
+                self.max_tool_calls,
+                self.max_seconds,
+                self.max_requests,
+            ]
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the configuration."""
@@ -172,8 +179,9 @@ class UsageTracker:
 
     # -- recording -----------------------------------------------------------
 
-    def record_response(self, model: str, usage: Usage, *, latency_ms: float = 0.0,
-                        cache_hit: bool = False) -> CostEstimate:
+    def record_response(
+        self, model: str, usage: Usage, *, latency_ms: float = 0.0, cache_hit: bool = False
+    ) -> CostEstimate:
         """Record one completion, updating totals, per-model splits, and cost."""
         with self._lock:
             self.usage.add(usage)
@@ -189,9 +197,7 @@ class UsageTracker:
             estimate = self.prices.cost(model_key, usage)
             self.cost.prompt_cost += estimate.prompt_cost
             self.cost.completion_cost += estimate.completion_cost
-            self.cost_by_model[model_key] = round(
-                self.cost_by_model[model_key] + estimate.total, 8
-            )
+            self.cost_by_model[model_key] = round(self.cost_by_model[model_key] + estimate.total, 8)
             self._check_limits()
             return estimate
 
@@ -248,7 +254,9 @@ class UsageTracker:
             if limit <= 0:
                 continue
             if observed >= limit:
-                violation = BudgetViolation(dimension=dimension, limit=float(limit), observed=float(observed))
+                violation = BudgetViolation(
+                    dimension=dimension, limit=float(limit), observed=float(observed)
+                )
                 if dimension not in {item.dimension for item in self.violations}:
                     self.violations.append(violation)
                     if self.on_violation is not None:
@@ -259,7 +267,9 @@ class UsageTracker:
                     self.warnings_emitted.add(key)
                     if self.on_warning is not None:
                         self.on_warning(
-                            BudgetViolation(dimension=dimension, limit=float(limit), observed=float(observed))
+                            BudgetViolation(
+                                dimension=dimension, limit=float(limit), observed=float(observed)
+                            )
                         )
 
     def exceeded(self) -> list[BudgetViolation]:
@@ -370,9 +380,7 @@ class UsageTracker:
 
     def summary_line(self) -> str:
         """Return a one line human summary of usage."""
-        cost_text = (
-            f" cost={self.cost.total:.4f}{self.cost.currency}" if self.cost.total else ""
-        )
+        cost_text = f" cost={self.cost.total:.4f}{self.cost.currency}" if self.cost.total else ""
         return (
             f"tokens={self.usage.total_tokens} "
             f"(in={self.usage.prompt_tokens} out={self.usage.completion_tokens})"

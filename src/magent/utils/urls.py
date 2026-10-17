@@ -20,7 +20,9 @@ DEFAULT_CORTEX_PORT = 8624
 """Port Cortex LLMHoster binds by default."""
 
 
-def normalize_base_url(url: str, *, default_scheme: str = "http", default_port: int | None = None) -> str:
+def normalize_base_url(
+    url: str, *, default_scheme: str = "http", default_port: int | None = None
+) -> str:
     """Normalize a base URL: add scheme, lowercase host, strip trailing slash.
 
     Bare ``host:port`` and bare ``localhost`` inputs are accepted so users can

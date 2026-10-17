@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 from ..concurrency.pool import CancellationToken, Task, WorkerPool
 from ..errors import EvalThresholdError
@@ -88,16 +89,18 @@ class EvalReport:
     def summary(self) -> dict[str, Any]:
         """Aggregated statistics."""
         stats = aggregate(self.scores)
-        stats.update({
-            "dataset": self.dataset,
-            "seconds": round(self.seconds, 4),
-            "repeats": self.repeats,
-            "weighted_pass_rate": weighted_pass_rate(self.scores),
-            "tokens": sum(run.tokens for run in self.runs),
-            "cost": round(sum(run.cost for run in self.runs), 6),
-            "threshold": self.threshold,
-            "model": self.model,
-        })
+        stats.update(
+            {
+                "dataset": self.dataset,
+                "seconds": round(self.seconds, 4),
+                "repeats": self.repeats,
+                "weighted_pass_rate": weighted_pass_rate(self.scores),
+                "tokens": sum(run.tokens for run in self.runs),
+                "cost": round(sum(run.cost for run in self.runs), 6),
+                "threshold": self.threshold,
+                "model": self.model,
+            }
+        )
         return stats
 
     @property
@@ -145,8 +148,14 @@ class EvalReport:
         for run in self.runs[: limit or len(self.runs)]:
             failures = run.score.failures
             reason = failures[0].reason if failures else "ok"
-            rows.append((run.case.id, f"{run.score.score:.2f}",
-                         "pass" if run.score.passed else "fail", ellipsize(reason, 70)))
+            rows.append(
+                (
+                    run.case.id,
+                    f"{run.score.score:.2f}",
+                    "pass" if run.score.passed else "fail",
+                    ellipsize(reason, 70),
+                )
+            )
         return rows
 
     def to_dict(self, *, include_outputs: bool = True) -> dict[str, Any]:
@@ -164,8 +173,12 @@ class EvalReport:
 
     def to_json(self, *, indent: int = 2, include_outputs: bool = False) -> str:
         """Serialise as JSON."""
-        return json.dumps(self.to_dict(include_outputs=include_outputs), indent=indent,
-                          default=str, ensure_ascii=False)
+        return json.dumps(
+            self.to_dict(include_outputs=include_outputs),
+            indent=indent,
+            default=str,
+            ensure_ascii=False,
+        )
 
     def to_markdown(self) -> str:
         """Render a Markdown report with a summary and a per-case table."""
@@ -199,8 +212,16 @@ class EvalReport:
         """Render one row per case run."""
         from ..output.format import to_csv
 
-        return to_csv([{key: value for key, value in run.to_dict(include_output=False).items()
-                        if key != "failures"} for run in self.runs])
+        return to_csv(
+            [
+                {
+                    key: value
+                    for key, value in run.to_dict(include_output=False).items()
+                    if key != "failures"
+                }
+                for run in self.runs
+            ]
+        )
 
     def to_junit(self) -> str:
         """Render a JUnit XML report, for CI systems that consume it."""
@@ -214,12 +235,16 @@ class EvalReport:
         ]
         for run in self.runs:
             name = escape(f"{run.case.id}" + (f"#{run.repeat}" if run.repeat else ""))
-            lines.append(f'  <testcase classname="{escape(self.dataset)}" name="{name}" '
-                         f'time="{run.seconds:.3f}">')
+            lines.append(
+                f'  <testcase classname="{escape(self.dataset)}" name="{name}" '
+                f'time="{run.seconds:.3f}">'
+            )
             if not run.score.passed:
                 reason = run.score.failures[0].reason if run.score.failures else "failed"
-                lines.append(f'    <failure message="{escape(reason)}">'
-                             f'{escape(run.score.output[:2_000])}</failure>')
+                lines.append(
+                    f'    <failure message="{escape(reason)}">'
+                    f"{escape(run.score.output[:2_000])}</failure>"
+                )
             lines.append("  </testcase>")
         lines.append("</testsuite>")
         return "\n".join(lines) + "\n"
@@ -244,8 +269,10 @@ class EvalReport:
         for case_id, score, status, reason in self.case_table():
             lines.append(f"  {status:4} {case_id:<24} {score:>5}  {reason}")
         if info["metrics"]:
-            lines.append("  metrics: " + ", ".join(f"{name}={value:.3f}"
-                                                   for name, value in info["metrics"].items()))
+            lines.append(
+                "  metrics: "
+                + ", ".join(f"{name}={value:.3f}" for name, value in info["metrics"].items())
+            )
         flaky = self.flaky()
         if flaky:
             lines.append("  flaky: " + ", ".join(flaky))
@@ -255,8 +282,13 @@ class EvalReport:
         """Write the report to a file, inferring the format from the extension."""
         target = Path(path).expanduser()
         ensure_dir(target.parent)
-        active = fmt or {".json": "json", ".md": "markdown", ".markdown": "markdown",
-                         ".csv": "csv", ".xml": "junit"}.get(target.suffix.lower(), "text")
+        active = fmt or {
+            ".json": "json",
+            ".md": "markdown",
+            ".markdown": "markdown",
+            ".csv": "csv",
+            ".xml": "junit",
+        }.get(target.suffix.lower(), "text")
         target.write_text(self.render(active), encoding="utf-8")
         return target
 
@@ -270,8 +302,12 @@ class EvalReport:
         if limit and self.pass_rate < limit:
             raise EvalThresholdError(
                 f"pass rate {self.pass_rate:.1%} is below the {limit:.1%} threshold",
-                details={"dataset": self.dataset, "failed": [run.case.id for run in self.failures()],
-                         "pass_rate": self.pass_rate, "threshold": limit},
+                details={
+                    "dataset": self.dataset,
+                    "failed": [run.case.id for run in self.failures()],
+                    "pass_rate": self.pass_rate,
+                    "threshold": limit,
+                },
             )
         return self
 
@@ -281,18 +317,28 @@ class EvalReport:
 
     def __repr__(self) -> str:
         """Compact developer representation."""
-        return (f"EvalReport(dataset={self.dataset!r}, runs={len(self.runs)}, "
-                f"pass_rate={self.pass_rate:.3f})")
+        return (
+            f"EvalReport(dataset={self.dataset!r}, runs={len(self.runs)}, "
+            f"pass_rate={self.pass_rate:.3f})"
+        )
 
 
 class EvalRunner:
     """Run a dataset against an agent factory."""
 
-    def __init__(self, agent_factory: Callable[[], Any], *, metrics: Sequence[str] = (),
-                 repeats: int = 1, concurrency: int = 1, threshold: float = 0.0,
-                 token: CancellationToken | None = None, on_case: Callable[[CaseRun], None] | None = None,
-                 run_options: Mapping[str, Any] | None = None,
-                 weights: Mapping[str, float] | None = None) -> None:
+    def __init__(
+        self,
+        agent_factory: Callable[[], Any],
+        *,
+        metrics: Sequence[str] = (),
+        repeats: int = 1,
+        concurrency: int = 1,
+        threshold: float = 0.0,
+        token: CancellationToken | None = None,
+        on_case: Callable[[CaseRun], None] | None = None,
+        run_options: Mapping[str, Any] | None = None,
+        weights: Mapping[str, float] | None = None,
+    ) -> None:
         """Configure the runner.
 
         Args:
@@ -318,7 +364,9 @@ class EvalRunner:
         self.cases_run = 0
         self.errors = 0
 
-    def run(self, dataset: Dataset, *, progress: Callable[[int, int], None] | None = None) -> EvalReport:
+    def run(
+        self, dataset: Dataset, *, progress: Callable[[int, int], None] | None = None
+    ) -> EvalReport:
         """Run a dataset and return the report.
 
         Args:
@@ -327,11 +375,17 @@ class EvalRunner:
         """
         started_at = time.time()
         started = time.perf_counter()
-        jobs: list[tuple[EvalCase, int]] = [(case, repeat) for case in dataset.cases
-                                            for repeat in range(self.repeats)]
-        report = EvalReport(dataset=dataset.name, metrics=self.metrics, repeats=self.repeats,
-                            threshold=self.threshold, started_at=started_at,
-                            metadata=dict(dataset.defaults))
+        jobs: list[tuple[EvalCase, int]] = [
+            (case, repeat) for case in dataset.cases for repeat in range(self.repeats)
+        ]
+        report = EvalReport(
+            dataset=dataset.name,
+            metrics=self.metrics,
+            repeats=self.repeats,
+            threshold=self.threshold,
+            started_at=started_at,
+            metadata=dict(dataset.defaults),
+        )
         if not jobs:
             report.seconds = time.perf_counter() - started
             return report
@@ -341,21 +395,36 @@ class EvalRunner:
                 if progress is not None:
                     progress(index, len(jobs))
         else:
-            tasks = [Task(name=f"{case.id}#{repeat}", fn=self._run_case, args=(case, repeat),
-                          timeout=case.max_seconds * 4 if case.max_seconds else 900.0)
-                     for case, repeat in jobs]
-            with WorkerPool(min(self.concurrency, len(tasks)), name="eval", token=self.token) as pool:
+            tasks = [
+                Task(
+                    name=f"{case.id}#{repeat}",
+                    fn=self._run_case,
+                    args=(case, repeat),
+                    timeout=case.max_seconds * 4 if case.max_seconds else 900.0,
+                )
+                for case, repeat in jobs
+            ]
+            with WorkerPool(
+                min(self.concurrency, len(tasks)), name="eval", token=self.token
+            ) as pool:
                 outcomes = pool.run_many(tasks)
             for (case, repeat), outcome in zip(jobs, outcomes, strict=False):
                 if outcome.ok and isinstance(outcome.value, CaseRun):
                     report.runs.append(outcome.value)
                 else:
                     self.errors += 1
-                    report.runs.append(CaseRun(
-                        case=case, repeat=repeat,
-                        score=CaseScore(case_id=case.id, error=outcome.error or "task failed",
-                                        tags=case.tags, weight=case.weight),
-                    ))
+                    report.runs.append(
+                        CaseRun(
+                            case=case,
+                            repeat=repeat,
+                            score=CaseScore(
+                                case_id=case.id,
+                                error=outcome.error or "task failed",
+                                tags=case.tags,
+                                weight=case.weight,
+                            ),
+                        )
+                    )
         report.seconds = time.perf_counter() - started
         report.model = next((run.model for run in report.runs if run.model), "")
         LOGGER.debug("eval %s: %s", dataset.name, report.summary)
@@ -366,33 +435,56 @@ class EvalRunner:
         started = time.perf_counter()
         try:
             agent = self.agent_factory()
-        except Exception as exc:  # noqa: BLE001 - a broken factory fails the case, not the run
+        except Exception as exc:
             self.errors += 1
-            return CaseRun(case=case, repeat=repeat, seconds=time.perf_counter() - started,
-                           score=CaseScore(case_id=case.id, tags=case.tags, weight=case.weight,
-                                           error=f"agent factory failed: {exc}"))
+            return CaseRun(
+                case=case,
+                repeat=repeat,
+                seconds=time.perf_counter() - started,
+                score=CaseScore(
+                    case_id=case.id,
+                    tags=case.tags,
+                    weight=case.weight,
+                    error=f"agent factory failed: {exc}",
+                ),
+            )
         try:
             result = agent.run(case.prompt, **self.run_options)
-        except Exception as exc:  # noqa: BLE001 - the failure is the measurement
+        except Exception as exc:
             self.errors += 1
-            return CaseRun(case=case, repeat=repeat, seconds=time.perf_counter() - started,
-                           score=CaseScore(case_id=case.id, tags=case.tags, weight=case.weight,
-                                           error=f"{type(exc).__name__}: {exc}"))
+            return CaseRun(
+                case=case,
+                repeat=repeat,
+                seconds=time.perf_counter() - started,
+                score=CaseScore(
+                    case_id=case.id,
+                    tags=case.tags,
+                    weight=case.weight,
+                    error=f"{type(exc).__name__}: {exc}",
+                ),
+            )
         score = score_case(case, result, metrics=self.metrics, weights=self.weights)
         usage = getattr(result, "usage", None)
         run = CaseRun(
-            case=case, repeat=repeat, score=score, seconds=time.perf_counter() - started,
+            case=case,
+            repeat=repeat,
+            score=score,
+            seconds=time.perf_counter() - started,
             tokens=getattr(usage, "total_tokens", 0) or 0,
             cost=float(getattr(getattr(result, "cost", None), "total", 0.0) or 0.0),
             model=str(getattr(result, "model", "") or ""),
-            stop_reason=str(getattr(getattr(result, "stop_reason", ""), "value",
-                                    getattr(result, "stop_reason", "")) or ""),
+            stop_reason=str(
+                getattr(
+                    getattr(result, "stop_reason", ""), "value", getattr(result, "stop_reason", "")
+                )
+                or ""
+            ),
         )
         self.cases_run += 1
         if self.on_case is not None:
             try:
                 self.on_case(run)
-            except Exception as exc:  # noqa: BLE001 - callbacks must not break the run
+            except Exception as exc:
                 LOGGER.debug("on_case callback failed: %s", exc)
         return run
 
@@ -416,16 +508,31 @@ class EvalRunner:
 
     def __repr__(self) -> str:
         """Compact developer representation."""
-        return (f"EvalRunner(repeats={self.repeats}, concurrency={self.concurrency}, "
-                f"metrics={list(self.metrics)})")
+        return (
+            f"EvalRunner(repeats={self.repeats}, concurrency={self.concurrency}, "
+            f"metrics={list(self.metrics)})"
+        )
 
 
-def run_eval(dataset: Dataset, agent_factory: Callable[[], Any], *, metrics: Sequence[str] = (),
-             repeats: int = 1, concurrency: int = 1, threshold: float = 0.0,
-             **kwargs: Any) -> EvalReport:
+def run_eval(
+    dataset: Dataset,
+    agent_factory: Callable[[], Any],
+    *,
+    metrics: Sequence[str] = (),
+    repeats: int = 1,
+    concurrency: int = 1,
+    threshold: float = 0.0,
+    **kwargs: Any,
+) -> EvalReport:
     """Run a dataset and return the report in one call."""
-    runner = EvalRunner(agent_factory, metrics=metrics, repeats=repeats,
-                        concurrency=concurrency, threshold=threshold, **kwargs)
+    runner = EvalRunner(
+        agent_factory,
+        metrics=metrics,
+        repeats=repeats,
+        concurrency=concurrency,
+        threshold=threshold,
+        **kwargs,
+    )
     return runner.run(dataset)
 
 

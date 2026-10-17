@@ -222,12 +222,11 @@ class CircuitBreaker:
                 from ..errors import BackendUnavailableError
 
                 raise BackendUnavailableError(
-                    f"Circuit breaker {self.name!r} is open; retry in "
-                    f"{self.retry_after():.1f}s"
+                    f"Circuit breaker {self.name!r} is open; retry in {self.retry_after():.1f}s"
                 )
             try:
                 result = fn(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self.record_failure()
                 raise exc
             self.record_success()
@@ -363,8 +362,10 @@ class RetryExecutor:
         """Invoke ``fn`` with retries, returning its result or raising."""
         outcome = self.execute(fn, *args, **kwargs)
         if not outcome.succeeded:
-            raise outcome.value if isinstance(outcome.value, BaseException) else MAgentError(
-                str(outcome.error or "retry budget exhausted")
+            raise (
+                outcome.value
+                if isinstance(outcome.value, BaseException)
+                else MAgentError(str(outcome.error or "retry budget exhausted"))
             )
         return outcome.value  # type: ignore[return-value]
 
@@ -386,7 +387,7 @@ class RetryExecutor:
             outcome.attempts = attempt
             try:
                 value = fn(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001 - retry logic must see everything
+            except Exception as exc:
                 last_error = exc
                 if self.breaker is not None:
                     self.breaker.record_failure()
@@ -406,7 +407,9 @@ class RetryExecutor:
                     outcome.value = exc
                     self.gave_up += 1
                     break
-                record = RetryAttempt(attempt=attempt, delay=delay, error=str(exc)[:300], error_code=code)
+                record = RetryAttempt(
+                    attempt=attempt, delay=delay, error=str(exc)[:300], error_code=code
+                )
                 outcome.history.append(record)
                 outcome.total_delay += delay
                 self.retries += 1
@@ -499,7 +502,7 @@ def any_success(
     for call in calls:
         try:
             return call()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last = exc
             if on_error is not None:
                 on_error(exc)

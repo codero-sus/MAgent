@@ -12,9 +12,9 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from ..types import Capability, ChatResponse, ModelInfo, ToolCall, Usage
 from .base import BaseBackend, CompletionRequest, StreamChunk
@@ -138,7 +138,9 @@ class ScriptedBackend(BaseBackend):
 
     def __post_init__(self) -> None:
         """Initialize shared counters and default model."""
-        super().__init__(default_model=self.models_list[0] if self.models_list else "scripted-model")
+        super().__init__(
+            default_model=self.models_list[0] if self.models_list else "scripted-model"
+        )
 
     def _next_entry(self, request: CompletionRequest) -> Any:
         """Pick the reply for this call, honoring matchers when present."""
@@ -194,7 +196,9 @@ class ScriptedBackend(BaseBackend):
         else:
             text = str(produced)
             finish = "stop"
-        self.calls_log.append({"model": model, "text": text[:200], "tools": [c.name for c in tool_calls]})
+        self.calls_log.append(
+            {"model": model, "text": text[:200], "tools": [c.name for c in tool_calls]}
+        )
         usage = Usage(
             prompt_tokens=sum(_tokens_for(message.text()) for message in request.messages),
             completion_tokens=_tokens_for(text),
@@ -230,8 +234,13 @@ class ScriptedBackend(BaseBackend):
     def models(self) -> list[ModelInfo]:
         """Return the scripted model list."""
         return [
-            ModelInfo(id=model_id, runtime="scripted",
-                      capabilities=[Capability.CHAT.value], default=index == 0, status="running")
+            ModelInfo(
+                id=model_id,
+                runtime="scripted",
+                capabilities=[Capability.CHAT.value],
+                default=index == 0,
+                status="running",
+            )
             for index, model_id in enumerate(self.models_list)
         ]
 
@@ -266,9 +275,7 @@ class ToolScriptBackend(ScriptedBackend):
             self.script = [
                 {
                     "text": "",
-                    "tool_calls": [
-                        {"name": self.tool_name, "arguments": self.tool_arguments}
-                    ],
+                    "tool_calls": [{"name": self.tool_name, "arguments": self.tool_arguments}],
                     "finish_reason": "tool_calls",
                 },
                 self.final_text,
@@ -296,15 +303,21 @@ class LambdaBackend(BaseBackend):
     def complete(self, request: CompletionRequest) -> ChatResponse:
         """Invoke the wrapped function to produce the reply."""
         text = self.fn(request)
-        usage = Usage(prompt_tokens=_tokens_for(request.signature()), completion_tokens=_tokens_for(text))
+        usage = Usage(
+            prompt_tokens=_tokens_for(request.signature()), completion_tokens=_tokens_for(text)
+        )
         usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
-        response = ChatResponse(text=text, model=self.default_model, usage=usage, finish_reason="stop")
+        response = ChatResponse(
+            text=text, model=self.default_model, usage=usage, finish_reason="stop"
+        )
         self.record(response)
         return response
 
     def models(self) -> list[ModelInfo]:
         """Return the single lambda model."""
-        return [ModelInfo(id=self.default_model, runtime="lambda", capabilities=[Capability.CHAT.value])]
+        return [
+            ModelInfo(id=self.default_model, runtime="lambda", capabilities=[Capability.CHAT.value])
+        ]
 
 
 __all__ = [

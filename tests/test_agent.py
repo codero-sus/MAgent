@@ -8,11 +8,10 @@ from magent.agent import Agent, AgentConfig, Plan, make_agent, parse_reflection
 from magent.errors import StructuredOutputError
 from magent.testing import EchoBackend, ScriptedBackend, ToolScriptBackend
 from magent.types import EventKind, RunResult, StopReason
+from tests.support import MAgentTestCase
 
-from tests.support import MagentTestCase
 
-
-class AgentLoopTest(MagentTestCase):
+class AgentLoopTest(MAgentTestCase):
     """The react loop, tool calling and stopping conditions."""
 
     def _tool_agent(self, *scripts: object) -> Agent:
@@ -38,26 +37,30 @@ class AgentLoopTest(MagentTestCase):
         self.assertIn("42", result.output)
 
     def test_max_iterations_is_enforced(self) -> None:
-        agent = self._tool_agent({"tool_calls": [{"name": "calculate",
-                                                  "arguments": {"expression": "1+1"}}]})
+        agent = self._tool_agent(
+            {"tool_calls": [{"name": "calculate", "arguments": {"expression": "1+1"}}]}
+        )
         result = agent.run("loop forever", max_iterations=2)
         self.assertEqual(result.stop_reason, StopReason.MAX_ITERATIONS)
         self.assertLessEqual(len(result.steps), 3)
 
     def test_plan_mode_builds_and_follows_a_plan(self) -> None:
-        backend = ScriptedBackend(script=[
-            '{"steps": [{"goal": "read the file", "tool": "read_file"}, '
-            '{"goal": "summarise it"}]}',
-            {"text": "done"},
-        ])
+        backend = ScriptedBackend(
+            script=[
+                '{"steps": [{"goal": "read the file", "tool": "read_file"}, '
+                '{"goal": "summarise it"}]}',
+                {"text": "done"},
+            ]
+        )
         agent = self.agent(backend=backend)
         result = agent.run("summarise the file", loop_mode="plan")
         self.assertTrue(result.succeeded)
         self.assertEqual(result.metadata["mode"], "plan")
 
     def test_reflect_mode_stops_when_satisfied(self) -> None:
-        backend = ScriptedBackend(script=[{"text": "first answer"},
-                                          {"text": "STOP: yes, the goal is met"}])
+        backend = ScriptedBackend(
+            script=[{"text": "first answer"}, {"text": "STOP: yes, the goal is met"}]
+        )
         agent = self.agent(backend=backend)
         result = agent.run("explain something", loop_mode="reflect")
         self.assertTrue(result.steps)
@@ -152,7 +155,7 @@ class AgentLoopTest(MagentTestCase):
             self.agent().run("hello", not_an_option=True)
 
 
-class ApprovalIntegrationTest(MagentTestCase):
+class ApprovalIntegrationTest(MAgentTestCase):
     """Approvals gate tool calls inside a real run."""
 
     def test_denied_approval_becomes_a_tool_result(self) -> None:
@@ -162,12 +165,27 @@ class ApprovalIntegrationTest(MagentTestCase):
         config = self.config()
         config.tools.approval_mode = "always"
         manager = ApprovalManager(ApprovalPolicy(mode="always"), prompt=deny_all)
-        agent = Agent(backend=ToolScriptBackend(script=[
-            {"tool_calls": [{"name": "write_file",
-                             "arguments": {"path": str(self.workspace / "x.txt"),
-                                           "content": "nope"}}]},
-            {"text": "I was not allowed to write the file."},
-        ]), settings=config, workspace=self.workspace, approval=manager)
+        agent = Agent(
+            backend=ToolScriptBackend(
+                script=[
+                    {
+                        "tool_calls": [
+                            {
+                                "name": "write_file",
+                                "arguments": {
+                                    "path": str(self.workspace / "x.txt"),
+                                    "content": "nope",
+                                },
+                            }
+                        ]
+                    },
+                    {"text": "I was not allowed to write the file."},
+                ]
+            ),
+            settings=config,
+            workspace=self.workspace,
+            approval=manager,
+        )
         result = agent.run("write a file")
         self.assertTrue(result.succeeded)
         self.assertFalse((self.workspace / "x.txt").exists())

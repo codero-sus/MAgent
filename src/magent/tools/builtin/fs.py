@@ -9,7 +9,6 @@ can see exactly what changed.
 from __future__ import annotations
 
 import fnmatch
-import os
 import re
 import shutil
 from pathlib import Path
@@ -18,7 +17,7 @@ from typing import Any
 from ...errors import PermissionDeniedError, ToolExecutionError
 from ...tools.base import ToolContext, tool
 from ...utils.diff import diff_summary, unified_diff
-from ...utils.files import atomic_write_text, human_size, is_within, parse_size
+from ...utils.files import atomic_write_text, human_size
 from ...utils.hashing import file_sha256, short_hash
 from ...utils.mime import guess_mime, is_binary, media_kind
 from ...utils.text import chunk_text, ellipsize, normalize_newlines
@@ -33,10 +32,13 @@ def _sandbox_check(context: ToolContext, path: str | Path, action: str, size: in
     if action == "read":
         sandbox.check_read(path if Path(str(path)).is_absolute() else context.workspace / str(path))
     elif action in {"write", "append"}:
-        sandbox.check_write(path if Path(str(path)).is_absolute() else context.workspace / str(path), size)
+        sandbox.check_write(
+            path if Path(str(path)).is_absolute() else context.workspace / str(path), size
+        )
     else:
-        sandbox.check_path(path if Path(str(path)).is_absolute() else context.workspace / str(path),
-                           action=action)
+        sandbox.check_path(
+            path if Path(str(path)).is_absolute() else context.workspace / str(path), action=action
+        )
     return context.resolve_path(path)
 
 
@@ -48,9 +50,15 @@ def _number_lines(text: str, start: int = 1) -> str:
 
 
 @tool(category="files", risk="read", filesystem=True, tags=["read", "core"])
-def read_file(path: str, encoding: str = "utf-8", max_bytes: int = 0,
-              start_line: int = 0, end_line: int = 0, number_lines: bool = False,
-              context: ToolContext | None = None) -> dict[str, Any]:
+def read_file(
+    path: str,
+    encoding: str = "utf-8",
+    max_bytes: int = 0,
+    start_line: int = 0,
+    end_line: int = 0,
+    number_lines: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Read a text file from the workspace.
 
     Args:
@@ -64,7 +72,9 @@ def read_file(path: str, encoding: str = "utf-8", max_bytes: int = 0,
     ctx = context or ToolContext()
     target = _sandbox_check(ctx, path, "read")
     if not target.exists():
-        raise ToolExecutionError(f"No such file: {ctx.sandbox.relative(target) if ctx.sandbox else target}")
+        raise ToolExecutionError(
+            f"No such file: {ctx.sandbox.relative(target) if ctx.sandbox else target}"
+        )
     if target.is_dir():
         raise ToolExecutionError(f"{target} is a directory, use list_dir instead")
     if is_binary(target):
@@ -107,8 +117,14 @@ def read_file(path: str, encoding: str = "utf-8", max_bytes: int = 0,
 
 
 @tool(category="files", risk="write", filesystem=True, destructive=False, tags=["write", "core"])
-def write_file(path: str, content: str, encoding: str = "utf-8", append: bool = False,
-               create_parents: bool = True, context: ToolContext | None = None) -> dict[str, Any]:
+def write_file(
+    path: str,
+    content: str,
+    encoding: str = "utf-8",
+    append: bool = False,
+    create_parents: bool = True,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Write or append to a file inside the workspace.
 
     Args:
@@ -120,7 +136,9 @@ def write_file(path: str, content: str, encoding: str = "utf-8", append: bool = 
     """
     ctx = context or ToolContext()
     payload = normalize_newlines(content or "")
-    target = _sandbox_check(ctx, path, "append" if append else "write", len(payload.encode(encoding)))
+    target = _sandbox_check(
+        ctx, path, "append" if append else "write", len(payload.encode(encoding))
+    )
     if ctx.dry_run:
         return {"path": str(target), "dry_run": True, "bytes": len(payload)}
     if create_parents:
@@ -145,14 +163,22 @@ def write_file(path: str, content: str, encoding: str = "utf-8", append: bool = 
         "bytes_written": len(payload.encode(encoding)),
         "appended": append,
         "lines": final.count("\n") + (0 if final.endswith("\n") or not final else 1),
-        "diff": diff_summary(previous, final) if not append else f"+{payload.count(chr(10)) + 1} lines",
+        "diff": diff_summary(previous, final)
+        if not append
+        else f"+{payload.count(chr(10)) + 1} lines",
         "sha256_short": short_hash(final),
     }
 
 
 @tool(category="files", risk="write", filesystem=True, tags=["edit", "patch", "core"])
-def edit_file(path: str, old_text: str, new_text: str, replace_all: bool = False,
-              fuzzy: bool = True, context: ToolContext | None = None) -> dict[str, Any]:
+def edit_file(
+    path: str,
+    old_text: str,
+    new_text: str,
+    replace_all: bool = False,
+    fuzzy: bool = True,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Replace an exact snippet of text inside a file.
 
     Safer than rewriting a whole file: the change is surgical, the diff is
@@ -172,7 +198,9 @@ def edit_file(path: str, old_text: str, new_text: str, replace_all: bool = False
     original = target.read_text(encoding="utf-8", errors="replace")
     if not old_text:
         raise ToolExecutionError("old_text must not be empty")
-    updated, count = _replace_snippet(original, old_text, new_text, replace_all=replace_all, fuzzy=fuzzy)
+    updated, count = _replace_snippet(
+        original, old_text, new_text, replace_all=replace_all, fuzzy=fuzzy
+    )
     if count == 0:
         from ...utils.diff import closest_match
 
@@ -188,14 +216,20 @@ def edit_file(path: str, old_text: str, new_text: str, replace_all: bool = False
     return {
         "path": str(target),
         "replacements": count,
-        "diff": unified_diff(original, updated, from_label=f"{target.name} (before)",
-                             to_label=f"{target.name} (after)"),
+        "diff": unified_diff(
+            original,
+            updated,
+            from_label=f"{target.name} (before)",
+            to_label=f"{target.name} (after)",
+        ),
         "summary": diff_summary(original, updated),
         "dry_run": ctx.dry_run,
     }
 
 
-def _replace_snippet(text: str, old: str, new: str, *, replace_all: bool, fuzzy: bool) -> tuple[str, int]:
+def _replace_snippet(
+    text: str, old: str, new: str, *, replace_all: bool, fuzzy: bool
+) -> tuple[str, int]:
     """Replace ``old`` with ``new``, optionally tolerating whitespace drift."""
     if old in text:
         if replace_all:
@@ -220,9 +254,15 @@ def _replace_snippet(text: str, old: str, new: str, *, replace_all: bool, fuzzy:
 
 
 @tool(category="files", risk="read", filesystem=True, tags=["list", "core"])
-def list_dir(path: str = ".", pattern: str = "*", recursive: bool = False,
-             max_entries: int = 500, show_hidden: bool = False, sort_by: str = "name",
-             context: ToolContext | None = None) -> dict[str, Any]:
+def list_dir(
+    path: str = ".",
+    pattern: str = "*",
+    recursive: bool = False,
+    max_entries: int = 500,
+    show_hidden: bool = False,
+    sort_by: str = "name",
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """List directory contents with optional recursion and filtering.
 
     Args:
@@ -247,22 +287,26 @@ def list_dir(path: str = ".", pattern: str = "*", recursive: bool = False,
     for entry in walker:
         if len(entries) >= max_entries:
             break
-        if not show_hidden and any(part.startswith(".") for part in entry.relative_to(target).parts):
+        if not show_hidden and any(
+            part.startswith(".") for part in entry.relative_to(target).parts
+        ):
             continue
         try:
             stat = entry.stat()
         except OSError:
             continue
-        entries.append({
-            "name": entry.name,
-            "path": str(entry),
-            "relative": str(entry.relative_to(target)),
-            "is_dir": entry.is_dir(),
-            "size": stat.st_size,
-            "size_human": human_size(stat.st_size),
-            "modified": stat.st_mtime,
-            "mime": "" if entry.is_dir() else guess_mime(entry),
-        })
+        entries.append(
+            {
+                "name": entry.name,
+                "path": str(entry),
+                "relative": str(entry.relative_to(target)),
+                "is_dir": entry.is_dir(),
+                "size": stat.st_size,
+                "size_human": human_size(stat.st_size),
+                "modified": stat.st_mtime,
+                "mime": "" if entry.is_dir() else guess_mime(entry),
+            }
+        )
     key = {"size": lambda item: -item["size"], "modified": lambda item: -item["modified"]}.get(
         sort_by, lambda item: item["relative"].lower()
     )
@@ -280,8 +324,9 @@ def list_dir(path: str = ".", pattern: str = "*", recursive: bool = False,
 
 
 @tool(category="files", risk="read", filesystem=True, tags=["search", "glob"])
-def glob_files(pattern: str, root: str = ".", max_results: int = 200,
-               context: ToolContext | None = None) -> dict[str, Any]:
+def glob_files(
+    pattern: str, root: str = ".", max_results: int = 200, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Find files matching a glob pattern.
 
     Args:
@@ -300,15 +345,27 @@ def glob_files(pattern: str, root: str = ".", max_results: int = 200,
         relative = str(entry.relative_to(base))
         if fnmatch.fnmatch(relative, pattern) or fnmatch.fnmatch(entry.name, pattern):
             matches.append(relative)
-    return {"root": str(base), "pattern": pattern, "count": len(matches), "matches": matches,
-            "truncated": len(matches) >= max_results}
+    return {
+        "root": str(base),
+        "pattern": pattern,
+        "count": len(matches),
+        "matches": matches,
+        "truncated": len(matches) >= max_results,
+    }
 
 
 @tool(category="files", risk="read", filesystem=True, tags=["grep", "search", "core"])
-def grep(pattern: str, path: str = ".", include: str = "*", ignore_case: bool = False,
-         max_results: int = 100, context_lines: int = 0, regex: bool = True,
-         exclude_dirs: str = ".git,__pycache__,node_modules,.venv,dist,build",
-         context: ToolContext | None = None) -> dict[str, Any]:
+def grep(
+    pattern: str,
+    path: str = ".",
+    include: str = "*",
+    ignore_case: bool = False,
+    max_results: int = 100,
+    context_lines: int = 0,
+    regex: bool = True,
+    exclude_dirs: str = ".git,__pycache__,node_modules,.venv,dist,build",
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Search file contents for a pattern, ripgrep style.
 
     Args:
@@ -344,20 +401,24 @@ def grep(pattern: str, path: str = ".", include: str = "*", ignore_case: bool = 
             return
         lines = text.split("\n")
         for index, line in enumerate(lines):
-            hit = matcher.search(line) if matcher else (
-                pattern.lower() in line.lower() if ignore_case else pattern in line
+            hit = (
+                matcher.search(line)
+                if matcher
+                else (pattern.lower() in line.lower() if ignore_case else pattern in line)
             )
             if not hit:
                 continue
             before = lines[max(0, index - context_lines) : index] if context_lines else []
             after = lines[index + 1 : index + 1 + context_lines] if context_lines else []
-            matches.append({
-                "path": str(file_path),
-                "line": index + 1,
-                "text": ellipsize(line.rstrip(), 400),
-                "before": [item.rstrip() for item in before],
-                "after": [item.rstrip() for item in after],
-            })
+            matches.append(
+                {
+                    "path": str(file_path),
+                    "line": index + 1,
+                    "text": ellipsize(line.rstrip(), 400),
+                    "before": [item.rstrip() for item in before],
+                    "after": [item.rstrip() for item in after],
+                }
+            )
             if len(matches) >= max_results:
                 return
 
@@ -423,7 +484,9 @@ def file_info(path: str, context: ToolContext | None = None) -> dict[str, Any]:
 
 
 @tool(category="files", risk="destructive", filesystem=True, destructive=True, tags=["delete"])
-def delete_path(path: str, recursive: bool = False, context: ToolContext | None = None) -> dict[str, Any]:
+def delete_path(
+    path: str, recursive: bool = False, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Delete a file or empty directory inside the workspace.
 
     Args:
@@ -454,8 +517,9 @@ def delete_path(path: str, recursive: bool = False, context: ToolContext | None 
 
 
 @tool(category="files", risk="write", filesystem=True, tags=["copy", "move"])
-def copy_path(source: str, destination: str, overwrite: bool = False,
-              context: ToolContext | None = None) -> dict[str, Any]:
+def copy_path(
+    source: str, destination: str, overwrite: bool = False, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Copy a file or directory within the workspace.
 
     Args:
@@ -477,13 +541,18 @@ def copy_path(source: str, destination: str, overwrite: bool = False,
         shutil.copytree(src, dst, dirs_exist_ok=True)
     else:
         shutil.copy2(src, dst)
-    return {"source": str(src), "destination": str(dst), "copied": True,
-            "size": src.stat().st_size if src.is_file() else 0}
+    return {
+        "source": str(src),
+        "destination": str(dst),
+        "copied": True,
+        "size": src.stat().st_size if src.is_file() else 0,
+    }
 
 
 @tool(category="files", risk="write", filesystem=True, tags=["move", "rename"])
-def move_path(source: str, destination: str, overwrite: bool = False,
-              context: ToolContext | None = None) -> dict[str, Any]:
+def move_path(
+    source: str, destination: str, overwrite: bool = False, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Move or rename a file or directory within the workspace.
 
     Args:
@@ -522,8 +591,13 @@ def make_dir(path: str, parents: bool = True, context: ToolContext | None = None
 
 
 @tool(category="files", risk="read", filesystem=True, tags=["diff", "compare"])
-def diff_files(left: str, right: str, context_lines: int = 3, color: bool = False,
-               context: ToolContext | None = None) -> dict[str, Any]:
+def diff_files(
+    left: str,
+    right: str,
+    context_lines: int = 3,
+    color: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Show a unified diff between two files.
 
     Args:
@@ -541,16 +615,26 @@ def diff_files(left: str, right: str, context_lines: int = 3, color: bool = Fals
         "left": str(first),
         "right": str(second),
         "identical": left_text == right_text,
-        "diff": unified_diff(left_text, right_text, from_label=first.name, to_label=second.name,
-                             context=context_lines, color=color),
+        "diff": unified_diff(
+            left_text,
+            right_text,
+            from_label=first.name,
+            to_label=second.name,
+            context=context_lines,
+            color=color,
+        ),
         "summary": diff_summary(left_text, right_text),
     }
 
 
 @tool(category="files", risk="read", filesystem=True, tags=["tree"])
-def directory_tree(path: str = ".", max_depth: int = 3, max_entries: int = 400,
-                   exclude: str = ".git,__pycache__,node_modules,.venv,dist,build",
-                   context: ToolContext | None = None) -> dict[str, Any]:
+def directory_tree(
+    path: str = ".",
+    max_depth: int = 3,
+    max_entries: int = 400,
+    exclude: str = ".git,__pycache__,node_modules,.venv,dist,build",
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Render a directory tree as indented text.
 
     Args:
@@ -571,7 +655,9 @@ def directory_tree(path: str = ".", max_depth: int = 3, max_entries: int = 400,
         if depth > max_depth or count >= max_entries:
             return
         try:
-            entries = sorted(directory.iterdir(), key=lambda item: (item.is_file(), item.name.lower()))
+            entries = sorted(
+                directory.iterdir(), key=lambda item: (item.is_file(), item.name.lower())
+            )
         except OSError:
             return
         for index, entry in enumerate(entries):
@@ -590,12 +676,18 @@ def directory_tree(path: str = ".", max_depth: int = 3, max_entries: int = 400,
                 lines.append(f"{prefix}{connector}{entry.name} ({human_size(size)})")
 
     walk(root, 1, "")
-    return {"root": str(root), "entries": count, "truncated": count >= max_entries,
-            "tree": "\n".join(lines)}
+    return {
+        "root": str(root),
+        "entries": count,
+        "truncated": count >= max_entries,
+        "tree": "\n".join(lines),
+    }
 
 
 @tool(category="files", risk="read", filesystem=True, tags=["hash", "integrity"])
-def hash_file(path: str, algorithm: str = "sha256", context: ToolContext | None = None) -> dict[str, Any]:
+def hash_file(
+    path: str, algorithm: str = "sha256", context: ToolContext | None = None
+) -> dict[str, Any]:
     """Compute a checksum of a file.
 
     Args:
@@ -615,13 +707,18 @@ def hash_file(path: str, algorithm: str = "sha256", context: ToolContext | None 
     with target.open("rb") as stream:
         for block in iter(lambda: stream.read(1 << 20), b""):
             digest.update(block)
-    return {"path": str(target), "algorithm": algorithm, "digest": digest.hexdigest(),
-            "size": target.stat().st_size}
+    return {
+        "path": str(target),
+        "algorithm": algorithm,
+        "digest": digest.hexdigest(),
+        "size": target.stat().st_size,
+    }
 
 
 @tool(category="files", risk="read", filesystem=True, tags=["chunk", "rag"])
-def chunk_file(path: str, max_chars: int = 1200, overlap: int = 120,
-               context: ToolContext | None = None) -> dict[str, Any]:
+def chunk_file(
+    path: str, max_chars: int = 1200, overlap: int = 120, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Split a text file into overlapping chunks suitable for embedding.
 
     Args:
@@ -639,14 +736,21 @@ def chunk_file(path: str, max_chars: int = 1200, overlap: int = 120,
         "chars": len(text),
         "max_chars": max_chars,
         "overlap": overlap,
-        "pieces": [{"index": index, "chars": len(piece), "text": ellipsize(piece, 500)}
-                   for index, piece in enumerate(pieces[:50])],
+        "pieces": [
+            {"index": index, "chars": len(piece), "text": ellipsize(piece, 500)}
+            for index, piece in enumerate(pieces[:50])
+        ],
     }
 
 
 @tool(category="files", risk="read", filesystem=True, tags=["search", "content"])
-def find_in_files(query: str, paths: str = ".", file_pattern: str = "*",
-                  max_results: int = 50, context: ToolContext | None = None) -> dict[str, Any]:
+def find_in_files(
+    query: str,
+    paths: str = ".",
+    file_pattern: str = "*",
+    max_results: int = 50,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Find files whose content mentions a literal query, ranked by frequency.
 
     Args:
@@ -675,11 +779,13 @@ def find_in_files(query: str, paths: str = ".", file_pattern: str = "*",
             occurrences = text.lower().count(needle)
             if occurrences:
                 first = text.lower().find(needle)
-                results.append({
-                    "path": str(entry),
-                    "occurrences": occurrences,
-                    "snippet": ellipsize(text[max(0, first - 60) : first + 160].strip(), 220),
-                })
+                results.append(
+                    {
+                        "path": str(entry),
+                        "occurrences": occurrences,
+                        "snippet": ellipsize(text[max(0, first - 60) : first + 160].strip(), 220),
+                    }
+                )
     results.sort(key=lambda item: -item["occurrences"])
     return {"query": query, "files": len(results), "results": results[:max_results]}
 
@@ -729,9 +835,23 @@ def disk_usage(path: str = ".", context: ToolContext | None = None) -> dict[str,
 
 
 TOOLS: list[Any] = [
-    read_file, write_file, edit_file, list_dir, glob_files, grep, file_info,
-    delete_path, copy_path, move_path, make_dir, diff_files, directory_tree,
-    hash_file, chunk_file, find_in_files, disk_usage,
+    read_file,
+    write_file,
+    edit_file,
+    list_dir,
+    glob_files,
+    grep,
+    file_info,
+    delete_path,
+    copy_path,
+    move_path,
+    make_dir,
+    diff_files,
+    directory_tree,
+    hash_file,
+    chunk_file,
+    find_in_files,
+    disk_usage,
 ]
 """Every tool defined in this module, for the registry loader."""
 

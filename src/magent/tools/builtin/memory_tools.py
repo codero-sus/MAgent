@@ -29,8 +29,15 @@ def _store(context: ToolContext) -> Any:
 
 
 @tool(category="memory", risk="write", filesystem=True, tags=["memory", "remember", "core"])
-def remember(content: str, kind: str = "note", tags: str = "", importance: float = 0.5,
-             source: str = "", metadata: str = "", context: ToolContext | None = None) -> dict[str, Any]:
+def remember(
+    content: str,
+    kind: str = "note",
+    tags: str = "",
+    importance: float = 0.5,
+    source: str = "",
+    metadata: str = "",
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Store a durable memory entry.
 
     Args:
@@ -69,9 +76,15 @@ def remember(content: str, kind: str = "note", tags: str = "", importance: float
 
 
 @tool(category="memory", risk="read", filesystem=True, tags=["memory", "recall", "core"])
-def recall(query: str = "", limit: int = 8, kind: str = "", tags: str = "",
-           semantic: bool = True, min_score: float = 0.0,
-           context: ToolContext | None = None) -> dict[str, Any]:
+def recall(
+    query: str = "",
+    limit: int = 8,
+    kind: str = "",
+    tags: str = "",
+    semantic: bool = True,
+    min_score: float = 0.0,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Search stored memories by text, tags, or semantic similarity.
 
     Args:
@@ -95,19 +108,19 @@ def recall(query: str = "", limit: int = 8, kind: str = "", tags: str = "",
     )
     entries: list[dict[str, Any]] = []
     for item in results:
-        entries.append({
-            "id": getattr(item, "id", None),
-            "content": getattr(item, "content", str(item)),
-            "kind": getattr(item, "kind", ""),
-            "tags": list(getattr(item, "tags", []) or []),
-            "importance": getattr(item, "importance", 0.0),
-            "score": round(float(getattr(item, "score", 0.0) or 0.0), 4),
-            "created_at": getattr(item, "created_at", ""),
-            "source": getattr(item, "source", ""),
-        })
-    text = "\n".join(
-        f"- [{entry['kind']}] {ellipsize(entry['content'], 200)}" for entry in entries
-    )
+        entries.append(
+            {
+                "id": getattr(item, "id", None),
+                "content": getattr(item, "content", str(item)),
+                "kind": getattr(item, "kind", ""),
+                "tags": list(getattr(item, "tags", []) or []),
+                "importance": getattr(item, "importance", 0.0),
+                "score": round(float(getattr(item, "score", 0.0) or 0.0), 4),
+                "created_at": getattr(item, "created_at", ""),
+                "source": getattr(item, "source", ""),
+            }
+        )
+    text = "\n".join(f"- [{entry['kind']}] {ellipsize(entry['content'], 200)}" for entry in entries)
     return {
         "query": query,
         "count": len(entries),
@@ -118,8 +131,9 @@ def recall(query: str = "", limit: int = 8, kind: str = "", tags: str = "",
 
 
 @tool(category="memory", risk="read", filesystem=True, tags=["memory", "list"])
-def list_memories(limit: int = 20, kind: str = "", order: str = "recent",
-                  context: ToolContext | None = None) -> dict[str, Any]:
+def list_memories(
+    limit: int = 20, kind: str = "", order: str = "recent", context: ToolContext | None = None
+) -> dict[str, Any]:
     """List stored memories without running a search.
 
     Args:
@@ -147,11 +161,23 @@ def list_memories(limit: int = 20, kind: str = "", order: str = "recent",
     return {"count": len(records), "order": order, "entries": records, "stats": stats}
 
 
-@tool(category="memory", risk="destructive", destructive=True, filesystem=True,
-      requires_approval=True, tags=["memory", "forget"])
-def forget(entry_id: str = "", query: str = "", kind: str = "", purge_all: bool = False,
-           min_score: float = 0.25, limit: int = 100,
-           context: ToolContext | None = None) -> dict[str, Any]:
+@tool(
+    category="memory",
+    risk="destructive",
+    destructive=True,
+    filesystem=True,
+    requires_approval=True,
+    tags=["memory", "forget"],
+)
+def forget(
+    entry_id: str = "",
+    query: str = "",
+    kind: str = "",
+    purge_all: bool = False,
+    min_score: float = 0.25,
+    limit: int = 100,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Delete one or more stored memories.
 
     Args:
@@ -165,7 +191,10 @@ def forget(entry_id: str = "", query: str = "", kind: str = "", purge_all: bool 
     ctx = context or ToolContext()
     store = _store(ctx)
     if ctx.dry_run:
-        return {"dry_run": True, "would_delete": entry_id or query or ("all" if purge_all else "nothing")}
+        return {
+            "dry_run": True,
+            "would_delete": entry_id or query or ("all" if purge_all else "nothing"),
+        }
     if purge_all:
         removed = store.clear()
         return {"deleted": removed, "mode": "purge_all"}
@@ -181,8 +210,9 @@ def forget(entry_id: str = "", query: str = "", kind: str = "", purge_all: bool 
 
 
 @tool(category="memory", risk="read", filesystem=True, tags=["memory", "export"])
-def export_memories(path: str = "", format: str = "jsonl", kind: str = "",
-                    context: ToolContext | None = None) -> dict[str, Any]:
+def export_memories(
+    path: str = "", format: str = "jsonl", kind: str = "", context: ToolContext | None = None
+) -> dict[str, Any]:
     """Export every memory as JSONL or JSON, optionally to a file.
 
     Args:
@@ -193,7 +223,10 @@ def export_memories(path: str = "", format: str = "jsonl", kind: str = "",
     ctx = context or ToolContext()
     store = _store(ctx)
     entries = store.list_entries(limit=100000, kind=kind or None, order="recent")
-    records = [entry.to_dict() if hasattr(entry, "to_dict") else {"content": str(entry)} for entry in entries]
+    records = [
+        entry.to_dict() if hasattr(entry, "to_dict") else {"content": str(entry)}
+        for entry in entries
+    ]
     if format == "json":
         text = json.dumps(records, indent=2, ensure_ascii=False) + "\n"
     elif format == "jsonl":
@@ -220,7 +253,9 @@ def export_memories(path: str = "", format: str = "jsonl", kind: str = "",
 
 
 @tool(category="memory", risk="safe", filesystem=True, tags=["memory", "compact"])
-def compact_memories(kind: str = "", keep: int = 50, context: ToolContext | None = None) -> dict[str, Any]:
+def compact_memories(
+    kind: str = "", keep: int = 50, context: ToolContext | None = None
+) -> dict[str, Any]:
     """Merge near-duplicate memories and drop the least important ones.
 
     Args:

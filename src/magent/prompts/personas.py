@@ -224,8 +224,18 @@ MINIMAL = Persona(
 
 PERSONAS: dict[str, Persona] = {
     persona.name: persona
-    for persona in (ASSISTANT, CODER, RESEARCHER, WRITER, ANALYST, DEVOPS, TUTOR, REVIEWER,
-                    PLANNER, MINIMAL)
+    for persona in (
+        ASSISTANT,
+        CODER,
+        RESEARCHER,
+        WRITER,
+        ANALYST,
+        DEVOPS,
+        TUTOR,
+        REVIEWER,
+        PLANNER,
+        MINIMAL,
+    )
 }
 """Every built-in persona, keyed by name."""
 
@@ -246,8 +256,13 @@ def get_persona(name: str = "", *, strict: bool = False) -> Persona:
 def list_personas() -> list[dict[str, Any]]:
     """Return metadata for every persona, for ``magent personas``."""
     return [
-        {"name": persona.name, "role": persona.role, "tone": persona.tone,
-         "max_words": persona.max_words, "priorities": len(persona.priorities)}
+        {
+            "name": persona.name,
+            "role": persona.role,
+            "tone": persona.tone,
+            "max_words": persona.max_words,
+            "priorities": len(persona.priorities),
+        }
         for persona in PERSONAS.values()
     ]
 
@@ -274,11 +289,11 @@ __all__ = [
     "MINIMAL",
     "PERSONAS",
     "PLANNER",
-    "Persona",
     "RESEARCHER",
     "REVIEWER",
     "TUTOR",
     "WRITER",
+    "Persona",
     "get_persona",
     "list_personas",
     "persona_prompt",

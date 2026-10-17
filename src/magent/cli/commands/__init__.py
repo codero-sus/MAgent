@@ -10,8 +10,9 @@ can call a command's ``run`` directly without going through ``argv``.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 CommandRunner = Callable[[Any, argparse.Namespace], int]
 """Signature of a command's implementation."""
@@ -49,10 +50,16 @@ class Command:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the command for ``magent commands --format json``."""
-        return {"name": self.name, "help": self.help, "description": self.description,
-                "aliases": list(self.aliases), "group": self.group,
-                "needs_backend": self.needs_backend, "examples": list(self.examples),
-                "hidden": self.hidden}
+        return {
+            "name": self.name,
+            "help": self.help,
+            "description": self.description,
+            "aliases": list(self.aliases),
+            "group": self.group,
+            "needs_backend": self.needs_backend,
+            "examples": list(self.examples),
+            "hidden": self.hidden,
+        }
 
     def __repr__(self) -> str:
         """Compact developer representation."""
@@ -106,7 +113,9 @@ def build_groups(commands: Iterable[Command]) -> list[CommandGroup]:
     }
     extra = CommandGroup(name="other", description="everything else")
     for item in commands:
-        target = groups.get(item.group) or (extra if item.group not in known else groups[item.group])
+        target = groups.get(item.group) or (
+            extra if item.group not in known else groups[item.group]
+        )
         target.add(item)
     result = [groups[name] for name, _ in GROUPS]
     if extra.commands:

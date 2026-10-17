@@ -256,7 +256,9 @@ StreamHandler = Callable[[StreamChunk], None]
 """Callback signature for incremental stream consumers."""
 
 
-def collect_stream(chunks: Iterator[StreamChunk], on_chunk: StreamHandler | None = None) -> ChatResponse:
+def collect_stream(
+    chunks: Iterator[StreamChunk], on_chunk: StreamHandler | None = None
+) -> ChatResponse:
     """Drain a stream into a single :class:`ChatResponse`.
 
     Used by callers that asked for streaming telemetry but want a final string,
@@ -280,9 +282,7 @@ def collect_stream(chunks: Iterator[StreamChunk], on_chunk: StreamHandler | None
             usage = chunk.usage
         if chunk.raw:
             last_raw = chunk.raw
-            tool_fragments.extend(
-                call.to_dict() for call in chunk.tool_calls
-            )
+            tool_fragments.extend(call.to_dict() for call in chunk.tool_calls)
         if chunk.finish_reason:
             finish_reason = chunk.finish_reason
     from ..http.sse import merge_tool_call_deltas

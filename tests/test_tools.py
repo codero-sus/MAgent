@@ -7,16 +7,31 @@ import unittest
 from pathlib import Path
 from typing import Literal
 
-from magent.errors import (ApprovalRequiredError, PermissionDeniedError, ToolNotFoundError,
-                           ToolValidationError)
-from magent.tools import (MODES, RISK_LEVELS, ApprovalManager, Tool, ToolContext, ToolRegistry,
-                          build_sandbox, default_registry, string_schema, tool)
-from magent.tools.approval import (ApprovalDecision, ApprovalPolicy, auto_approve, build_request,
-                                   deny_all)
-from magent.types import ToolCall
+from magent.errors import (
+    ApprovalRequiredError,
+    PermissionDeniedError,
+    ToolNotFoundError,
+)
+from magent.tools import (
+    MODES,
+    RISK_LEVELS,
+    ApprovalManager,
+    ToolContext,
+    build_sandbox,
+    default_registry,
+    string_schema,
+    tool,
+)
+from magent.tools.approval import (
+    ApprovalDecision,
+    ApprovalPolicy,
+    auto_approve,
+    build_request,
+    deny_all,
+)
 from magent.tools.base import tool_spec_from_function
-
-from tests.support import MagentTestCase
+from magent.types import ToolCall
+from tests.support import MAgentTestCase
 
 
 class SchemaTest(unittest.TestCase):
@@ -94,7 +109,7 @@ class SchemaTest(unittest.TestCase):
         self.assertEqual(combined["required"], ["count"])
 
 
-class RegistryTest(MagentTestCase):
+class RegistryTest(MAgentTestCase):
     """The default registry is complete and introspectable."""
 
     def test_registry_is_populated(self) -> None:
@@ -140,24 +155,31 @@ class RegistryTest(MagentTestCase):
 
     def test_dispatch_runs_a_tool_end_to_end(self) -> None:
         registry = default_registry()
-        context = ToolContext(config=self.config(), registry=registry,
-                              sandbox=build_sandbox(self.config(), workspace=self.workspace))
-        result = registry.dispatch(ToolCall(id="c1", name="calculate",
-                                            arguments={"expression": "6*7"}), context=context)
+        context = ToolContext(
+            config=self.config(),
+            registry=registry,
+            sandbox=build_sandbox(self.config(), workspace=self.workspace),
+        )
+        result = registry.dispatch(
+            ToolCall(id="c1", name="calculate", arguments={"expression": "6*7"}), context=context
+        )
         self.assertTrue(result.ok)
         self.assertEqual(result.content["result"], 42)
 
     def test_dispatch_reports_validation_errors(self) -> None:
         registry = default_registry()
-        result = registry.dispatch(ToolCall(id="c2", name="calculate",
-                                            arguments={"expression": "6*"}))
+        result = registry.dispatch(
+            ToolCall(id="c2", name="calculate", arguments={"expression": "6*"})
+        )
         self.assertFalse(result.ok)
         self.assertIn(result.error_code or "", {"tool_validation_error", "tool_execution_error"})
 
     def test_dispatch_many_runs_in_parallel(self) -> None:
         registry = default_registry()
-        calls = [ToolCall(id=f"c{index}", name="calculate", arguments={"expression": f"{index}+1"})
-                 for index in range(4)]
+        calls = [
+            ToolCall(id=f"c{index}", name="calculate", arguments={"expression": f"{index}+1"})
+            for index in range(4)
+        ]
         results = registry.dispatch_many(calls, parallel=True)
         self.assertEqual(len(results), 4)
         self.assertTrue(all(item.ok for item in results))
@@ -168,7 +190,7 @@ class RegistryTest(MagentTestCase):
         self.assertTrue(registry.stats())
 
 
-class SandboxTest(MagentTestCase):
+class SandboxTest(MAgentTestCase):
     """The sandbox denies by default and explains every decision."""
 
     def setUp(self) -> None:
@@ -223,7 +245,7 @@ class SandboxTest(MagentTestCase):
         self.assertTrue(self.sandbox.stats())
 
 
-class ApprovalTest(MagentTestCase):
+class ApprovalTest(MAgentTestCase):
     """Approval modes gate risky tools."""
 
     def _manager(self, mode: str, prompt=None) -> ApprovalManager:
@@ -237,9 +259,13 @@ class ApprovalTest(MagentTestCase):
     def _request(self, name: str):
         registry = default_registry()
         tool_obj = registry.get(name)
-        return build_request(name, {"path": "x"}, risk=tool_obj.spec.risk,
-                             destructive=tool_obj.spec.destructive,
-                             network=tool_obj.spec.network)
+        return build_request(
+            name,
+            {"path": "x"},
+            risk=tool_obj.spec.risk,
+            destructive=tool_obj.spec.destructive,
+            network=tool_obj.spec.network,
+        )
 
     def test_never_mode_approves_everything(self) -> None:
         manager = self._manager("never")
@@ -273,14 +299,17 @@ class ApprovalTest(MagentTestCase):
         self.assertEqual(set(MODES), {"never", "ask", "always", "dangerous"})
 
 
-class BuiltinToolsTest(MagentTestCase):
+class BuiltinToolsTest(MAgentTestCase):
     """A representative sample of the shipped tools actually works."""
 
     def _context(self) -> ToolContext:
         """A sandboxed, workspace-scoped context for tool calls."""
         config = self.config()
-        return ToolContext(config=config, registry=default_registry(),
-                           sandbox=build_sandbox(config, workspace=self.workspace))
+        return ToolContext(
+            config=config,
+            registry=default_registry(),
+            sandbox=build_sandbox(config, workspace=self.workspace),
+        )
 
     def _run(self, name: str, arguments: dict) -> object:
         """Call one tool through the registry with a sandboxed context."""
@@ -292,8 +321,9 @@ class BuiltinToolsTest(MagentTestCase):
         self.assertTrue(written.ok, written.error)
         read = self._run("read_file", {"path": str(target)})
         self.assertEqual(read.content["content"], "hello")
-        edited = self._run("edit_file", {"path": str(target), "old_text": "hello",
-                                        "new_text": "world"})
+        edited = self._run(
+            "edit_file", {"path": str(target), "old_text": "hello", "new_text": "world"}
+        )
         self.assertTrue(edited.ok, edited.error)
         self.assertEqual(target.read_text(encoding="utf-8"), "world")
 
@@ -333,8 +363,11 @@ class BuiltinToolsTest(MagentTestCase):
     def test_network_tool_respects_the_offline_policy(self) -> None:
         config = self.config()
         config.tools.allow_network = False
-        context = ToolContext(config=config, registry=default_registry(),
-                              sandbox=build_sandbox(config, workspace=self.workspace))
+        context = ToolContext(
+            config=config,
+            registry=default_registry(),
+            sandbox=build_sandbox(config, workspace=self.workspace),
+        )
         tool_obj = default_registry().get("fetch_page")
         try:
             result = tool_obj.run({"url": "https://example.com"}, context=context)

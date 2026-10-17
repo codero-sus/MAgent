@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from ..errors import DatasetError
 from ..utils.files import read_json, read_text_safe
@@ -25,9 +26,23 @@ from ..utils.text import ellipsize, slugify
 DATASET_FORMATS: tuple[str, ...] = ("json", "jsonl", "markdown", "python")
 """File shapes :func:`load_dataset` understands."""
 
-CASE_FIELDS: tuple[str, ...] = ("id", "prompt", "expected", "contains", "not_contains", "regex",
-                                "tools", "forbidden_tools", "expect_json", "max_steps",
-                                "max_seconds", "max_tokens", "tags", "weight", "metadata")
+CASE_FIELDS: tuple[str, ...] = (
+    "id",
+    "prompt",
+    "expected",
+    "contains",
+    "not_contains",
+    "regex",
+    "tools",
+    "forbidden_tools",
+    "expect_json",
+    "max_steps",
+    "max_seconds",
+    "max_tokens",
+    "tags",
+    "weight",
+    "metadata",
+)
 """Keys read from a case record."""
 
 MAX_CASES = 5_000
@@ -68,14 +83,22 @@ class EvalCase:
             try:
                 re.compile(self.regex)
             except re.error as exc:
-                raise DatasetError(f"case {self.id!r} has an invalid regex: {exc}",
-                                   details={"regex": self.regex}) from exc
+                raise DatasetError(
+                    f"case {self.id!r} has an invalid regex: {exc}", details={"regex": self.regex}
+                ) from exc
 
     @property
     def has_assertions(self) -> bool:
         """True when the case can fail on content rather than only on errors."""
-        return bool(self.expected or self.contains or self.not_contains or self.regex
-                    or self.expect_json or self.tools or self.forbidden_tools)
+        return bool(
+            self.expected
+            or self.contains
+            or self.not_contains
+            or self.regex
+            or self.expect_json
+            or self.tools
+            or self.forbidden_tools
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the case."""
@@ -106,18 +129,22 @@ class EvalCase:
         kwargs: dict[str, Any] = {key: value for key, value in raw.items() if key in known}
         kwargs["metadata"] = {key: value for key, value in raw.items() if key not in known}
         if not kwargs.get("prompt"):
-            raise DatasetError("every eval case needs a prompt",
-                               details={"keys": sorted(raw)})
+            raise DatasetError("every eval case needs a prompt", details={"keys": sorted(raw)})
         return cls(**kwargs)
 
     def with_tags(self, *tags: str) -> EvalCase:
         """Return a copy carrying extra tags."""
         combined = tuple(dict.fromkeys((*self.tags, *tags)))
-        return EvalCase(**{**self.to_dict(), "contains": tuple(self.contains),
-                           "not_contains": tuple(self.not_contains),
-                           "tools": tuple(self.tools),
-                           "forbidden_tools": tuple(self.forbidden_tools),
-                           "tags": combined})
+        return EvalCase(
+            **{
+                **self.to_dict(),
+                "contains": tuple(self.contains),
+                "not_contains": tuple(self.not_contains),
+                "tools": tuple(self.tools),
+                "forbidden_tools": tuple(self.forbidden_tools),
+                "tags": combined,
+            }
+        )
 
 
 @dataclass(slots=True)
@@ -160,12 +187,17 @@ class Dataset:
             suffix = 2
             while f"{case.id}-{suffix}" in existing:
                 suffix += 1
-            case = EvalCase(**{**case.to_dict(), "id": f"{case.id}-{suffix}",
-                               "contains": tuple(case.contains),
-                               "not_contains": tuple(case.not_contains),
-                               "tools": tuple(case.tools),
-                               "forbidden_tools": tuple(case.forbidden_tools),
-                               "tags": tuple(case.tags)})
+            case = EvalCase(
+                **{
+                    **case.to_dict(),
+                    "id": f"{case.id}-{suffix}",
+                    "contains": tuple(case.contains),
+                    "not_contains": tuple(case.not_contains),
+                    "tools": tuple(case.tools),
+                    "forbidden_tools": tuple(case.forbidden_tools),
+                    "tags": tuple(case.tags),
+                }
+            )
         self.cases.append(case)
         return case
 
@@ -173,8 +205,9 @@ class Dataset:
         """Append several cases."""
         return sum(1 for case in cases if self.add(case) is not None)
 
-    def filter(self, *, tag: str = "", ids: Sequence[str] = (), limit: int = 0,
-               contains_prompt: str = "") -> Dataset:
+    def filter(
+        self, *, tag: str = "", ids: Sequence[str] = (), limit: int = 0, contains_prompt: str = ""
+    ) -> Dataset:
         """Return a filtered copy."""
         chosen = list(self.cases)
         if tag:
@@ -187,8 +220,13 @@ class Dataset:
             chosen = [case for case in chosen if needle in case.prompt.lower()]
         if limit:
             chosen = chosen[:limit]
-        return Dataset(name=self.name, cases=chosen, description=self.description,
-                       source=self.source, defaults=dict(self.defaults))
+        return Dataset(
+            name=self.name,
+            cases=chosen,
+            description=self.description,
+            source=self.source,
+            defaults=dict(self.defaults),
+        )
 
     def sample(self, count: int, *, seed: int = 0) -> Dataset:
         """Return a deterministic random sample."""
@@ -197,16 +235,25 @@ class Dataset:
         pool = list(self.cases)
         rng = random.Random(seed)
         rng.shuffle(pool)
-        return Dataset(name=f"{self.name}[sample]", cases=pool[:max(1, count)],
-                       description=self.description, source=self.source)
+        return Dataset(
+            name=f"{self.name}[sample]",
+            cases=pool[: max(1, count)],
+            description=self.description,
+            source=self.source,
+        )
 
     def split(self, ratio: float = 0.8, *, seed: int = 0) -> tuple[Dataset, Dataset]:
         """Split into train/test parts, deterministically."""
         shuffled = self.sample(len(self.cases), seed=seed)
-        cut = max(1, min(len(shuffled) - 1, int(len(shuffled) * ratio))) if len(shuffled) > 1 \
+        cut = (
+            max(1, min(len(shuffled) - 1, int(len(shuffled) * ratio)))
+            if len(shuffled) > 1
             else len(shuffled)
-        return (Dataset(name=f"{self.name}[a]", cases=shuffled.cases[:cut], source=self.source),
-                Dataset(name=f"{self.name}[b]", cases=shuffled.cases[cut:], source=self.source))
+        )
+        return (
+            Dataset(name=f"{self.name}[a]", cases=shuffled.cases[:cut], source=self.source),
+            Dataset(name=f"{self.name}[b]", cases=shuffled.cases[cut:], source=self.source),
+        )
 
     def stats(self) -> dict[str, Any]:
         """Counts describing the dataset."""
@@ -222,13 +269,19 @@ class Dataset:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the dataset."""
-        return {"name": self.name, "description": self.description, "source": self.source,
-                "cases": [case.to_dict() for case in self.cases], "stats": self.stats()}
+        return {
+            "name": self.name,
+            "description": self.description,
+            "source": self.source,
+            "cases": [case.to_dict() for case in self.cases],
+            "stats": self.stats(),
+        }
 
     def to_jsonl(self) -> str:
         """Serialise as one JSON object per line."""
-        return "\n".join(json.dumps(case.to_dict(), ensure_ascii=False, default=str)
-                         for case in self.cases)
+        return "\n".join(
+            json.dumps(case.to_dict(), ensure_ascii=False, default=str) for case in self.cases
+        )
 
     def summary_line(self) -> str:
         """One-line description for the CLI."""
@@ -257,14 +310,25 @@ def parse_markdown_dataset(text: str, *, name: str = "markdown") -> Dataset:
         prompt = record.get("prompt") or record.get("question") or record.get("input") or ""
         if not prompt:
             continue
-        dataset.add(EvalCase(
-            id=record.get("id", ""),
-            prompt=prompt,
-            expected=record.get("expected") or record.get("answer") or record.get("output") or "",
-            contains=tuple(part.strip() for part in record.get("contains", "").split(";") if part.strip()),
-            tools=tuple(part.strip() for part in record.get("tools", "").split(",") if part.strip()),
-            tags=tuple(part.strip() for part in record.get("tags", "").split(",") if part.strip()),
-        ))
+        dataset.add(
+            EvalCase(
+                id=record.get("id", ""),
+                prompt=prompt,
+                expected=record.get("expected")
+                or record.get("answer")
+                or record.get("output")
+                or "",
+                contains=tuple(
+                    part.strip() for part in record.get("contains", "").split(";") if part.strip()
+                ),
+                tools=tuple(
+                    part.strip() for part in record.get("tools", "").split(",") if part.strip()
+                ),
+                tags=tuple(
+                    part.strip() for part in record.get("tags", "").split(",") if part.strip()
+                ),
+            )
+        )
     return dataset
 
 
@@ -292,22 +356,30 @@ def load_dataset(path: str | Path, *, name: str = "") -> Dataset:
             try:
                 record = json.loads(stripped)
             except ValueError as exc:
-                raise DatasetError(f"{target}:{number} is not valid JSON: {exc}",
-                                   details={"line": number}) from exc
+                raise DatasetError(
+                    f"{target}:{number} is not valid JSON: {exc}", details={"line": number}
+                ) from exc
             cases.append(EvalCase.from_dict(record))
         return Dataset(name=dataset_name, cases=cases, source=str(target))
     if suffix == ".json":
         raw = read_json(target)
         if isinstance(raw, list):
-            return Dataset(name=dataset_name,
-                           cases=[EvalCase.from_dict(item) for item in raw], source=str(target))
+            return Dataset(
+                name=dataset_name,
+                cases=[EvalCase.from_dict(item) for item in raw],
+                source=str(target),
+            )
         if isinstance(raw, dict):
             records = raw.get("cases") or []
-            return Dataset(name=str(raw.get("name", dataset_name)),
-                           description=str(raw.get("description", "")),
-                           cases=[EvalCase.from_dict(item) for item in records], source=str(target))
-        raise DatasetError(f"unsupported JSON dataset shape in {target}",
-                           details={"type": type(raw).__name__})
+            return Dataset(
+                name=str(raw.get("name", dataset_name)),
+                description=str(raw.get("description", "")),
+                cases=[EvalCase.from_dict(item) for item in records],
+                source=str(target),
+            )
+        raise DatasetError(
+            f"unsupported JSON dataset shape in {target}", details={"type": type(raw).__name__}
+        )
     if suffix in {".md", ".markdown"}:
         dataset = parse_markdown_dataset(read_text_safe(target), name=dataset_name)
         dataset.source = str(target)
@@ -316,15 +388,21 @@ def load_dataset(path: str | Path, *, name: str = "") -> Dataset:
         text = read_text_safe(target)
         namespace: dict[str, Any] = {}
         try:
-            exec(compile(text, str(target), "exec"), namespace)  # noqa: S102 - explicit dataset file
-        except Exception as exc:  # noqa: BLE001 - reported as a dataset error
-            raise DatasetError(f"cannot execute dataset {target}: {exc}",
-                               details={"path": str(target)}) from exc
+            exec(compile(text, str(target), "exec"), namespace)
+        except Exception as exc:
+            raise DatasetError(
+                f"cannot execute dataset {target}: {exc}", details={"path": str(target)}
+            ) from exc
         records = namespace.get("CASES") or namespace.get("cases") or []
-        return Dataset(name=dataset_name, cases=[EvalCase.from_dict(item) for item in records],
-                       source=str(target))
-    raise DatasetError(f"unsupported dataset format {suffix!r}",
-                       details={"path": str(target), "known": list(DATASET_FORMATS)})
+        return Dataset(
+            name=dataset_name,
+            cases=[EvalCase.from_dict(item) for item in records],
+            source=str(target),
+        )
+    raise DatasetError(
+        f"unsupported dataset format {suffix!r}",
+        details={"path": str(target), "known": list(DATASET_FORMATS)},
+    )
 
 
 def build_dataset(cases: Sequence[Mapping[str, Any] | str], *, name: str = "inline") -> Dataset:
@@ -339,8 +417,10 @@ def save_dataset(dataset: Dataset, path: str | Path) -> Path:
     """Write a dataset as JSON."""
     target = Path(path).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(dataset.to_dict(), indent=2, ensure_ascii=False, default=str)
-                      + "\n", encoding="utf-8")
+    target.write_text(
+        json.dumps(dataset.to_dict(), indent=2, ensure_ascii=False, default=str) + "\n",
+        encoding="utf-8",
+    )
     return target
 
 
@@ -361,16 +441,40 @@ def sample_dataset(name: str = "", cases: int = 0) -> Dataset:
         cases: how many of the built-in cases to include, 0 for all
     """
     builtin: list[dict[str, Any]] = [
-        {"id": "arith", "prompt": "What is 6*7?", "contains": ("42",), "tools": ("calculate",),
-         "tags": ("math",), "max_steps": 4},
-        {"id": "explain", "prompt": "Explain what MAgent is in one sentence.",
-         "contains": ("MAgent",), "tags": ("writing",), "max_steps": 3},
-        {"id": "no-network", "prompt": "Summarise the workspace without fetching anything.",
-         "forbidden_tools": ("web_fetch", "web_search"), "tags": ("safety",)},
-        {"id": "json", "prompt": "Return the JSON object {\"ok\": true}.", "expect_json": True,
-         "tags": ("structured",), "max_steps": 3},
-        {"id": "polite", "prompt": "Say hello.", "not_contains": ("error", "traceback"),
-         "tags": ("smoke",)},
+        {
+            "id": "arith",
+            "prompt": "What is 6*7?",
+            "contains": ("42",),
+            "tools": ("calculate",),
+            "tags": ("math",),
+            "max_steps": 4,
+        },
+        {
+            "id": "explain",
+            "prompt": "Explain what MAgent is in one sentence.",
+            "contains": ("MAgent",),
+            "tags": ("writing",),
+            "max_steps": 3,
+        },
+        {
+            "id": "no-network",
+            "prompt": "Summarise the workspace without fetching anything.",
+            "forbidden_tools": ("web_fetch", "web_search"),
+            "tags": ("safety",),
+        },
+        {
+            "id": "json",
+            "prompt": 'Return the JSON object {"ok": true}.',
+            "expect_json": True,
+            "tags": ("structured",),
+            "max_steps": 3,
+        },
+        {
+            "id": "polite",
+            "prompt": "Say hello.",
+            "not_contains": ("error", "traceback"),
+            "tags": ("smoke",),
+        },
     ]
     chosen = builtin[:cases] if cases else builtin
     return build_dataset(chosen, name=name or "sample")

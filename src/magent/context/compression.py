@@ -16,8 +16,9 @@ make it into the prompt.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 from ..llm.tokens import TokenEstimator, estimate_tokens, truncate_to_tokens
 from ..logging_ import get_logger
@@ -29,10 +30,13 @@ LOGGER = get_logger("context.compression")
 
 NOISE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^[ \t]*[-*+][ \t]*$", re.MULTILINE),
-    re.compile(r"^[ \t]*(page|next|previous|back to top|table of contents)\b.*$",
-               re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^[ \t]*\[\s*(edit|view source|sign in|log in)\s*\].*$",
-               re.IGNORECASE | re.MULTILINE),
+    re.compile(
+        r"^[ \t]*(page|next|previous|back to top|table of contents)\b.*$",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+    re.compile(
+        r"^[ \t]*\[\s*(edit|view source|sign in|log in)\s*\].*$", re.IGNORECASE | re.MULTILINE
+    ),
     re.compile(r"\n{4,}"),
 )
 """Lines that carry no information and are removed before token counting."""
@@ -121,9 +125,15 @@ def dedupe_lines(text: str, *, max_repeats: int = MAX_LINE_REPEATS) -> str:
     return "\n".join(kept)
 
 
-def compress_text(text: str, *, max_tokens: int = 0, max_chars: int = 0,
-                  strip_boilerplate: bool = True, estimator: TokenEstimator | None = None,
-                  keep_tail: float = 0.0) -> str:
+def compress_text(
+    text: str,
+    *,
+    max_tokens: int = 0,
+    max_chars: int = 0,
+    strip_boilerplate: bool = True,
+    estimator: TokenEstimator | None = None,
+    keep_tail: float = 0.0,
+) -> str:
     """Shrink one string towards a token or character ceiling.
 
     Args:
@@ -162,7 +172,7 @@ def summarize_with(summarizer: Callable[[str], str], text: str, *, max_words: in
         return ""
     try:
         summary = summarizer(text).strip()
-    except Exception as exc:  # noqa: BLE001 - a broken summarizer must not break a run
+    except Exception as exc:
         LOGGER.debug("summarizer failed, keeping original text: %s", exc)
         return text
     if not summary:
@@ -201,7 +211,9 @@ class ContextCompressor:
             saved += max(0, before - item.tokens)
         return saved
 
-    def fit(self, blocks: Iterable[ContextBlock], *, budget: int | None = None) -> tuple[list[ContextBlock], CompressionReport]:
+    def fit(
+        self, blocks: Iterable[ContextBlock], *, budget: int | None = None
+    ) -> tuple[list[ContextBlock], CompressionReport]:
         """Compress blocks until they fit the budget.
 
         Args:
@@ -226,9 +238,12 @@ class ContextCompressor:
         for item in ordered:
             ceiling = item.max_tokens
             if ceiling and item.tokens > ceiling:
-                item.body = compress_text(item.body, max_tokens=ceiling,
-                                          strip_boilerplate=self.strip_boilerplate,
-                                          estimator=self.estimator)
+                item.body = compress_text(
+                    item.body,
+                    max_tokens=ceiling,
+                    strip_boilerplate=self.strip_boilerplate,
+                    estimator=self.estimator,
+                )
                 item.tokens = self.tokens(item.body)
                 item.truncated = True
                 report.truncated.append(item.title)
@@ -269,9 +284,12 @@ class ContextCompressor:
                 share = max(self.min_block_tokens, item.tokens - excess)
                 if share >= item.tokens:
                     continue
-                item.body = compress_text(item.body, max_tokens=share,
-                                          strip_boilerplate=self.strip_boilerplate,
-                                          estimator=self.estimator)
+                item.body = compress_text(
+                    item.body,
+                    max_tokens=share,
+                    strip_boilerplate=self.strip_boilerplate,
+                    estimator=self.estimator,
+                )
                 saved = item.tokens - self.tokens(item.body)
                 item.tokens = self.tokens(item.body)
                 item.truncated = True
@@ -315,14 +333,24 @@ def _drop_key(item: ContextBlock) -> tuple[int, float, int, str]:
         return sorted(blocks, key=lambda item: -item.tokens)
 
 
-def compress_messages(messages: Sequence[Any], *, max_tokens: int,
-                      keep_last: int = 2, keep_system: bool = True,
-                      strategy: str = "middle") -> tuple[list[Any], dict[str, Any]]:
+def compress_messages(
+    messages: Sequence[Any],
+    *,
+    max_tokens: int,
+    keep_last: int = 2,
+    keep_system: bool = True,
+    strategy: str = "middle",
+) -> tuple[list[Any], dict[str, Any]]:
     """Trim a message history to a token budget (thin wrapper for callers)."""
     from ..llm.tokens import trim_messages
 
-    return trim_messages(messages, max_tokens=max_tokens, keep_system=keep_system,
-                         keep_last=keep_last, strategy=strategy)
+    return trim_messages(
+        messages,
+        max_tokens=max_tokens,
+        keep_system=keep_system,
+        keep_last=keep_last,
+        strategy=strategy,
+    )
 
 
 __all__ = [

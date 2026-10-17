@@ -19,12 +19,33 @@ Public API:
 
 from __future__ import annotations
 
-from .library import (BUILTIN_SKILLS, DEFAULT_SKILL_DIRS, MAX_SKILLS_IN_PROMPT, SkillLibrary,
-                      SkillMatch, build_library, get_library, register_skill, render_skill_prompt,
-                      skill_table)
-from .skill import (FRONT_MATTER_RE, KEY_RE, LIST_FIELDS, MAX_BODY_CHARS, SKILL_EXTENSIONS, Skill,
-                    dump_skill, iter_skill_files, load_skill, merge_skills, parse_front_matter,
-                    parse_skill, skill_from_mapping)
+from .library import (
+    BUILTIN_SKILLS,
+    DEFAULT_SKILL_DIRS,
+    MAX_SKILLS_IN_PROMPT,
+    SkillLibrary,
+    SkillMatch,
+    build_library,
+    get_library,
+    register_skill,
+    render_skill_prompt,
+    skill_table,
+)
+from .skill import (
+    FRONT_MATTER_RE,
+    KEY_RE,
+    LIST_FIELDS,
+    MAX_BODY_CHARS,
+    SKILL_EXTENSIONS,
+    Skill,
+    dump_skill,
+    iter_skill_files,
+    load_skill,
+    merge_skills,
+    parse_front_matter,
+    parse_skill,
+    skill_from_mapping,
+)
 
 __all__ = [
     "BUILTIN_SKILLS",

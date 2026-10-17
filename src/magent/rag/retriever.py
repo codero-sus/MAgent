@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import fnmatch
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ..logging_ import get_logger
 from ..memory.embeddings import Embedder, build_embedder
@@ -28,7 +29,6 @@ from .chunker import (
     DEFAULT_MAX_CHARS,
     DEFAULT_OVERLAP,
     Chunk,
-    chunk_file,
     chunk_files,
     chunk_text_blocks,
 )
@@ -42,8 +42,17 @@ LOGGER = get_logger("rag")
 DEFAULT_PATTERNS: tuple[str, ...] = ("*.md", "*.txt", "*.py", "*.rst", "*.json", "*.yaml", "*.yml")
 """File patterns ingested by default."""
 
-DEFAULT_EXCLUDE: tuple[str, ...] = (".git", "__pycache__", "node_modules", ".venv", "dist", "build",
-                                    ".mypy_cache", ".pytest_cache", ".ruff_cache")
+DEFAULT_EXCLUDE: tuple[str, ...] = (
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "dist",
+    "build",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+)
 """Directories skipped during a walk."""
 
 
@@ -83,9 +92,11 @@ class IngestReport:
 
     def summary(self) -> str:
         """Return a one-line human summary."""
-        return (f"ingested {self.files} file(s) into {self.chunks} chunk(s) "
-                f"({human_size(self.bytes)}) in {self.seconds:.2f}s"
-                + (f", skipped {len(self.skipped)}" if self.skipped else ""))
+        return (
+            f"ingested {self.files} file(s) into {self.chunks} chunk(s) "
+            f"({human_size(self.bytes)}) in {self.seconds:.2f}s"
+            + (f", skipped {len(self.skipped)}" if self.skipped else "")
+        )
 
 
 @dataclass(slots=True)
@@ -109,15 +120,21 @@ class RetrievalResult:
     @property
     def sources(self) -> list[str]:
         """Return the distinct sources behind the result."""
-        return self.citations.sources() if self.citations else list(
-            dict.fromkeys(chunk.source for chunk in self.chunks)
+        return (
+            self.citations.sources()
+            if self.citations
+            else list(dict.fromkeys(chunk.source for chunk in self.chunks))
         )
 
     def text(self, *, with_references: bool = True) -> str:
         """Return the context block, optionally with the reference list."""
         if self.citations is None:
             return "\n\n".join(chunk.text for chunk in self.chunks)
-        return self.citations.render(include_context=not with_references) if with_references else self.context
+        return (
+            self.citations.render(include_context=not with_references)
+            if with_references
+            else self.context
+        )
 
     def verify(self, answer: str) -> dict[str, Any]:
         """Check an answer's citations against this result's sources."""
@@ -144,13 +161,26 @@ class RetrievalResult:
 class Retriever:
     """Ingest a corpus and retrieve cited context from it."""
 
-    def __init__(self, *, index: ChunkIndex | None = None, backend: Any = None,
-                 embedder: Embedder | None = None, strategy: str = "",
-                 max_chars: int = DEFAULT_MAX_CHARS, overlap: int = DEFAULT_OVERLAP,
-                 max_files: int = 500, limit: int = 5, mode: str = "hybrid",
-                 lexical_weight: float = 0.5, use_mmr: bool = True, use_cross_encoder: bool = False,
-                 recency: bool = False, dedupe: bool = True, dim: int = 256,
-                 name: str = "rag") -> None:
+    def __init__(
+        self,
+        *,
+        index: ChunkIndex | None = None,
+        backend: Any = None,
+        embedder: Embedder | None = None,
+        strategy: str = "",
+        max_chars: int = DEFAULT_MAX_CHARS,
+        overlap: int = DEFAULT_OVERLAP,
+        max_files: int = 500,
+        limit: int = 5,
+        mode: str = "hybrid",
+        lexical_weight: float = 0.5,
+        use_mmr: bool = True,
+        use_cross_encoder: bool = False,
+        recency: bool = False,
+        dedupe: bool = True,
+        dim: int = 256,
+        name: str = "rag",
+    ) -> None:
         """Configure retrieval.
 
         Args:
@@ -191,10 +221,17 @@ class Retriever:
 
     # -- ingestion -----------------------------------------------------------
 
-    def ingest(self, paths: Iterable[str | Path], *, patterns: Sequence[str] = DEFAULT_PATTERNS,
-               exclude: Sequence[str] = DEFAULT_EXCLUDE, recursive: bool = True,
-               max_files: int | None = None, embed: bool = True,
-               strategy: str = "") -> IngestReport:
+    def ingest(
+        self,
+        paths: Iterable[str | Path],
+        *,
+        patterns: Sequence[str] = DEFAULT_PATTERNS,
+        exclude: Sequence[str] = DEFAULT_EXCLUDE,
+        recursive: bool = True,
+        max_files: int | None = None,
+        embed: bool = True,
+        strategy: str = "",
+    ) -> IngestReport:
         """Ingest files and directories into the index.
 
         Args:
@@ -216,10 +253,15 @@ class Retriever:
             if target.is_file():
                 files.append(target)
             elif target.is_dir():
-                found = list(iter_files(
-                    target, patterns=patterns, exclude=exclude,
-                    max_depth=None if recursive else 1, limit=ceiling,
-                ))
+                found = list(
+                    iter_files(
+                        target,
+                        patterns=patterns,
+                        exclude=exclude,
+                        max_depth=None if recursive else 1,
+                        limit=ceiling,
+                    )
+                )
                 files.extend(found)
                 if not found:
                     skipped.append(str(target))
@@ -228,8 +270,11 @@ class Retriever:
         selected = files[:ceiling]
         skipped.extend(str(item) for item in files[ceiling:])
         chunks, missing = chunk_files(
-            selected, strategy=strategy or self.strategy, max_chars=self.max_chars,
-            overlap=self.overlap, max_files=ceiling,
+            selected,
+            strategy=strategy or self.strategy,
+            max_chars=self.max_chars,
+            overlap=self.overlap,
+            max_files=ceiling,
         )
         skipped.extend(missing)
         total_bytes = 0
@@ -255,12 +300,23 @@ class Retriever:
         LOGGER.debug("%s ingest: %s", self.name, report.summary())
         return report
 
-    def ingest_text(self, text: str, *, source: str = "inline", strategy: str = "",
-                    metadata: dict[str, Any] | None = None, embed: bool = True) -> int:
+    def ingest_text(
+        self,
+        text: str,
+        *,
+        source: str = "inline",
+        strategy: str = "",
+        metadata: dict[str, Any] | None = None,
+        embed: bool = True,
+    ) -> int:
         """Index a string directly, e.g. a pasted document or a fetched page."""
         chunks = chunk_text_blocks(
-            text, source=source, strategy=strategy or self.strategy or "paragraph",
-            max_chars=self.max_chars, overlap=self.overlap, metadata=metadata,
+            text,
+            source=source,
+            strategy=strategy or self.strategy or "paragraph",
+            max_chars=self.max_chars,
+            overlap=self.overlap,
+            metadata=metadata,
         )
         if not chunks:
             return 0
@@ -276,7 +332,7 @@ class Retriever:
         known = set(self.index.sources())
         report = self.ingest(paths, **kwargs) if paths else IngestReport()
         if not paths:
-            report.sources = dict(known and self.index.sources() or {})
+            report.sources = dict((known and self.index.sources()) or {})
             return report
         for source in known - set(report.sources):
             self.index.remove_source(source)
@@ -292,11 +348,20 @@ class Retriever:
 
     # -- retrieval -----------------------------------------------------------
 
-    def retrieve(self, query: str, *, limit: int | None = None, mode: str = "",
-                 min_score: float = 0.0, sources: Sequence[str] | None = None,
-                 rerank_results: bool = True, cross_encoder: bool | None = None,
-                 use_mmr: bool | None = None, max_context_chars: int = 12_000,
-                 instruction: str = "") -> RetrievalResult:
+    def retrieve(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        mode: str = "",
+        min_score: float = 0.0,
+        sources: Sequence[str] | None = None,
+        rerank_results: bool = True,
+        cross_encoder: bool | None = None,
+        use_mmr: bool | None = None,
+        max_context_chars: int = 12_000,
+        instruction: str = "",
+    ) -> RetrievalResult:
         """Retrieve and rank chunks for a query.
 
         Args:
@@ -315,17 +380,27 @@ class Retriever:
         wanted = max(1, int(limit or self.limit))
         active_mode = (mode or self.mode or "hybrid").lower()
         pool = self.index.search(
-            query, limit=max(wanted * 4, wanted), mode=active_mode, min_score=min_score,
-            sources=sources, lexical_weight=self.lexical_weight,
+            query,
+            limit=max(wanted * 4, wanted),
+            mode=active_mode,
+            min_score=min_score,
+            sources=sources,
+            lexical_weight=self.lexical_weight,
         )
         reranked = False
         if rerank_results and pool:
             pool = rerank(
-                pool, query, limit=wanted, embedder=self.embedder if self.use_mmr else None,
+                pool,
+                query,
+                limit=wanted,
+                embedder=self.embedder if self.use_mmr else None,
                 backend=self.backend,
-                use_cross_encoder=self.use_cross_encoder if cross_encoder is None else cross_encoder,
+                use_cross_encoder=self.use_cross_encoder
+                if cross_encoder is None
+                else cross_encoder,
                 use_mmr=self.use_mmr if use_mmr is None else use_mmr,
-                recency=self.recency, dedupe=self.dedupe,
+                recency=self.recency,
+                dedupe=self.dedupe,
             )
             reranked = True
         selected = pool[:wanted]
@@ -344,11 +419,20 @@ class Retriever:
         self.retrieval_ms += result.seconds * 1000.0
         return result
 
-    def context(self, query: str, *, limit: int | None = None, max_chars: int = 12_000,
-                style: str = "numbered", instruction: str = "", **kwargs: Any) -> str:
+    def context(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        max_chars: int = 12_000,
+        style: str = "numbered",
+        instruction: str = "",
+        **kwargs: Any,
+    ) -> str:
         """Return just the rendered context block for a query."""
-        result = self.retrieve(query, limit=limit, max_context_chars=max_chars,
-                               instruction=instruction, **kwargs)
+        result = self.retrieve(
+            query, limit=limit, max_context_chars=max_chars, instruction=instruction, **kwargs
+        )
         if style == "plain":
             return "\n\n".join(chunk.text for chunk in result.chunks)[:max_chars]
         if style == "references":
@@ -360,8 +444,14 @@ class Retriever:
         result = self.retrieve(query, **kwargs)
         return result.citations or CitationSet()
 
-    def answer_prompt(self, question: str, *, limit: int | None = None,
-                      max_chars: int = 12_000, instruction: str = "") -> str:
+    def answer_prompt(
+        self,
+        question: str,
+        *,
+        limit: int | None = None,
+        max_chars: int = 12_000,
+        instruction: str = "",
+    ) -> str:
         """Build a complete grounded-answer prompt for one question."""
         guidance = instruction or (
             "Answer using only the retrieved context above. Cite each claim with its "
@@ -370,9 +460,16 @@ class Retriever:
         context = self.context(question, limit=limit, max_chars=max_chars, instruction=guidance)
         return f"{context}\n\nQuestion: {question}" if context else f"Question: {question}"
 
-    def grounded_answer(self, question: str, *, backend: Any = None, model: str = "",
-                        limit: int | None = None, max_chars: int = 12_000,
-                        system: str = "") -> dict[str, Any]:
+    def grounded_answer(
+        self,
+        question: str,
+        *,
+        backend: Any = None,
+        model: str = "",
+        limit: int | None = None,
+        max_chars: int = 12_000,
+        system: str = "",
+    ) -> dict[str, Any]:
         """Retrieve, answer, and verify citations in one call.
 
         Returns the answer text, the sources used, and the citation check, which
@@ -397,14 +494,20 @@ class Retriever:
         if active is None:
             payload.update({"answer": "", "error": "no backend available"})
             return payload
-        response = active.complete(CompletionRequest(messages=messages, model=model, temperature=0.2))
-        payload.update({
-            "answer": response.text,
-            "model": response.model,
-            "usage": response.usage.to_dict(),
-            "citation_check": result.verify(response.text or ""),
-            "references": references_block(result.citations.citations if result.citations else []),
-        })
+        response = active.complete(
+            CompletionRequest(messages=messages, model=model, temperature=0.2)
+        )
+        payload.update(
+            {
+                "answer": response.text,
+                "model": response.model,
+                "usage": response.usage.to_dict(),
+                "citation_check": result.verify(response.text or ""),
+                "references": references_block(
+                    result.citations.citations if result.citations else []
+                ),
+            }
+        )
         return payload
 
     # -- persistence and telemetry ------------------------------------------
@@ -414,8 +517,14 @@ class Retriever:
         return self.index.save(path)
 
     @classmethod
-    def load(cls, path: str | Path, *, backend: Any = None, embedder: Embedder | None = None,
-             **kwargs: Any) -> Retriever:
+    def load(
+        cls,
+        path: str | Path,
+        *,
+        backend: Any = None,
+        embedder: Embedder | None = None,
+        **kwargs: Any,
+    ) -> Retriever:
         """Rebuild a retriever from a saved index."""
         index = ChunkIndex.load(path, embedder=embedder, backend=backend)
         return cls(index=index, backend=backend, embedder=embedder or index.embedder, **kwargs)
@@ -426,7 +535,9 @@ class Retriever:
             "name": self.name,
             "index": self.index.stats(),
             "retrievals": self.retrievals,
-            "average_retrieval_ms": round(self.retrieval_ms / self.retrievals, 3) if self.retrievals else 0.0,
+            "average_retrieval_ms": round(self.retrieval_ms / self.retrievals, 3)
+            if self.retrievals
+            else 0.0,
             "mode": self.mode,
             "lexical_weight": self.lexical_weight,
             "mmr": self.use_mmr,
@@ -439,8 +550,10 @@ class Retriever:
     def describe(self) -> str:
         """Return a one-line description for the CLI."""
         stats = self.index.stats()
-        return (f"{self.name}: {stats['chunks']} chunks from {stats['sources']} source(s), "
-                f"mode={self.mode}, {human_size(stats['chars'])}")
+        return (
+            f"{self.name}: {stats['chunks']} chunks from {stats['sources']} source(s), "
+            f"mode={self.mode}, {human_size(stats['chars'])}"
+        )
 
     def __len__(self) -> int:
         """Return how many chunks are indexed."""
@@ -467,9 +580,15 @@ def with_mtime(chunks: Sequence[Chunk]) -> None:
             chunk.metadata["mtime"] = seen[source]
 
 
-def search_files(query: str, paths: Iterable[str | Path], *, limit: int = 5,
-                 backend: Any = None, patterns: Sequence[str] = DEFAULT_PATTERNS,
-                 max_chars: int = DEFAULT_MAX_CHARS) -> list[dict[str, Any]]:
+def search_files(
+    query: str,
+    paths: Iterable[str | Path],
+    *,
+    limit: int = 5,
+    backend: Any = None,
+    patterns: Sequence[str] = DEFAULT_PATTERNS,
+    max_chars: int = DEFAULT_MAX_CHARS,
+) -> list[dict[str, Any]]:
     """One-shot retrieval over a set of paths, without keeping an index.
 
     Convenient for a CLI query or a single tool call; for repeated queries build
@@ -479,10 +598,15 @@ def search_files(query: str, paths: Iterable[str | Path], *, limit: int = 5,
     retriever.ingest(paths, patterns=patterns)
     result = retriever.retrieve(query, limit=limit)
     return [
-        {"rank": index, "source": chunk.source, "location": chunk.location,
-         "heading": chunk.heading, "score": chunk.score,
-         "preview": ellipsize(" ".join(chunk.text.split()), 300),
-         "matches": _matching_lines(chunk.text, query)}
+        {
+            "rank": index,
+            "source": chunk.source,
+            "location": chunk.location,
+            "heading": chunk.heading,
+            "score": chunk.score,
+            "preview": ellipsize(" ".join(chunk.text.split()), 300),
+            "matches": _matching_lines(chunk.text, query),
+        }
         for index, chunk in enumerate(result.chunks, start=1)
     ]
 

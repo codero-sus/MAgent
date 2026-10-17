@@ -4,23 +4,33 @@ from __future__ import annotations
 
 import json
 import unittest
-from pathlib import Path
 
 from magent.errors import BackendUnavailableError, ConfigError, RateLimitedError
 from magent.llm.base import ChatResponse, CompletionRequest, Message, StreamChunk, ToolCall
 from magent.llm.cache import ResponseCache
 from magent.llm.cortex import CortexBackend, CortexSettings
 from magent.llm.echo import EchoBackend
-from magent.llm.factory import (BACKEND_CHOICES, BackendFactory, BackendRequest, build_backend,
-                                build_offline_backend)
+from magent.llm.factory import (
+    BACKEND_CHOICES,
+    BackendFactory,
+    BackendRequest,
+    build_backend,
+    build_offline_backend,
+)
 from magent.llm.retry import CircuitBreaker, RetryExecutor, with_timeout
 from magent.llm.router import ModelRouter, Route
-from magent.llm.tokens import (TokenBudget, TokenEstimator, context_window_plan, estimate_tokens,
-                               split_by_tokens, trim_messages, truncate_to_tokens)
+from magent.llm.tokens import (
+    TokenBudget,
+    TokenEstimator,
+    context_window_plan,
+    estimate_tokens,
+    split_by_tokens,
+    trim_messages,
+    truncate_to_tokens,
+)
 from magent.llm.usage import BudgetConfig, PriceBook, UsageTracker
 from magent.types import Usage
-
-from tests.support import MagentTestCase
+from tests.support import MAgentTestCase
 
 
 class TokensTest(unittest.TestCase):
@@ -72,8 +82,9 @@ class TokensTest(unittest.TestCase):
         self.assertEqual(budget.remaining, 40)
 
     def test_context_window_plan_reports_fit(self) -> None:
-        plan = context_window_plan([Message.user("hello")], context_size=1000,
-                                   max_output_tokens=100)
+        plan = context_window_plan(
+            [Message.user("hello")], context_size=1000, max_output_tokens=100
+        )
         self.assertIn("fits", plan)
 
     def test_estimator_calibrates_towards_reality(self) -> None:
@@ -115,7 +126,7 @@ class UsageTest(unittest.TestCase):
         self.assertIn("token", tracker.summary_line().lower())
 
 
-class BackendTest(MagentTestCase):
+class BackendTest(MAgentTestCase):
     """The echo backend and the factory behave as documented."""
 
     def test_echo_backend_answers_and_streams(self) -> None:
@@ -123,8 +134,9 @@ class BackendTest(MagentTestCase):
         response = backend.complete(CompletionRequest(messages=[Message.user("hi")]))
         self.assertIsInstance(response, ChatResponse)
         self.assertIn("hi", response.text)
-        chunks: list[StreamChunk] = list(backend.stream(
-            CompletionRequest(messages=[Message.user("stream me")], stream=True)))
+        chunks: list[StreamChunk] = list(
+            backend.stream(CompletionRequest(messages=[Message.user("stream me")], stream=True))
+        )
         self.assertTrue(chunks)
         self.assertTrue(chunks[-1].done)
 
@@ -157,7 +169,7 @@ class BackendTest(MagentTestCase):
             backend.complete(CompletionRequest(messages=[Message.user("hi")]))
 
 
-class CacheTest(MagentTestCase):
+class CacheTest(MAgentTestCase):
     """The response cache is keyed on the request and expires."""
 
     def test_set_and_get(self) -> None:
@@ -254,8 +266,10 @@ class RouterTest(unittest.TestCase):
     def test_router_uses_the_first_healthy_route(self) -> None:
         primary = EchoBackend(models_list=["primary"])
         secondary = EchoBackend(models_list=["secondary"])
-        router = ModelRouter([Route(backend=primary, label="a"),
-                              Route(backend=secondary, label="b")], strategy="priority")
+        router = ModelRouter(
+            [Route(backend=primary, label="a"), Route(backend=secondary, label="b")],
+            strategy="priority",
+        )
         response = router.complete(CompletionRequest(messages=[Message.user("hi")]))
         self.assertEqual(response.model, "primary")
 
@@ -266,9 +280,14 @@ class RouterTest(unittest.TestCase):
             def complete(self, request):  # type: ignore[override]
                 raise BackendUnavailableError("down")
 
-        router = ModelRouter([Route(backend=Broken(), label="broken"),
-                              Route(backend=EchoBackend(models_list=["ok-model"]), label="ok")],
-                             strategy="priority", max_failovers=2)
+        router = ModelRouter(
+            [
+                Route(backend=Broken(), label="broken"),
+                Route(backend=EchoBackend(models_list=["ok-model"]), label="ok"),
+            ],
+            strategy="priority",
+            max_failovers=2,
+        )
         response = router.complete(CompletionRequest(messages=[Message.user("hi")]))
         self.assertEqual(response.model, "ok-model")
         self.assertGreaterEqual(router.stats().get("failovers", 0), 1)

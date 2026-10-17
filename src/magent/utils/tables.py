@@ -95,7 +95,9 @@ def render_table(
     if borders:
         out.append(line(box["tl"], box["tt"], box["tr"], box["h"]))
     if headers:
-        header_cells = [headers[index] if index < len(headers) else "" for index in range(column_count)]
+        header_cells = [
+            headers[index] if index < len(headers) else "" for index in range(column_count)
+        ]
         cells = [
             _align(
                 colorize(truncate_cell(header, widths[index]), header_style, enabled=color),
@@ -158,9 +160,13 @@ def render_markdown_table(
         return "-" * width
 
     lines = ["| " + " | ".join(_align(h, widths[i], "left") for i, h in enumerate(headers)) + " |"]
-    lines.append("| " + " | ".join(separator(align_list[i], widths[i]) for i in range(column_count)) + " |")
+    lines.append(
+        "| " + " | ".join(separator(align_list[i], widths[i]) for i in range(column_count)) + " |"
+    )
     for cells in body:
-        lines.append("| " + " | ".join(_align(c, widths[i], "left") for i, c in enumerate(cells)) + " |")
+        lines.append(
+            "| " + " | ".join(_align(c, widths[i], "left") for i, c in enumerate(cells)) + " |"
+        )
     return "\n".join(lines)
 
 
@@ -248,7 +254,9 @@ def render_bar_chart(
     color: bool | None = None,
 ) -> str:
     """Render a horizontal bar chart from a mapping or pair sequence."""
-    items = list(data.items()) if isinstance(data, Mapping) else [(str(k), float(v)) for k, v in data]
+    items = (
+        list(data.items()) if isinstance(data, Mapping) else [(str(k), float(v)) for k, v in data]
+    )
     if not items:
         return ""
     peak = max((abs(float(value)) for _, value in items), default=0.0) or 1.0

@@ -219,7 +219,9 @@ class Stopwatch:
             "name": self.name,
             "elapsed_ms": round(self.elapsed_ms(), 3),
             "running": self._running,
-            "laps": [{"label": label, "elapsed_ms": round(value * 1000, 3)} for label, value in self.laps],
+            "laps": [
+                {"label": label, "elapsed_ms": round(value * 1000, 3)} for label, value in self.laps
+            ],
         }
 
 

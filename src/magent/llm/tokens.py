@@ -20,7 +20,9 @@ from ..types import Message, Role
 _WORD_RE = re.compile(r"[A-Za-z]+|[0-9]+|[^\sA-Za-z0-9]+|\s+")
 """Tokenizer-ish splitter used by the heuristic estimator."""
 
-_CJK_RE = re.compile(r"[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
+_CJK_RE = re.compile(
+    r"[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]"
+)
 """Range covering CJK and full-width characters, which tokenize per glyph."""
 
 _CHARS_PER_TOKEN = 4.0
@@ -93,7 +95,9 @@ class TokenEstimator:
         """Estimate tokens for one string."""
         return estimate_tokens(text, chars_per_token=self.chars_per_token)
 
-    def estimate_messages(self, messages: Sequence[Message], *, include_overhead: bool = True) -> int:
+    def estimate_messages(
+        self, messages: Sequence[Message], *, include_overhead: bool = True
+    ) -> int:
         """Estimate tokens for a full chat message list."""
         total = 0
         for message in messages:
@@ -309,8 +313,13 @@ def _pick_victim(
     return None
 
 
-def truncate_to_tokens(text: str, max_tokens: int, *, estimator: TokenEstimator | None = None,
-                       marker: str = "\n[truncated]\n") -> str:
+def truncate_to_tokens(
+    text: str,
+    max_tokens: int,
+    *,
+    estimator: TokenEstimator | None = None,
+    marker: str = "\n[truncated]\n",
+) -> str:
     """Truncate a string so its estimated token count fits ``max_tokens``."""
     if max_tokens <= 0:
         return ""
@@ -324,7 +333,9 @@ def truncate_to_tokens(text: str, max_tokens: int, *, estimator: TokenEstimator 
     return text[: max(0, cut)] + marker
 
 
-def split_by_tokens(text: str, max_tokens: int, *, estimator: TokenEstimator | None = None) -> list[str]:
+def split_by_tokens(
+    text: str, max_tokens: int, *, estimator: TokenEstimator | None = None
+) -> list[str]:
     """Split text into pieces that each fit within ``max_tokens``."""
     if max_tokens <= 0:
         return [text] if text else []
@@ -334,7 +345,9 @@ def split_by_tokens(text: str, max_tokens: int, *, estimator: TokenEstimator | N
     from ..utils.text import chunk_text
 
     approx_chars = max(64, int(max_tokens * counter.chars_per_token * 0.9))
-    pieces = chunk_text(text, max_chars=approx_chars, overlap=max(0, approx_chars // 12))
+    # This is a partitioning helper for LLM requests, not a retrieval chunker:
+    # overlap duplicated boundary words when callers reassembled its output.
+    pieces = chunk_text(text, max_chars=approx_chars, overlap=0)
     out: list[str] = []
     for piece in pieces:
         while counter.estimate(piece) > max_tokens and len(piece) > approx_chars:

@@ -12,8 +12,8 @@ redirected output stays diff-friendly.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Sequence
 
 from ..utils.colors import colorize, strip_ansi, themed, visible_width
 from ..utils.tables import render_box
@@ -117,20 +117,29 @@ def render_code_block(code: str, language: str = "", options: MarkdownOptions | 
     if len(lines) > opts.max_code_lines:
         head = lines[: opts.max_code_lines // 2]
         tail = lines[-opts.max_code_lines // 4 :]
-        lines = head + [opts.style(f"... {len(lines) - len(head) - len(tail)} lines elided ...",
-                                   "muted")] + tail
+        lines = (
+            head
+            + [opts.style(f"... {len(lines) - len(head) - len(tail)} lines elided ...", "muted")]
+            + tail
+        )
     body = "\n".join(opts.style(line, "code") if line.strip() else line for line in lines)
     if opts.box_code and opts.width >= 50:
         title = language or None
-        return render_box(body, title=title, width=max(40, min(opts.width - 2, 100)),
-                          unicode_borders=opts.unicode, color=opts.color)
+        return render_box(
+            body,
+            title=title,
+            width=max(40, min(opts.width - 2, 100)),
+            unicode_borders=opts.unicode,
+            color=opts.color,
+        )
     if language:
         return opts.style(f"[{language}]", "muted") + "\n" + body
     return body
 
 
-def render_list(items: Sequence[tuple[int, str, str]], ordered: bool,
-                options: MarkdownOptions | None = None) -> str:
+def render_list(
+    items: Sequence[tuple[int, str, str]], ordered: bool, options: MarkdownOptions | None = None
+) -> str:
     """Render collected list items.
 
     Args:
@@ -147,8 +156,11 @@ def render_list(items: Sequence[tuple[int, str, str]], ordered: bool,
             counters[depth] = counters.get(depth, 0) + 1
             bullet = opts.style(f"{counters[depth]}.", "brand")
         else:
-            bullet = opts.style("•" if opts.unicode else "*", "brand") if depth == 0 else \
-                opts.style("◦" if opts.unicode else "-", "muted")
+            bullet = (
+                opts.style("•" if opts.unicode else "*", "brand")
+                if depth == 0
+                else opts.style("◦" if opts.unicode else "-", "muted")
+            )
         pad = "  " * (depth + opts.indent)
         body = inline(text, opts)
         if visible_width(body) > max(20, opts.width - len(pad) - 4):
@@ -166,8 +178,13 @@ def render_table(rows: Sequence[Sequence[str]], options: MarkdownOptions | None 
     from ..utils.tables import render_table
 
     header, *body = rows
-    return render_table([list(row) for row in body], headers=list(header), borders=True,
-                        unicode_borders=opts.unicode, color=opts.color)
+    return render_table(
+        [list(row) for row in body],
+        headers=list(header),
+        borders=True,
+        unicode_borders=opts.unicode,
+        color=opts.color,
+    )
 
 
 def _split_row(line: str) -> list[str]:
@@ -180,8 +197,16 @@ def _split_row(line: str) -> list[str]:
     return [cell.strip() for cell in text.split("|")]
 
 
-def render_markdown(text: str, *, color: bool = True, unicode: bool = True, width: int = 80,
-                    box_code: bool = True, show_link_urls: bool = True, indent: int = 0) -> str:
+def render_markdown(
+    text: str,
+    *,
+    color: bool = True,
+    unicode: bool = True,
+    width: int = 80,
+    box_code: bool = True,
+    show_link_urls: bool = True,
+    indent: int = 0,
+) -> str:
     """Convert a Markdown document into terminal-friendly text.
 
     Args:
@@ -193,8 +218,14 @@ def render_markdown(text: str, *, color: bool = True, unicode: bool = True, widt
         show_link_urls: append the URL after a link label
         indent: extra indentation applied to list items
     """
-    opts = MarkdownOptions(color=color, unicode=unicode, width=max(30, width),
-                           box_code=box_code, show_link_urls=show_link_urls, indent=indent)
+    opts = MarkdownOptions(
+        color=color,
+        unicode=unicode,
+        width=max(30, width),
+        box_code=box_code,
+        show_link_urls=show_link_urls,
+        indent=indent,
+    )
     lines = (text or "").replace("\r\n", "\n").split("\n")
     out: list[str] = []
     index = 0
@@ -245,8 +276,9 @@ def render_markdown(text: str, *, color: bool = True, unicode: bool = True, widt
             continue
         if RULE_RE.match(line):
             flush_list()
-            out.append(opts.style("─" * min(width, 60) if opts.unicode else "-" * min(width, 60),
-                                  "muted"))
+            out.append(
+                opts.style("─" * min(width, 60) if opts.unicode else "-" * min(width, 60), "muted")
+            )
             index += 1
             continue
         quote = QUOTE_RE.match(line)
@@ -254,8 +286,12 @@ def render_markdown(text: str, *, color: bool = True, unicode: bool = True, widt
             flush_list()
             body = inline(quote.group(1), opts)
             bar = opts.style("│ " if opts.unicode else "| ", "muted")
-            out.append("\n".join(bar + wrapped for wrapped in
-                                 word_wrap(strip_ansi(body), max(20, width - 4)).split("\n")))
+            out.append(
+                "\n".join(
+                    bar + wrapped
+                    for wrapped in word_wrap(strip_ansi(body), max(20, width - 4)).split("\n")
+                )
+            )
             index += 1
             continue
         bullet = BULLET_RE.match(line)
@@ -288,8 +324,9 @@ def render_markdown(text: str, *, color: bool = True, unicode: bool = True, widt
 
 def plain_text(text: str) -> str:
     """Strip Markdown syntax without adding color, for logs and files."""
-    return strip_ansi(render_markdown(text, color=False, unicode=False, box_code=False,
-                                      show_link_urls=False))
+    return strip_ansi(
+        render_markdown(text, color=False, unicode=False, box_code=False, show_link_urls=False)
+    )
 
 
 def looks_like_markdown(text: str) -> bool:

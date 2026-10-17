@@ -167,7 +167,9 @@ class DiskCache:
     ttl: float | None = DEFAULT_TTL_SECONDS
     max_bytes: int = DEFAULT_MAX_BYTES
     max_entries: int = 8192
-    memory: MemoryLRU = field(default_factory=lambda: MemoryLRU(max_entries=512, ttl=DEFAULT_TTL_SECONDS))
+    memory: MemoryLRU = field(
+        default_factory=lambda: MemoryLRU(max_entries=512, ttl=DEFAULT_TTL_SECONDS)
+    )
     stats: CacheStats = field(default_factory=CacheStats)
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
@@ -382,7 +384,9 @@ class ResponseCache:
             "model": response.model,
             "usage": response.usage.to_dict(),
             "finish_reason": response.finish_reason,
-            "raw": {k: v for k, v in (response.raw or {}).items() if k in {"id", "object", "created"}},
+            "raw": {
+                k: v for k, v in (response.raw or {}).items() if k in {"id", "object", "created"}
+            },
             "cached_at": time.time(),
         }
         key = self.key_for(signature, namespace)
@@ -576,9 +580,7 @@ class EmbeddingCache:
     def delete_model(self, model: str) -> int:
         """Drop every cached vector for one model; return the count."""
         with self._lock:
-            cursor = self._connection.execute(
-                f"DELETE FROM {self.table} WHERE model = ?", (model,)
-            )
+            cursor = self._connection.execute(f"DELETE FROM {self.table} WHERE model = ?", (model,))
             self._connection.commit()
             return cursor.rowcount or 0
 
@@ -626,10 +628,10 @@ __all__ = [
     "DEFAULT_MAX_BYTES",
     "DEFAULT_MAX_ENTRIES",
     "DEFAULT_TTL_SECONDS",
+    "SCHEMA_VERSION",
     "CacheStats",
     "DiskCache",
     "EmbeddingCache",
     "MemoryLRU",
     "ResponseCache",
-    "SCHEMA_VERSION",
 ]

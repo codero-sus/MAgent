@@ -36,12 +36,51 @@ def tokenize(text: str) -> list[str]:
     return [token for token in tokens if token not in STOPWORDS and len(token) > 1]
 
 
-STOPWORDS: frozenset[str] = frozenset({
-    "the", "and", "for", "with", "that", "this", "from", "are", "was", "were", "been",
-    "have", "has", "had", "will", "would", "can", "could", "should", "may", "might",
-    "not", "but", "you", "your", "our", "its", "their", "them", "then", "than",
-    "into", "onto", "over", "under", "about", "when", "where", "which", "what", "who",
-})
+STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "are",
+        "was",
+        "were",
+        "been",
+        "have",
+        "has",
+        "had",
+        "will",
+        "would",
+        "can",
+        "could",
+        "should",
+        "may",
+        "might",
+        "not",
+        "but",
+        "you",
+        "your",
+        "our",
+        "its",
+        "their",
+        "them",
+        "then",
+        "than",
+        "into",
+        "onto",
+        "over",
+        "under",
+        "about",
+        "when",
+        "where",
+        "which",
+        "what",
+        "who",
+    }
+)
 """Common English words excluded from the index."""
 
 
@@ -53,7 +92,9 @@ class DocumentIndex:
     a cache or rebuilt cheaply at the start of a run.
     """
 
-    def __init__(self, documents: list[dict[str, Any]], *, k1: float = 1.5, b: float = 0.75) -> None:
+    def __init__(
+        self, documents: list[dict[str, Any]], *, k1: float = 1.5, b: float = 0.75
+    ) -> None:
         """Index ``documents`` with the given BM25 tuning parameters."""
         self.documents = documents
         self.k1 = k1
@@ -62,8 +103,10 @@ class DocumentIndex:
         self.lengths: list[int] = []
         self.term_vectors: list[Counter[str]] = []
         for position, document in enumerate(documents):
-            tokens = tokenize(f"{document.get('title', '')} {document.get('title', '')} "
-                              f"{document.get('text', '')}")
+            tokens = tokenize(
+                f"{document.get('title', '')} {document.get('title', '')} "
+                f"{document.get('text', '')}"
+            )
             counts = Counter(tokens)
             self.term_vectors.append(counts)
             self.lengths.append(len(tokens))
@@ -79,8 +122,9 @@ class DocumentIndex:
             return 0.0
         return math.log(1 + (self.total - hits + 0.5) / (hits + 0.5))
 
-    def search(self, query: str, limit: int = 10, tag: str = "", kind: str = "",
-               min_score: float = 0.0) -> list[dict[str, Any]]:
+    def search(
+        self, query: str, limit: int = 10, tag: str = "", kind: str = "", min_score: float = 0.0
+    ) -> list[dict[str, Any]]:
         """Rank documents against ``query`` using BM25."""
         terms = tokenize(query)
         if not terms:
@@ -92,8 +136,12 @@ class DocumentIndex:
                 continue
             for position, frequency in self.postings.get(term, ()):
                 length = self.lengths[position] or 1
-                denominator = frequency + self.k1 * (1 - self.b + self.b * length / (self.average_length or 1))
-                scores[position] = scores.get(position, 0.0) + weight * (frequency * (self.k1 + 1)) / denominator
+                denominator = frequency + self.k1 * (
+                    1 - self.b + self.b * length / (self.average_length or 1)
+                )
+                scores[position] = (
+                    scores.get(position, 0.0) + weight * (frequency * (self.k1 + 1)) / denominator
+                )
         results: list[dict[str, Any]] = []
         for position, score in scores.items():
             document = self.documents[position]
@@ -103,16 +151,20 @@ class DocumentIndex:
                 continue
             if score < min_score:
                 continue
-            results.append({
-                "id": document.get("id", position),
-                "title": document.get("title", ""),
-                "path": document.get("path", ""),
-                "kind": document.get("kind", ""),
-                "score": round(score, 4),
-                "matched_terms": sorted({term for term in terms if term in self.term_vectors[position]}),
-                "chars": len(document.get("text", "")),
-                "snippet": make_snippet(document.get("text", ""), terms),
-            })
+            results.append(
+                {
+                    "id": document.get("id", position),
+                    "title": document.get("title", ""),
+                    "path": document.get("path", ""),
+                    "kind": document.get("kind", ""),
+                    "score": round(score, 4),
+                    "matched_terms": sorted(
+                        {term for term in terms if term in self.term_vectors[position]}
+                    ),
+                    "chars": len(document.get("text", "")),
+                    "snippet": make_snippet(document.get("text", ""), terms),
+                }
+            )
         results.sort(key=lambda item: item["score"], reverse=True)
         return results[:limit]
 
@@ -147,7 +199,9 @@ def make_snippet(text: str, terms: list[str], radius: int = 90) -> str:
     return f"{prefix}{snippet}{suffix}"
 
 
-def _load_corpus(context: ToolContext, path: str, patterns: str, max_files: int) -> list[dict[str, Any]]:
+def _load_corpus(
+    context: ToolContext, path: str, patterns: str, max_files: int
+) -> list[dict[str, Any]]:
     """Read files from the workspace into index documents."""
     root = context.resolve_path(path or ".")
     if context.sandbox is not None:
@@ -183,21 +237,33 @@ def _load_corpus(context: ToolContext, path: str, patterns: str, max_files: int)
         total += len(text)
         if total > MAX_INDEXED_CHARS:
             break
-        documents.append({
-            "id": str(index),
-            "title": candidate.name,
-            "path": context.sandbox.relative(candidate) if context.sandbox else str(candidate),
-            "kind": candidate.suffix.lstrip(".").lower() or "file",
-            "tags": [candidate.suffix.lstrip(".").lower()],
-            "text": text,
-        })
+        documents.append(
+            {
+                "id": str(index),
+                "title": candidate.name,
+                "path": context.sandbox.relative(candidate) if context.sandbox else str(candidate),
+                "kind": candidate.suffix.lstrip(".").lower() or "file",
+                "tags": [candidate.suffix.lstrip(".").lower()],
+                "text": text,
+            }
+        )
     return documents
 
 
-@tool(category="search", risk="read", filesystem=True, timeout=120.0, tags=["search", "bm25", "core"])
-def search_documents(query: str, path: str = ".", patterns: str = "**/*.md,**/*.txt,**/*.py",
-                     limit: int = 8, max_files: int = 500, tag: str = "", kind: str = "",
-                     semantic: bool = False, context: ToolContext | None = None) -> dict[str, Any]:
+@tool(
+    category="search", risk="read", filesystem=True, timeout=120.0, tags=["search", "bm25", "core"]
+)
+def search_documents(
+    query: str,
+    path: str = ".",
+    patterns: str = "**/*.md,**/*.txt,**/*.py",
+    limit: int = 8,
+    max_files: int = 500,
+    tag: str = "",
+    kind: str = "",
+    semantic: bool = False,
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
     """Search files in the workspace and return ranked matches with snippets.
 
     The index is cached for the run, so a second query over the same path is
@@ -234,19 +300,21 @@ def search_documents(query: str, path: str = ".", patterns: str = "**/*.md,**/*.
         "semantic": semantic and ctx.backend is not None,
         "text": "\n".join(
             f"{item['score']:.3f}  {item['path']}: {item['snippet']}" for item in results
-        ) or "(no matches)",
+        )
+        or "(no matches)",
     }
 
 
-def _semantic_rerank(context: ToolContext, index: DocumentIndex, query: str,
-                     results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _semantic_rerank(
+    context: ToolContext, index: DocumentIndex, query: str, results: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """Blend embedding similarity into the lexical scores."""
     backend = context.backend
     if backend is None or not hasattr(backend, "embed"):
         return results
     try:
         vectors = backend.embed([query] + [item["snippet"] for item in results])
-    except Exception:  # noqa: BLE001 - semantic reranking is best effort
+    except Exception:
         return results
     if len(vectors) < len(results) + 1:
         return results
@@ -282,13 +350,23 @@ def similar_texts(text: str, candidates: str, limit: int = 5) -> dict[str, Any]:
     else:
         raise ToolExecutionError("candidates must be a JSON array or newline separated text")
     scored = sorted(
-        ({"text": ellipsize(item, 300), "index": position, "score": round(similarity(text, item), 4)}
-         for position, item in enumerate(items)),
+        (
+            {
+                "text": ellipsize(item, 300),
+                "index": position,
+                "score": round(similarity(text, item), 4),
+            }
+            for position, item in enumerate(items)
+        ),
         key=lambda entry: entry["score"],
         reverse=True,
     )
-    return {"query": ellipsize(text, 200), "candidates": len(items),
-            "results": scored[: max(1, limit)], "best": scored[0]["text"] if scored else ""}
+    return {
+        "query": ellipsize(text, 200),
+        "candidates": len(items),
+        "results": scored[: max(1, limit)],
+        "best": scored[0]["text"] if scored else "",
+    }
 
 
 TOOLS: list[Any] = [search_documents, similar_texts]
@@ -302,11 +380,11 @@ def load(registry: Any) -> int:
 
 
 __all__ = [
-    "DocumentIndex",
     "INDEX_CACHE_KEY",
     "MAX_INDEXED_CHARS",
     "STOPWORDS",
     "TOOLS",
+    "DocumentIndex",
     "load",
     "make_snippet",
     "search_documents",

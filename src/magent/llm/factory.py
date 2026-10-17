@@ -100,7 +100,8 @@ class BackendRequest:
             verify_ssl=settings.verify_ssl,
             max_retries=settings.max_retries,
             cache_dir=env.get("MAGENT_CACHE_DIR", ""),
-            cache_enabled=env.get("MAGENT_CACHE_ENABLED", "true").lower() not in {"0", "false", "no"},
+            cache_enabled=env.get("MAGENT_CACHE_ENABLED", "true").lower()
+            not in {"0", "false", "no"},
         )
 
 
@@ -154,26 +155,40 @@ class BackendFactory:
         elif kind == "cortex":
             backend = self._build_cortex(spec)
             decision = BackendDecision(
-                requested=kind, resolved="cortex", reason="explicitly requested",
-                backend_name=backend.name, model=backend.default_model,
+                requested=kind,
+                resolved="cortex",
+                reason="explicitly requested",
+                backend_name=backend.name,
+                model=backend.default_model,
             )
         elif kind == "echo":
             backend = EchoBackend(models_list=[spec.model or "echo-small"])
             decision = BackendDecision(
-                requested=kind, resolved="echo", reason="explicitly requested (offline)",
-                backend_name=backend.name, model=backend.default_model,
+                requested=kind,
+                resolved="echo",
+                reason="explicitly requested (offline)",
+                backend_name=backend.name,
+                model=backend.default_model,
             )
         elif kind == "scripted":
             backend = ScriptedBackend(models_list=[spec.model or "scripted-model"])
             decision = BackendDecision(
-                requested=kind, resolved="scripted", reason="explicitly requested (offline)",
-                backend_name=backend.name, model=backend.default_model,
+                requested=kind,
+                resolved="scripted",
+                reason="explicitly requested (offline)",
+                backend_name=backend.name,
+                model=backend.default_model,
             )
         elif kind == "lambda":
-            backend = LambdaBackend(lambda req: "lambda backend reply", model=spec.model or "lambda-model")
+            backend = LambdaBackend(
+                lambda req: "lambda backend reply", model=spec.model or "lambda-model"
+            )
             decision = BackendDecision(
-                requested=kind, resolved="lambda", reason="explicitly requested (offline)",
-                backend_name=backend.name, model=backend.default_model,
+                requested=kind,
+                resolved="lambda",
+                reason="explicitly requested (offline)",
+                backend_name=backend.name,
+                model=backend.default_model,
             )
         else:
             backend, decision = self._build_router(spec)
@@ -297,7 +312,7 @@ def _probe_cortex(url: str, *, timeout: float = 3.0) -> bool:
             join_url(normalize_base_url(url), "/health"), raise_for_status=False, max_attempts=1
         )
         return response.status < 500
-    except Exception:  # noqa: BLE001 - any failure means "not reachable"
+    except Exception:
         return False
     finally:
         client.close()
@@ -317,8 +332,9 @@ def build_backend(config: Any = None, *, offline: bool | None = None, **kwargs: 
     """
     if offline:
         return build_offline_backend(kwargs.get("model") or "echo-small")
-    request = (BackendRequest.from_config(config) if config is not None
-               else BackendRequest.from_env())
+    request = (
+        BackendRequest.from_config(config) if config is not None else BackendRequest.from_env()
+    )
     return BackendFactory().build(request, **kwargs)
 
 

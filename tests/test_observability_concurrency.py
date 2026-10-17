@@ -7,14 +7,32 @@ import threading
 import time
 import unittest
 
-from magent.concurrency import (CancellationToken, ConcurrencyLimiter, Debouncer, Task, TaskOutcome,
-                                Throttle, TokenBucket, WorkerPool, chunked, gather, interleave,
-                                run_parallel, run_rate_limited)
-from magent.observability import (Counter, Gauge, Histogram, MetricsRegistry, Observability, Span,
-                                  Tracer, record_run, trace_from_events)
+from magent.concurrency import (
+    CancellationToken,
+    ConcurrencyLimiter,
+    Debouncer,
+    Task,
+    TaskOutcome,
+    Throttle,
+    TokenBucket,
+    WorkerPool,
+    chunked,
+    gather,
+    interleave,
+    run_parallel,
+    run_rate_limited,
+)
+from magent.observability import (
+    Histogram,
+    MetricsRegistry,
+    Observability,
+    Span,
+    Tracer,
+    record_run,
+    trace_from_events,
+)
 from magent.testing import EchoBackend
-
-from tests.support import MagentTestCase
+from tests.support import MAgentTestCase
 
 
 class TracingTest(unittest.TestCase):
@@ -22,11 +40,10 @@ class TracingTest(unittest.TestCase):
 
     def test_spans_nest_and_measure(self) -> None:
         tracer = Tracer()
-        with tracer.trace("demo") as trace:
-            with tracer.span("step.0", kind="step") as span:
-                time.sleep(0.005)
-                with tracer.span("llm.chat", kind="llm"):
-                    pass
+        with tracer.trace("demo") as trace, tracer.span("step.0", kind="step") as span:
+            time.sleep(0.005)
+            with tracer.span("llm.chat", kind="llm"):
+                pass
         self.assertGreater(span.duration_ms, 0)
         self.assertEqual(len(trace.spans()), 3)
         self.assertIn("step.0", trace.flame())
@@ -50,9 +67,8 @@ class TracingTest(unittest.TestCase):
 
     def test_trace_exports_jsonl(self) -> None:
         tracer = Tracer()
-        with tracer.trace("export") as trace:
-            with tracer.span("work"):
-                pass
+        with tracer.trace("export") as trace, tracer.span("work"):
+            pass
         lines = trace.jsonl().splitlines()
         self.assertEqual(len(lines), 2)
         self.assertEqual(json.loads(lines[0])["name"], "export")
@@ -67,14 +83,13 @@ class TracingTest(unittest.TestCase):
 
     def test_disabled_tracer_is_a_noop(self) -> None:
         tracer = Tracer(enabled=False)
-        with tracer.trace("off") as trace:
-            with tracer.span("nothing"):
-                pass
+        with tracer.trace("off") as trace, tracer.span("nothing"):
+            pass
         self.assertTrue(tracer.stats()["enabled"] is False)
         self.assertIsNotNone(trace)
 
 
-class MetricsTest(MagentTestCase):
+class MetricsTest(MAgentTestCase):
     """Counters, gauges, histograms and the Prometheus export."""
 
     def test_counter_and_gauge(self) -> None:
@@ -122,7 +137,7 @@ class MetricsTest(MagentTestCase):
         self.assertEqual(first.counter("runs_total").value(), 0)
 
 
-class ObservabilityTest(MagentTestCase):
+class ObservabilityTest(MAgentTestCase):
     """The façade attaches to an agent and records what happened."""
 
     def test_attach_records_runs(self) -> None:
@@ -156,10 +171,14 @@ class ObservabilityTest(MagentTestCase):
         from magent.testing import ToolScriptBackend
 
         observability = Observability()
-        agent = make_agent(backend=ToolScriptBackend(script=[
-            {"tool_calls": [{"name": "read_file", "arguments": {"path": "nope.txt"}}]},
-            {"text": "done"},
-        ]))
+        agent = make_agent(
+            backend=ToolScriptBackend(
+                script=[
+                    {"tool_calls": [{"name": "read_file", "arguments": {"path": "nope.txt"}}]},
+                    {"text": "done"},
+                ]
+            )
+        )
         observability.attach(agent)
         agent.run("read a missing file")
         self.assertGreater(observability.report().errors, 0)
@@ -177,8 +196,10 @@ class PoolTest(unittest.TestCase):
 
     def test_parallel_is_faster_than_serial(self) -> None:
         started = time.perf_counter()
-        outcomes = run_parallel([Task(name=f"t{index}", fn=self._sleepy, args=(0.05,))
-                                 for index in range(4)], max_workers=4)
+        outcomes = run_parallel(
+            [Task(name=f"t{index}", fn=self._sleepy, args=(0.05,)) for index in range(4)],
+            max_workers=4,
+        )
         elapsed = time.perf_counter() - started
         self.assertTrue(all(outcome.ok for outcome in outcomes))
         self.assertLess(elapsed, 0.18)
@@ -221,7 +242,9 @@ class PoolTest(unittest.TestCase):
         self.assertTrue(outcomes[0].cancelled)
 
     def test_gather_swallows_failures(self) -> None:
-        self.assertEqual(gather(lambda: 1, lambda: (_ for _ in ()).throw(ValueError("x"))), [1, None])
+        self.assertEqual(
+            gather(lambda: 1, lambda: (_ for _ in ()).throw(ValueError("x"))), [1, None]
+        )
 
     def test_stats_and_context_manager(self) -> None:
         with WorkerPool(2, name="stats") as pool:

@@ -28,9 +28,10 @@ import argparse
 import ast
 import json
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -82,8 +83,10 @@ class Report:
 
     def summary(self) -> str:
         """Human-readable summary."""
-        lines = [f"improvements: {self.total} declared, {self.verified} verified "
-                 f"(minimum {MINIMUM_IMPROVEMENTS})"]
+        lines = [
+            f"improvements: {self.total} declared, {self.verified} verified "
+            f"(minimum {MINIMUM_IMPROVEMENTS})"
+        ]
         for category, count in sorted(self.categories.items()):
             lines.append(f"  {category:<16} {count}")
         for problem in self.problems[:20]:
@@ -168,13 +171,13 @@ def verify_entry(entry: dict[str, Any], cache: dict[str, set[str]]) -> Problem |
     """Check one manifest entry; returns a problem or ``None``."""
     ref = str(entry.get("ref", "")).strip()
     if not ref:
-        return Problem(reference=str(entry.get("id", "?")), kind="empty-ref",
-                       detail="entry has no reference")
+        return Problem(
+            reference=str(entry.get("id", "?")), kind="empty-ref", detail="entry has no reference"
+        )
     path_text, _, symbol = ref.partition("#")
     target = REPO_ROOT / path_text
     if not target.is_file():
-        return Problem(reference=ref, kind="missing-file",
-                       detail=f"{path_text} does not exist")
+        return Problem(reference=ref, kind="missing-file", detail=f"{path_text} does not exist")
     if target.stat().st_size == 0:
         return Problem(reference=ref, kind="empty-file", detail=f"{path_text} is empty")
     if not symbol:
@@ -186,13 +189,17 @@ def verify_entry(entry: dict[str, Any], cache: dict[str, set[str]]) -> Problem |
         declared = cache.setdefault(f"tokens:{path_text}", declared_tokens(target))
         if symbol in declared:
             return None
-        return Problem(reference=ref, kind="missing-symbol",
-                       detail=f"{symbol} is neither a documented definition nor a declared "
-                              f"name in {path_text}")
+        return Problem(
+            reference=ref,
+            kind="missing-symbol",
+            detail=f"{symbol} is neither a documented definition nor a declared "
+            f"name in {path_text}",
+        )
     if bare_token_present(target, symbol):
         return None
-    return Problem(reference=ref, kind="missing-token",
-                   detail=f"{symbol!r} does not appear in {path_text}")
+    return Problem(
+        reference=ref, kind="missing-token", detail=f"{symbol!r} does not appear in {path_text}"
+    )
 
 
 def verify_manifest(manifest: dict[str, Any], *, strict: bool = False) -> Report:
@@ -209,12 +216,16 @@ def verify_manifest(manifest: dict[str, Any], *, strict: bool = False) -> Report
     for entry in entries:
         identifier = str(entry.get("id", ""))
         if not identifier:
-            report.problems.append(Problem(reference="?", kind="missing-id",
-                                           detail="entry has no id"))
+            report.problems.append(
+                Problem(reference="?", kind="missing-id", detail="entry has no id")
+            )
             continue
         if identifier in seen_ids:
-            report.problems.append(Problem(reference=identifier, kind="duplicate-id",
-                                           detail="id is used more than once"))
+            report.problems.append(
+                Problem(
+                    reference=identifier, kind="duplicate-id", detail="id is used more than once"
+                )
+            )
             continue
         seen_ids.add(identifier)
         category = str(entry.get("category", "uncategorised"))
@@ -225,18 +236,24 @@ def verify_manifest(manifest: dict[str, Any], *, strict: bool = False) -> Report
         else:
             report.problems.append(problem)
     if report.total != len(entries):
-        report.problems.append(Problem(reference="total", kind="count-mismatch",
-                                       detail=f"total says {report.total}, "
-                                              f"{len(entries)} entries present"))
+        report.problems.append(
+            Problem(
+                reference="total",
+                kind="count-mismatch",
+                detail=f"total says {report.total}, {len(entries)} entries present",
+            )
+        )
     if strict:
         import build_improvements
 
         fresh = build_improvements.build_manifest()
-        current = json.loads(MANIFEST_PATH.read_text(encoding="utf-8")) if MANIFEST_PATH.is_file() \
-            else {}
+        current = (
+            json.loads(MANIFEST_PATH.read_text(encoding="utf-8")) if MANIFEST_PATH.is_file() else {}
+        )
         if fresh["total"] != current.get("total"):
-            report.stale.append(f"total: manifest {current.get('total')} != generated "
-                                f"{fresh['total']}")
+            report.stale.append(
+                f"total: manifest {current.get('total')} != generated {fresh['total']}"
+            )
         current_refs = {entry["ref"] for entry in current.get("improvements", [])}
         fresh_refs = {entry["ref"] for entry in fresh["improvements"]}
         for missing in sorted(fresh_refs - current_refs)[:10]:
@@ -249,8 +266,9 @@ def verify_manifest(manifest: dict[str, Any], *, strict: bool = False) -> Report
 def main(argv: Sequence[str] | None = None) -> int:
     """Command line entry point."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--strict", action="store_true",
-                        help="also require the manifest to match the tree exactly")
+    parser.add_argument(
+        "--strict", action="store_true", help="also require the manifest to match the tree exactly"
+    )
     parser.add_argument("--json", action="store_true", help="print a JSON report")
     parser.add_argument("--path", default=str(MANIFEST_PATH), help="manifest to verify")
     args = parser.parse_args(argv)

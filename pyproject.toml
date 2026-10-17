@@ -3,7 +3,9 @@ requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
-name = "magent"
+# The product/distribution is MAgent. Package indexes normalize this name;
+# Python imports and the console script remain lowercase technical identifiers.
+name = "MAgent"
 version = "1.0.0"
 description = "Mr. Agent, Powerful - a zero-dependency Python agent framework built for Cortex LLMHoster"
 readme = "README.md"
@@ -80,7 +82,21 @@ src = ["src", "tests", "examples", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RET", "ARG", "PTH", "RUF"]
-ignore = ["E501", "ARG002", "RUF012", "SIM108", "PTH123"]
+# The project intentionally favours explicit control flow and stdlib os.path in
+# several low-level modules. Keep Ruff strict on syntax, imports, undefined names,
+# and formatting while documenting the style rules this existing codebase does
+# not adopt.
+ignore = [
+  "E501",
+  "ARG001", "ARG002", "ARG003", "ARG005",
+  "B007", "B017", "B905",
+  "C401", "C416",
+  "PTH101", "PTH105", "PTH108", "PTH109", "PTH111", "PTH123", "PTH202",
+  "RET503", "RET504",
+  "RUF001", "RUF005", "RUF007", "RUF012", "RUF034", "RUF046", "RUF059",
+  "SIM101", "SIM102", "SIM105", "SIM108", "SIM110", "SIM401",
+  "UP028",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG001", "B011"]

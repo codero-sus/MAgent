@@ -16,8 +16,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = REPO_ROOT / "improvements.json"
@@ -35,8 +36,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Command line entry point."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--detail", action="store_true", help="show category and kind breakdown")
-    parser.add_argument("--minimum", type=int, default=DEFAULT_MINIMUM,
-                        help="fail when the total is below this")
+    parser.add_argument(
+        "--minimum", type=int, default=DEFAULT_MINIMUM, help="fail when the total is below this"
+    )
     parser.add_argument("--path", default=str(MANIFEST_PATH), help="manifest to read")
     args = parser.parse_args(argv)
     manifest = load(Path(args.path))
@@ -52,8 +54,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print(total)
     if total < args.minimum:
-        print(f"error: {total} improvements is below the required {args.minimum}",
-              file=sys.stderr)
+        print(f"error: {total} improvements is below the required {args.minimum}", file=sys.stderr)
         return 1
     return 0
 

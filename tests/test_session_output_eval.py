@@ -6,21 +6,49 @@ import json
 import unittest
 from pathlib import Path
 
-from magent.eval import (Dataset, EvalCase, EvalRunner, METRICS, aggregate, build_dataset,
-                         load_dataset, metric_names, parse_markdown_dataset, run_eval, sample_dataset,
-                         save_dataset, score_case)
-from magent.output import (BufferSink, FileSink, NullSink, RenderOptions, ResultRenderer, TeeSink,
-                           render_markdown, render_value, to_csv, to_yaml)
-from magent.session import (SessionManager, SessionRecord, SessionStore, derive_title,
-                            export_transcript, merge_records, parse_transcript, render_transcript,
-                            transcript_stats)
-from magent.testing import EchoBackend, ToolScriptBackend
+from magent.eval import (
+    METRICS,
+    EvalCase,
+    EvalRunner,
+    aggregate,
+    build_dataset,
+    load_dataset,
+    metric_names,
+    parse_markdown_dataset,
+    run_eval,
+    sample_dataset,
+    save_dataset,
+    score_case,
+)
+from magent.output import (
+    BufferSink,
+    FileSink,
+    NullSink,
+    RenderOptions,
+    ResultRenderer,
+    TeeSink,
+    render_markdown,
+    render_value,
+    to_csv,
+    to_yaml,
+)
+from magent.session import (
+    SessionManager,
+    SessionRecord,
+    SessionStore,
+    derive_title,
+    export_transcript,
+    merge_records,
+    parse_transcript,
+    render_transcript,
+    transcript_stats,
+)
+from magent.testing import EchoBackend
 from magent.types import Message
+from tests.support import MAgentTestCase
 
-from tests.support import MagentTestCase
 
-
-class SessionRecordTest(MagentTestCase):
+class SessionRecordTest(MAgentTestCase):
     """Session records capture a conversation and its metadata."""
 
     def test_record_assigns_identity_and_title(self) -> None:
@@ -59,7 +87,7 @@ class SessionRecordTest(MagentTestCase):
         self.assertEqual(len(merged.messages), 2)
 
 
-class SessionStoreTest(MagentTestCase):
+class SessionStoreTest(MAgentTestCase):
     """Stored sessions can be listed, loaded, searched and exported."""
 
     def setUp(self) -> None:
@@ -127,7 +155,7 @@ class TranscriptTest(unittest.TestCase):
         self.assertIn("hello", render_transcript(record, fmt="markdown"))
         self.assertIn("<html", render_transcript(record, fmt="html"))
         self.assertIn("user:", render_transcript(record, fmt="text"))
-        self.assertIn("\"messages\"", render_transcript(record, fmt="json"))
+        self.assertIn('"messages"', render_transcript(record, fmt="json"))
 
     def test_parse_transcript_round_trips(self) -> None:
         messages = parse_transcript("user: hello there\nassistant: general kenobi\n")
@@ -141,15 +169,16 @@ class TranscriptTest(unittest.TestCase):
         self.assertIn("calculate", stats["tools"])
 
 
-class SessionManagerTest(MagentTestCase):
+class SessionManagerTest(MAgentTestCase):
     """The manager ties the agent to a stored session."""
 
     def test_record_run_records_the_prompt(self) -> None:
         from magent.agent import Agent
 
         manager = SessionManager(store=SessionStore(self.home.path / "sessions"))
-        agent = Agent(backend=EchoBackend(), settings=self.config(), workspace=self.workspace,
-                      session=manager)
+        agent = Agent(
+            backend=EchoBackend(), settings=self.config(), workspace=self.workspace, session=manager
+        )
         agent.run("explain the memory subsystem")
         record = manager.current
         self.assertIsNotNone(record)
@@ -175,7 +204,7 @@ class SessionManagerTest(MagentTestCase):
         self.assertIn("do the thing", block)
 
 
-class OutputTest(MagentTestCase):
+class OutputTest(MAgentTestCase):
     """Rendering and format conversion."""
 
     def test_formats_render_consistently(self) -> None:
@@ -231,7 +260,7 @@ class OutputTest(MagentTestCase):
         self.assertEqual(path.read_text(encoding="utf-8").strip(), "red")
 
 
-class EvalTest(MagentTestCase):
+class EvalTest(MAgentTestCase):
     """Datasets, metrics and the runner."""
 
     def test_sample_dataset_is_available(self) -> None:
@@ -241,14 +270,16 @@ class EvalTest(MagentTestCase):
 
     def test_dataset_loads_from_json(self) -> None:
         path = self.home.path / "cases.json"
-        path.write_text(json.dumps([{"id": "a", "prompt": "hi", "contains": ["hi"]}]),
-                        encoding="utf-8")
+        path.write_text(
+            json.dumps([{"id": "a", "prompt": "hi", "contains": ["hi"]}]), encoding="utf-8"
+        )
         dataset = load_dataset(path)
         self.assertEqual(dataset.cases[0].id, "a")
 
     def test_dataset_loads_from_markdown_table(self) -> None:
         dataset = parse_markdown_dataset(
-            "| prompt | expected | contains |\n| --- | --- | --- |\n| What is 2+2? | | 4 |\n")
+            "| prompt | expected | contains |\n| --- | --- | --- |\n| What is 2+2? | | 4 |\n"
+        )
         self.assertEqual(dataset.cases[0].contains, ("4",))
 
     def test_dataset_round_trips(self) -> None:
@@ -306,8 +337,9 @@ class EvalTest(MagentTestCase):
     def test_threshold_failure_raises(self) -> None:
         from magent.errors import EvalThresholdError
 
-        dataset = build_dataset([{"id": "strict", "prompt": "say hi",
-                                  "contains": ["definitely-not-present"]}])
+        dataset = build_dataset(
+            [{"id": "strict", "prompt": "say hi", "contains": ["definitely-not-present"]}]
+        )
         report = EvalRunner(lambda: self.agent(), threshold=0.99).run(dataset)
         with self.assertRaises(EvalThresholdError):
             report.check(0.99)

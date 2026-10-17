@@ -19,12 +19,37 @@ Public API:
 
 from __future__ import annotations
 
-from .hooks import (DEFAULT_PRIORITY, MAX_HANDLERS_PER_HOOK, HookHandler, HookRegistry,
-                    attach_to_agent, chain_handlers, describe_hooks, load_hooks_from)
-from .loader import (MAX_ENTRY_BYTES, PLUGIN_DIRS, LoadedPlugin, PluginLoader,
-                     default_plugin_paths, iter_plugin_files, load_plugins, plugin_module)
-from .manifest import (CAPABILITIES, HOOK_POINTS, MANIFEST_NAMES, PluginManifest, find_manifest,
-                       manifest_for, manifests_from, verify_checksum, write_manifest)
+from .hooks import (
+    DEFAULT_PRIORITY,
+    MAX_HANDLERS_PER_HOOK,
+    HookHandler,
+    HookRegistry,
+    attach_to_agent,
+    chain_handlers,
+    describe_hooks,
+    load_hooks_from,
+)
+from .loader import (
+    MAX_ENTRY_BYTES,
+    PLUGIN_DIRS,
+    LoadedPlugin,
+    PluginLoader,
+    default_plugin_paths,
+    iter_plugin_files,
+    load_plugins,
+    plugin_module,
+)
+from .manifest import (
+    CAPABILITIES,
+    HOOK_POINTS,
+    MANIFEST_NAMES,
+    PluginManifest,
+    find_manifest,
+    manifest_for,
+    manifests_from,
+    verify_checksum,
+    write_manifest,
+)
 
 __all__ = [
     "CAPABILITIES",

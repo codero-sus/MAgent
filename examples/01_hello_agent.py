@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 
-from _bootstrap import agent, backend_name, heading, main_guard  # noqa: E402
+from _bootstrap import agent, backend_name, heading, main_guard
 
 
 def body() -> None:
@@ -31,7 +31,7 @@ def body() -> None:
 
     heading("events")
     for event in result.events[:6]:
-        print(f"  {str(event.kind):<22} {list(event.data)[:4]}")
+        print(f"  {event.kind!s:<22} {list(event.data)[:4]}")
 
 
 if __name__ == "__main__":

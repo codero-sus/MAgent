@@ -11,9 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _bootstrap import agent, heading, main_guard  # noqa: E402
-
-from magent.memory import build_store  # noqa: E402
+from _bootstrap import agent, heading, main_guard
+from magent.memory import build_store
 
 
 def body() -> None:
@@ -35,8 +34,11 @@ def body() -> None:
 
     heading("the agent recalling it in a prompt")
     instance = agent(memory=store)
-    block = instance.system_prompt(instance.run_options if hasattr(instance, "run_options")
-                                   else __import__("magent.agent", fromlist=["RunOptions"]).RunOptions())
+    block = instance.system_prompt(
+        instance.run_options
+        if hasattr(instance, "run_options")
+        else __import__("magent.agent", fromlist=["RunOptions"]).RunOptions()
+    )
     marker = "Relevant memories"
     print("recall block present:", marker in block)
 

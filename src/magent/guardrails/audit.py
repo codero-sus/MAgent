@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from ..logging_ import get_logger
 from ..secrets import redact_text
@@ -32,10 +33,16 @@ DEFAULT_KEEP_ROTATED = 3
 class AuditLog:
     """A JSONL audit trail with rotation and redaction."""
 
-    def __init__(self, path: str | Path | None = None, *, enabled: bool = True,
-                 redact: bool = True, max_bytes: int = DEFAULT_MAX_BYTES,
-                 keep_rotated: int = DEFAULT_KEEP_ROTATED,
-                 serializer: Callable[[dict[str, Any]], str] | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        enabled: bool = True,
+        redact: bool = True,
+        max_bytes: int = DEFAULT_MAX_BYTES,
+        keep_rotated: int = DEFAULT_KEEP_ROTATED,
+        serializer: Callable[[dict[str, Any]], str] | None = None,
+    ) -> None:
         """Open an audit log.
 
         Args:
@@ -60,8 +67,15 @@ class AuditLog:
 
     # -- writing -------------------------------------------------------------
 
-    def record(self, kind: str, data: dict[str, Any] | None = None, *, agent: str = "",
-               run_id: str = "", severity: str = "info") -> dict[str, Any]:
+    def record(
+        self,
+        kind: str,
+        data: dict[str, Any] | None = None,
+        *,
+        agent: str = "",
+        run_id: str = "",
+        severity: str = "info",
+    ) -> dict[str, Any]:
         """Append one audit entry and return it."""
         if not self.enabled:
             self.skipped += 1
@@ -95,8 +109,10 @@ class AuditLog:
             ensure_dir(self.path.parent)
             if self.path.is_file() and self.path.stat().st_size >= self.max_bytes:
                 self.rotate()
-            line = self.serializer(entry) if self.serializer else json.dumps(
-                entry, ensure_ascii=False, default=str, separators=(",", ":")
+            line = (
+                self.serializer(entry)
+                if self.serializer
+                else json.dumps(entry, ensure_ascii=False, default=str, separators=(",", ":"))
             )
             with self.path.open("a", encoding="utf-8") as stream:
                 stream.write(line + "\n")
@@ -125,8 +141,11 @@ class AuditLog:
         """Delete the oldest rotated logs beyond ``keep_rotated``."""
         if self.path is None or self.keep_rotated <= 0:
             return
-        rotated = sorted(self.path.parent.glob(self.path.stem + ".*.log"),
-                         key=lambda item: item.stat().st_mtime, reverse=True)
+        rotated = sorted(
+            self.path.parent.glob(self.path.stem + ".*.log"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
         for stale in rotated[self.keep_rotated :]:
             try:
                 stale.unlink()
@@ -139,8 +158,9 @@ class AuditLog:
 
     # -- reading -------------------------------------------------------------
 
-    def entries(self, *, limit: int = 100, kind: str = "", severity: str = "",
-                since: float = 0.0) -> list[dict[str, Any]]:
+    def entries(
+        self, *, limit: int = 100, kind: str = "", severity: str = "", since: float = 0.0
+    ) -> list[dict[str, Any]]:
         """Return recorded entries, newest last, filtered as requested."""
         raw: list[dict[str, Any]] = []
         if self.path is not None and self.path.is_file():
@@ -154,18 +174,21 @@ class AuditLog:
         else:
             raw = list(self._memory)
         selected = [
-            entry for entry in raw
+            entry
+            for entry in raw
             if (not kind or entry.get("kind") == kind)
             and (not severity or entry.get("severity") == severity)
             and (not since or float(entry.get("ts") or 0) >= since)
         ]
-        return selected[-max(1, limit):]
+        return selected[-max(1, limit) :]
 
     def tail(self, count: int = 10) -> list[dict[str, Any]]:
         """Return the most recent entries."""
         return self.entries(limit=count)
 
-    def find(self, predicate: Callable[[dict[str, Any]], bool], *, limit: int = 50) -> list[dict[str, Any]]:
+    def find(
+        self, predicate: Callable[[dict[str, Any]], bool], *, limit: int = 50
+    ) -> list[dict[str, Any]]:
         """Return entries matching a predicate."""
         return [entry for entry in self.entries(limit=100000) if predicate(entry)][: max(1, limit)]
 
@@ -196,8 +219,10 @@ class AuditLog:
         target = Path(path).expanduser()
         ensure_dir(target.parent)
         entries = self.entries(limit=1000000, kind=kind)
-        atomic_write_text(target, "".join(json.dumps(entry, ensure_ascii=False, default=str) + "\n"
-                                          for entry in entries))
+        atomic_write_text(
+            target,
+            "".join(json.dumps(entry, ensure_ascii=False, default=str) + "\n" for entry in entries),
+        )
         return target
 
     def stats(self) -> dict[str, Any]:

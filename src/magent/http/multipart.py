@@ -69,11 +69,11 @@ class MultipartEncoder:
 
     # -- building ------------------------------------------------------------
 
-    def add_field(self, name: str, value: Any, *, content_type: str | None = None) -> MultipartEncoder:
+    def add_field(
+        self, name: str, value: Any, *, content_type: str | None = None
+    ) -> MultipartEncoder:
         """Append a simple named value and return ``self`` for chaining."""
-        self.fields.append(
-            MultipartField(name=name, value=str(value), content_type=content_type)
-        )
+        self.fields.append(MultipartField(name=name, value=str(value), content_type=content_type))
         return self
 
     def add_file(
@@ -117,8 +117,11 @@ class MultipartEncoder:
         """Append a JSON encoded value part."""
         import json
 
-        return self.add_field(name, json.dumps(payload, default=str, ensure_ascii=False),
-                              content_type="application/json")
+        return self.add_field(
+            name,
+            json.dumps(payload, default=str, ensure_ascii=False),
+            content_type="application/json",
+        )
 
     # -- encoding ------------------------------------------------------------
 
@@ -143,7 +146,7 @@ class MultipartEncoder:
 
     def iter_body(self, *, chunk_size: int = 1 << 16) -> Iterable[bytes]:
         """Yield the encoded body in bounded chunks."""
-        boundary = f"--{self.boundary}".encode("utf-8")
+        boundary = f"--{self.boundary}".encode()
         total = 0
         for part in self.fields:
             block = boundary + CRLF + self._part_header(part)

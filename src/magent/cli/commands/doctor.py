@@ -235,7 +235,7 @@ class Doctor:
         return CheckResult(
             name="package",
             status=STATUS_OK,
-            detail=f"magent {magent.__version__} from "
+            detail=f"MAgent {magent.__version__} from "
                    f"{'installed package' if installed else 'source checkout'}",
             data={"version": magent.__version__, "path": location, "installed": installed,
                   "user_agent": USER_AGENT},

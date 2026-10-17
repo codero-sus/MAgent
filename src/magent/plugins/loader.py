@@ -60,6 +60,13 @@ class LoadedPlugin:
     module: Any = None
     tools: list[Any] = field(default_factory=list)
     hooks: int = 0
+    """Number of hooks this plugin attached.
+
+    A count, not a list: :attr:`tools` holds the registered ``Tool``
+    objects because callers inspect them, while hooks belong to the
+    :class:`~magent.plugins.hooks.HookRegistry` and are read back from
+    there. Asking this field for the registrations is a type error.
+    """
     load_ms: float = 0.0
     path: str = ""
     error: str = ""
@@ -194,6 +201,42 @@ class PluginLoader:
         # Per-instance, not a class attribute: a shared mutable dict would let
         # one loader report another loader's failures.
         self.errors: dict[str, str] = {}
+
+    def with_policy(self, *, allow_sensitive: Sequence[str] | None = None,
+                    deny: Sequence[str] | None = None,
+                    allow: Sequence[str] | None = None,
+                    directories: Sequence[str | Path] | None = None,
+                    verify_checksums: bool | None = None,
+                    strict: bool | None = None) -> "PluginLoader":
+        """Return a copy of this loader with a different policy.
+
+        The registries are shared, so a loader derived for one command still
+        registers tools into the same catalogue. Copying rather than mutating
+        means a caller can try a stricter policy without losing the original.
+
+        Args:
+            allow_sensitive: sensitive permissions to approve, replacing the set
+            deny: plugin names to refuse, replacing the set
+            allow: when set, only these plugin names may load
+            directories: extra directories to scan, appended to the current ones
+            verify_checksums: whether to enforce manifest checksums
+            strict: whether to re-raise load failures
+        """
+        copy = PluginLoader(
+            list(self.directories) + [Path(item).expanduser()
+                                      for item in (directories or ()) if str(item)],
+            allow_sensitive=self.allow_sensitive if allow_sensitive is None
+            else {str(item).strip().lower() for item in allow_sensitive},
+            deny=self.deny if deny is None
+            else {str(item).strip() for item in deny if str(item).strip()},
+            allow=self.allow if allow is None else list(allow),
+            registry=self.registry,
+            hooks=self.hooks,
+            verify_checksums=self.verify_checksums if verify_checksums is None
+            else bool(verify_checksums),
+            strict=self.strict if strict is None else bool(strict),
+        )
+        return copy
 
     # -- discovery -----------------------------------------------------------
 
@@ -505,6 +548,14 @@ def loader_from_config(config: Any, *, registry: Any = None,
     if data_dir:
         directories.append(Path(data_dir).expanduser() / "plugins")
     directories.extend(Path(item).expanduser() for item in extra_directories if str(item))
+    # De-duplicate while keeping order: [tools] plugins_dir defaults to
+    # <data_dir>/plugins, so both branches above can yield the same path, and
+    # reporting one directory twice reads as a configuration bug.
+    unique: list[Path] = []
+    for directory in directories:
+        if directory not in unique:
+            unique.append(directory)
+    directories = unique
     plugins_section = getattr(config, "plugins", None)
     return PluginLoader(
         directories,

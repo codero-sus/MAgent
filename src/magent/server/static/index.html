@@ -164,7 +164,8 @@ footer { padding: 14px 16px; color: var(--muted); font-size: 12px; text-align: c
         <select id="loopmode">
           <option value="">default</option>
           <option value="react">react</option>
-          <option value="plan_execute">plan_execute</option>
+          <option value="plan">plan</option>
+          <option value="reflect">reflect</option>
           <option value="single">single</option>
         </select>
       </div>
@@ -247,14 +248,23 @@ footer { padding: 14px 16px; color: var(--muted); font-size: 12px; text-align: c
   <div class="panel">
     <h2>Live events</h2>
     <div class="row">
-      <select id="evkinds" style="width:220px">
+      <select id="evkinds" style="width:230px">
         <option value="">all kinds</option>
-        <option value="run_start">run_start</option>
-        <option value="tool_call">tool_call</option>
-        <option value="tool_result">tool_result</option>
-        <option value="text_delta">text_delta</option>
-        <option value="run_end">run_end</option>
-        <option value="error">error</option>
+        <option value="run.started">run.started</option>
+        <option value="run.finished">run.finished</option>
+        <option value="step.started">step.started</option>
+        <option value="step.finished">step.finished</option>
+        <option value="agent.text_delta">agent.text_delta</option>
+        <option value="agent.thinking">agent.thinking</option>
+        <option value="tool.call">tool.call</option>
+        <option value="tool.result">tool.result</option>
+        <option value="tool.error">tool.error</option>
+        <option value="llm.request">llm.request</option>
+        <option value="llm.response">llm.response</option>
+        <option value="guard.blocked">guard.blocked</option>
+        <option value="guard.approval_requested">guard.approval_requested</option>
+        <option value="budget.warning">budget.warning</option>
+        <option value="run.failed">run.failed</option>
       </select>
       <button class="act" id="evstart">connect</button>
       <button class="ghost" id="evstop">disconnect</button>
@@ -707,8 +717,14 @@ $("evstart").addEventListener("click", function () {
   es.onopen = function () { $("evstate").textContent = "connected"; statusLine(true, "events live"); };
   es.onerror = function () { $("evstate").textContent = "disconnected"; };
   es.onmessage = function (ev) { line(ev.data); };
-  ["connected", "closed", "run_start", "run_end", "text_delta", "tool_call", "tool_result",
-   "iteration", "error", "token_usage", "message"].forEach(function (kind) {
+  // The names must match EventKind values exactly, which are dotted.
+  ["connected", "closed", "run.started", "run.finished", "run.failed",
+   "step.started", "step.finished", "agent.thinking", "agent.text_delta",
+   "agent.text_done", "agent.reflection", "tool.call", "tool.result", "tool.error",
+   "guard.approval_requested", "guard.approval_decided", "guard.blocked",
+   "memory.write", "memory.read", "llm.request", "llm.response", "llm.retry",
+   "llm.cache_hit", "budget.warning", "router.model_switched", "plan.created",
+   "plan.step", "log", "custom"].forEach(function (kind) {
     es.addEventListener(kind, function (ev) { line("[" + kind + "] " + ev.data); });
   });
 });

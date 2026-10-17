@@ -294,6 +294,7 @@ class ServerContext:
         self.metrics = metrics
         self.secrets = [str(item) for item in (secrets or ()) if str(item)]
         self.server: Any = None
+        self.notes: list[str] = []
         self.started_at = time.time()
         self.requests = 0
         self.failures = 0
@@ -433,7 +434,15 @@ class MAgentServer:
         self.host = str(host or DEFAULT_HOST)
         self.port = int(port)
         self.api_key = str(api_key or "")
-        self.cors_origins = [str(item) for item in cors_origins if str(item)]
+        # A "*" entry means "reflect any origin", not "match the literal string
+        # *". Taking it literally would leave the exact-match list non-empty and
+        # therefore reject every real origin, which is the opposite of what the
+        # default configuration asks for.
+        origins = [str(item).strip() for item in cors_origins if str(item).strip()]
+        if "*" in origins:
+            origins = [item for item in origins if item != "*"]
+            allow_origins_any = True
+        self.cors_origins = origins
         self.serve_ui = bool(serve_ui)
         self.max_body_bytes = max(1024, int(max_body_bytes))
         self.request_timeout = float(request_timeout)
@@ -812,9 +821,11 @@ def _make_handler(server: MAgentServer) -> type:
             """
             self.send_response(response.status)
             self.send_header("Content-Type", response.content_type or "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
             self.send_header("Transfer-Encoding", "chunked")
             self.send_header("Connection", "keep-alive")
+            supplied = {key.lower() for key in response.headers}
+            if "cache-control" not in supplied:
+                self.send_header("Cache-Control", "no-cache")
             for key, value in response.headers.items():
                 if key.lower() in {"content-length", "transfer-encoding"}:
                     continue  # framing is owned by this method

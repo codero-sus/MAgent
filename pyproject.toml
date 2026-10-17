@@ -3,7 +3,11 @@ requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
-name = "magent"
+# The distribution is named MAgent. PyPI normalises names (PEP 503), so
+# `pip install magent` still resolves. The import package stays `magent` and the
+# console script stays `magent`: Python identifiers and POSIX commands are
+# lowercase, and only the name of the product is written MAgent.
+name = "MAgent"
 version = "1.0.0"
 description = "Mr. Agent, Powerful - a zero-dependency Python agent framework built for Cortex LLMHoster"
 readme = "README.md"

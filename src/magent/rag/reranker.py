@@ -66,12 +66,16 @@ def mmr_select(chunks: Sequence[Chunk], query: str, *, embedder: Embedder | None
             query_vector = embedder.embed([query])[0]
         except Exception as exc:  # noqa: BLE001
             LOGGER.debug("mmr query embedding failed: %s", exc)
-    if not query_vector:
+    if not query_vector and not lookup:
+        # Nothing to measure novelty against, so plain relevance order is right.
         return sorted(items, key=lambda chunk: chunk.score, reverse=True)[: max(1, limit)]
-    relevance = {
-        chunk.id: (cosine_similarity(query_vector, lookup[chunk.id]) if chunk.id in lookup else chunk.score)
-        for chunk in items
-    }
+    # Relevance stays the score the retrieval pipeline already computed. MMR's
+    # job is to add diversity, not to re-judge relevance with a weaker signal:
+    # recomputing it as a raw cosine discarded the hybrid blend (and mixed
+    # incomparable scales, since chunks without a vector fell back to a 0..1
+    # score), which let a weakly related chunk outrank the correct answer.
+    # The cosine is still used below, where it belongs: the novelty term.
+    relevance = {chunk.id: chunk.score for chunk in items}
     selected: list[Chunk] = []
     remaining = list(items)
     while remaining and len(selected) < max(1, limit):

@@ -106,13 +106,13 @@ class RankingWeights:
 
 
 class BM25Scorer:
-    """Okapi BM25 over a collection of memory entries."""
+    """Okapi BM25 over memory entries, RAG chunks, or plain strings."""
 
-    def __init__(self, entries: Sequence[MemoryEntry], *, k1: float = 1.5, b: float = 0.75) -> None:
+    def __init__(self, entries: Sequence[Any], *, k1: float = 1.5, b: float = 0.75) -> None:
         """Index ``entries`` for repeated queries.
 
         Args:
-            entries: the corpus to index
+            entries: memory entries, RAG chunks, or plain strings
             k1: term-frequency saturation parameter
             b: length normalization parameter
         """
@@ -221,6 +221,11 @@ def rank_entries(entries: Iterable[MemoryEntry], query: str, *, embedder: Any = 
                 semantic_scores = [cosine_similarity(query_vector, vector) for vector in vectors]
         except Exception:  # noqa: BLE001 - semantic ranking is best effort
             semantic_scores = [0.0] * len(items)
+        # Hashed vectors only recognise shared tokens, which BM25 already scores
+        # with length and frequency normalisation, so the embedder says how much
+        # of the semantic weight it has earned.
+        trust = float(getattr(embedder, "semantic_weight", 1.0))
+        semantic_scores = [score * trust for score in semantic_scores]
     wanted = {str(tag).strip().lower() for tag in (tags or ()) if str(tag).strip()}
     for index, entry in enumerate(items):
         tag_bonus = 0.05 if wanted and entry.matches_tags(wanted) else 0.0

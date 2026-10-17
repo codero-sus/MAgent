@@ -644,8 +644,10 @@ class Agent:
                     condition.notify_all()
 
         thread = threading.Thread(target=worker, name=f"magent-{self.name}-stream", daemon=True)
-        previous = self.on_event
-        self.on_event = collector
+        # ``run(on_event=collector)`` already fans out to the agent's existing
+        # callback and restores it afterwards. Installing collector here as
+        # ``self.on_event`` as well made run combine collector with itself and
+        # yielded every event twice.
         thread.start()
         try:
             while True:
@@ -658,7 +660,6 @@ class Agent:
                 if finished.is_set() and not queue:
                     break
         finally:
-            self.on_event = previous
             thread.join(timeout=1.0)
 
     def run(
@@ -899,7 +900,13 @@ class Agent:
             "options": {key: value for key, value in options.metadata.items()},
             "tool_stats": self.registry.stats(),
         }
-        result.events = list(self.events.history(limit=500))
+        # EventBus history is shared by reusable agents. A RunResult must carry
+        # only this run's trace; previously the second result also contained all
+        # events from the first. The terminal event is emitted below (and carries
+        # ``result`` itself), so it intentionally lives on the bus/stream rather
+        # than recursively inside ``result.events``.
+        result.events = [event for event in self.events.history(limit=500)
+                         if event.run_id == run_id]
         self.history = list(conversation)
         self.last_run = result
         if options.remember_outcome or (options.remember_outcome is None and

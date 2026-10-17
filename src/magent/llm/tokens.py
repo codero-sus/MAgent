@@ -334,7 +334,11 @@ def split_by_tokens(text: str, max_tokens: int, *, estimator: TokenEstimator | N
     from ..utils.text import chunk_text
 
     approx_chars = max(64, int(max_tokens * counter.chars_per_token * 0.9))
-    pieces = chunk_text(text, max_chars=approx_chars, overlap=max(0, approx_chars // 12))
+    # This helper is used to partition request text, so chunks must not duplicate
+    # content. ``chunk_text`` defaults are retrieval-oriented and overlap the
+    # last words of one chunk with the next; that made joining the result repeat
+    # boundary tokens (word10 word10, word19 word19, ...).
+    pieces = chunk_text(text, max_chars=approx_chars, overlap=0)
     out: list[str] = []
     for piece in pieces:
         while counter.estimate(piece) > max_tokens and len(piece) > approx_chars:

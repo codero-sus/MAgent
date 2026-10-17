@@ -720,8 +720,14 @@ class _FakeCortexHandler(BaseHTTPRequestHandler):
         model_id = str(payload.get("model") or EMBEDDING_MODEL)
         raw_input = payload.get("input")
         texts = raw_input if isinstance(raw_input, list) else [str(raw_input or "")]
+        try:
+            dimensions = int(payload.get("dimensions") or EMBEDDING_DIM)
+        except (TypeError, ValueError):
+            dimensions = EMBEDDING_DIM
+        dimensions = max(1, min(dimensions, 64))
         data = [
-            {"object": "embedding", "index": index, "embedding": fake_embedding(str(text), model_id)}
+            {"object": "embedding", "index": index,
+             "embedding": fake_embedding(str(text), model_id, dim=dimensions)}
             for index, text in enumerate(texts)
         ]
         self._send_json(

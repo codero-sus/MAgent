@@ -21,6 +21,11 @@ import traceback
 from types import ModuleType
 from typing import Any, Iterable
 
+from ...logging_ import get_logger
+
+LOGGER = get_logger("tools.builtin")
+"""Logger for tool module loading."""
+
 MODULES: tuple[str, ...] = (
     "fs",
     "shell",
@@ -50,19 +55,28 @@ _ERRORS: dict[str, str] = {}
 """Module name to error text for modules that failed to load."""
 
 
-def load_module(registry: Any, name: str, *, strict: bool = False) -> int:
+def load_module(registry: Any, name: str, *, strict: bool = False,
+                only: Iterable[str] | None = None) -> int:
     """Import one built-in module and register its tools.
 
     Args:
         registry: the :class:`~magent.tools.base.ToolRegistry` to fill
         name: module name inside this package, e.g. ``"fs"``
         strict: re-raise import failures instead of recording them
+        only: register just these tool names, ``None`` for the whole module
     """
     if name not in MODULES:
         raise KeyError(f"{name!r} is not a built-in tool module; known: {', '.join(MODULES)}")
     try:
         module: ModuleType = importlib.import_module(f"{__name__}.{name}")
-        count = int(module.load(registry))
+        if only:
+            wanted = {str(item) for item in only}
+            registry.register_all([item.tool for item in getattr(module, "TOOLS", [])
+                                   if item.tool.name in wanted])
+            count = sum(1 for item in getattr(module, "TOOLS", [])
+                        if item.tool.name in wanted)
+        else:
+            count = int(module.load(registry))
     except Exception as exc:  # noqa: BLE001 - one bad module must not kill the agent
         if strict:
             raise
@@ -82,14 +96,66 @@ def load_all(registry: Any, *, include: Iterable[str] | None = None,
         exclude: skip these modules
         strict: propagate import errors instead of recording them
     """
-    wanted = {name for name in include} if include else set(MODULES)
-    blocked = {name for name in (exclude or ())}
+    blocked = {str(name) for name in (exclude or ())}
+    if not include:
+        return sum(load_module(registry, name, strict=strict)
+                   for name in MODULES if name not in blocked)
+
+    # ``include`` accepts module names *and* tool names. Silently registering
+    # nothing when handed a tool name - the natural thing to write, since tool
+    # names are what the agent and the docs talk about - produces an empty
+    # registry and a confusing "unknown tool" failure much later, so both forms
+    # resolve here and anything unrecognized is reported.
+    index = tool_module_index()
+    whole: set[str] = set()
+    filters: dict[str, set[str]] = {}
+    unknown: list[str] = []
+    for raw in include:
+        name = str(raw)
+        if name in MODULES:
+            whole.add(name)
+        elif name in index:
+            filters.setdefault(index[name], set()).add(name)
+        else:
+            unknown.append(name)
+    if unknown:
+        message = (f"unknown tool or module name(s): {', '.join(sorted(unknown))}")
+        if strict:
+            raise KeyError(message)
+        LOGGER.warning("%s", message)
+        _ERRORS["include"] = message
     total = 0
     for name in MODULES:
-        if name not in wanted or name in blocked:
+        if name in blocked:
             continue
-        total += load_module(registry, name, strict=strict)
+        if name in whole:
+            total += load_module(registry, name, strict=strict)
+        elif name in filters:
+            total += load_module(registry, name, strict=strict, only=filters[name])
     return total
+
+
+_TOOL_MODULES: dict[str, str] = {}
+
+
+def tool_module_index(*, refresh: bool = False) -> dict[str, str]:
+    """Map every built-in tool name to the module that provides it.
+
+    The mapping is built once by importing the modules, which is cheap compared
+    with the alternative of failing to resolve a tool name at all.
+
+    Args:
+        refresh: rebuild even if a cached mapping exists
+    """
+    if _TOOL_MODULES and not refresh:
+        return dict(_TOOL_MODULES)
+    for name in MODULES:
+        try:
+            for item in module_tools(name):
+                _TOOL_MODULES[item.tool.name] = name
+        except Exception:  # noqa: BLE001 - discovery is best effort
+            continue
+    return dict(_TOOL_MODULES)
 
 
 def load_errors() -> dict[str, str]:
@@ -154,5 +220,6 @@ __all__ = [
     "load_errors",
     "load_module",
     "module_tools",
+    "tool_module_index",
     "tools_by_category",
 ]

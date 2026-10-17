@@ -486,10 +486,33 @@ class UserAbortError(CancelledError):
     code = "user_abort"
 
 
+class ConcurrencyError(MAgentError):
+    """Base class for failures in parallel execution."""
+
+    code = "concurrency_error"
+
+
+class PoolTimeoutError(ConcurrencyError):
+    """Raised when a parallel pass exceeds its overall deadline."""
+
+    code = "pool_timeout"
+    retryable = True
+
+
+class PoolExhaustedError(ConcurrencyError):
+    """Raised when a bounded pool refuses work because every slot is busy."""
+
+    code = "pool_exhausted"
+    retryable = True
+
+
 ERROR_REGISTRY: dict[str, type[MAgentError]] = {
     cls.code: cls
     for cls in (
         MAgentError,
+        ConcurrencyError,
+        PoolTimeoutError,
+        PoolExhaustedError,
         ConfigError,
         ConfigFileNotFound,
         ConfigValidationError,
@@ -593,6 +616,7 @@ __all__ = [
     "ConfigError",
     "ConfigFileNotFound",
     "ConfigValidationError",
+    "ConcurrencyError",
     "ConnectionError_",
     "ContentBlockedError",
     "ERROR_REGISTRY",
@@ -609,6 +633,8 @@ __all__ = [
     "NotFoundError",
     "PayloadTooLargeError",
     "PermissionDeniedError",
+    "PoolExhaustedError",
+    "PoolTimeoutError",
     "PlanError",
     "PluginError",
     "PluginManifestError",

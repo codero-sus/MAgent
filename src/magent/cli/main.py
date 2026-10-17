@@ -34,6 +34,7 @@ from .args import (
 )
 from .commands import cortex as cortex_cmd
 from .commands import doctor as doctor_cmd
+from .commands import eval_cmd
 from .commands import memory as memory_cmd
 from .commands import misc as misc_cmd
 from .commands import rag as rag_cmd
@@ -60,12 +61,13 @@ for one command's options.
 EPILOG = """\
 examples:
   magent run "summarize the README and list the risks"
-  magent run --tools read_file,grep -f task.md --format json
+  magent run --tools read_file,grep --file task.md --format json
   magent chat --resume
   magent rag ingest docs --save .magent/index.json
   magent rag --index .magent/index.json ask "how do approvals work?" --check
   magent tools list --max-risk read
   magent cortex models
+  magent eval run --dataset builtin --fail-below 0.6
   magent doctor --strict
 
 Every command accepts the global options below; -s key=value overrides one
@@ -82,6 +84,7 @@ COMMAND_MODULES: tuple[Any, ...] = (
     memory_cmd,
     rag_cmd,
     sessions_cmd,
+    eval_cmd,
     misc_cmd,
 )
 """Modules whose ``register`` adds subcommands, in help order."""

@@ -16,15 +16,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import config_cmd, cortex, doctor, memory, misc, rag, run, sessions, tools
+from . import (config_cmd, cortex, doctor, eval_cmd, memory, misc, rag, run,
+               sessions, tools)
 
 GROUPS: tuple[str, ...] = (
     "run", "chat", "tools", "config", "doctor", "version",
-    "cortex", "memory", "rag", "sessions", "improvements",
+    "cortex", "memory", "rag", "sessions", "eval", "improvements",
 )
 """Command names this package registers, in help order."""
 
-MODULES: tuple[Any, ...] = (run, tools, config_cmd, doctor, cortex, memory, rag, sessions, misc)
+MODULES: tuple[Any, ...] = (run, tools, config_cmd, doctor, cortex, memory, rag,
+                            sessions, eval_cmd, misc)
 """Command modules, in registration order."""
 
 

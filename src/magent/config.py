@@ -17,11 +17,10 @@ resolved through :mod:`magent.secrets` and are never written back to disk.
 
 from __future__ import annotations
 
-import copy
 import os
 import sys
 import tomllib
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -53,26 +52,33 @@ def system_config_dir() -> Path:
 
 
 def user_config_dir() -> Path:
-    """Return the per-user configuration directory."""
-    if sys.platform == "win32":
-        base = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
-        return Path(base) / "magent"
-    return Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "magent"
+    """Return the per-user configuration directory.
+
+    Delegates to :func:`magent.paths.config_dir` so ``MAGENT_HOME`` and
+    ``MAGENT_CONFIG_DIR`` move the configuration along with everything else.
+    """
+    from .paths import config_dir
+
+    return config_dir()
 
 
 def user_data_dir() -> Path:
-    """Return the per-user data directory for caches, sessions, and stores."""
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
-        return Path(base) / "magent"
-    return Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "magent"
+    """Return the per-user data directory for sessions, memories and plugins.
+
+    Delegates to :func:`magent.paths.data_dir`, so ``MAGENT_DATA_DIR`` and
+    ``MAGENT_HOME`` relocate the configuration defaults and the rest of the
+    application together.
+    """
+    from .paths import data_dir
+
+    return data_dir()
 
 
 def user_cache_dir() -> Path:
-    """Return the per-user cache directory."""
-    if sys.platform == "win32":
-        return user_data_dir() / "cache"
-    return Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "magent"
+    """Return the per-user cache directory for response and embedding caches."""
+    from .paths import cache_dir
+
+    return cache_dir()
 
 
 def default_config_paths() -> list[Path]:
@@ -690,18 +696,8 @@ class Config:
         return "\n".join(lines)
 
     def clone(self, **overrides: Any) -> Config:
-        """Return an independent copy with selected top-level keys replaced.
-
-        A shallow dataclass ``replace`` is not sufficient here: section objects
-        contain mutable lists and dictionaries, and callers clone precisely so
-        they can alter a policy without mutating the process-wide configuration.
-        """
-        cloned = copy.deepcopy(self)
-        for name, value in overrides.items():
-            if not hasattr(cloned, name):
-                raise ConfigError(f"Unknown top-level configuration key {name!r}")
-            setattr(cloned, name, value)
-        return cloned
+        """Return a copy with selected top-level keys replaced."""
+        return replace(self, **overrides)
 
     def section(self, name: str) -> Any:
         """Return one configuration section by name."""
@@ -922,13 +918,7 @@ def build_config_data(
 
 
 def config_from_dict(data: dict[str, Any]) -> Config:
-    """Build a :class:`Config` while preserving extension-owned settings.
-
-    Unknown fields inside a known section are grouped under
-    ``extra['unknown_keys']``. Entirely unknown top-level tables are copied into
-    :attr:`Config.extra` under their original name, which lets plugins keep
-    configuration beside MAgent's own tables without the core interpreting it.
-    """
+    """Build a :class:`Config` from a raw mapping, ignoring unknown keys."""
     config = Config()
     unknown: dict[str, Any] = {}
     for name, section_type in SECTION_TYPES.items():
@@ -938,19 +928,11 @@ def config_from_dict(data: dict[str, Any]) -> Config:
         section = getattr(config, name)
         for key, value in raw.items():
             if not hasattr(section, key):
-                unknown.setdefault(name, {})[key] = copy.deepcopy(value)
+                unknown.setdefault(name, {})[key] = value
                 continue
             current = getattr(section, key)
             setattr(section, key, _coerce(value, None, current))
     config.profile = str(data.get("profile", "default"))
-    supplied_extra = data.get("extra")
-    if isinstance(supplied_extra, dict):
-        config.extra.update(copy.deepcopy(supplied_extra))
-    metadata = {"profile", "profiles", "sources", "config_path", "data_dir", "cache_dir",
-                "extra"}
-    for name, value in data.items():
-        if name not in SECTION_TYPES and name not in metadata:
-            config.extra[name] = copy.deepcopy(value)
     if unknown:
         config.extra["unknown_keys"] = unknown
     return config

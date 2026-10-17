@@ -179,12 +179,28 @@ def colorize(
     *styles: str,
     enabled: bool | None = None,
 ) -> str:
-    """Wrap ``text`` in ANSI styles, or return it plain when disabled."""
+    """Wrap ``text`` in ANSI styles, or return it plain when disabled.
+
+    A style may be a raw escape sequence (``ANSI.RED``) or a :data:`THEME` name
+    such as ``"error"``.  Anything else is dropped instead of being emitted: a
+    typo used to render the style name itself into the output, which looked like
+    a formatting bug in the text rather than in the call.
+    """
     if enabled is None:
         enabled = supports_color()
     if not enabled or not styles or not text:
         return text
-    return f"{''.join(styles)}{text}{ANSI.RESET}"
+    resolved: list[str] = []
+    for style in styles:
+        if not style:
+            continue
+        if style.startswith("\x1b"):
+            resolved.append(style)
+        elif style in THEME:
+            resolved.append(THEME[style])
+    if not resolved:
+        return text
+    return f"{''.join(resolved)}{text}{ANSI.RESET}"
 
 
 def themed(text: str, name: str, *, enabled: bool | None = None) -> str:

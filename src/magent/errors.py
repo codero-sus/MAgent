@@ -467,6 +467,53 @@ class PluginSecurityError(PluginError):
     retryable = False
 
 
+class SkillError(MAgentError):
+    """Base class for skill loading and selection failures."""
+
+    code = "skill_error"
+
+
+class SkillNotFoundError(SkillError):
+    """Raised when a requested skill is not in the library."""
+
+    code = "skill_not_found"
+    retryable = False
+
+
+class SkillFormatError(SkillError):
+    """Raised when a skill file cannot be parsed."""
+
+    code = "skill_format_invalid"
+    retryable = False
+
+
+class EvalError(MAgentError):
+    """Base class for evaluation failures."""
+
+    code = "eval_error"
+
+
+class DatasetError(EvalError):
+    """Raised when an evaluation dataset cannot be loaded."""
+
+    code = "eval_dataset_invalid"
+    retryable = False
+
+
+class MetricError(EvalError):
+    """Raised when a metric is unknown or misconfigured."""
+
+    code = "eval_metric_invalid"
+    retryable = False
+
+
+class EvalThresholdError(EvalError):
+    """Raised when an evaluation run scores below the required threshold."""
+
+    code = "eval_threshold_not_met"
+    retryable = False
+
+
 class ServerError_(MAgentError):
     """Base class for the embedded MAgent HTTP server."""
 
@@ -486,55 +533,10 @@ class UserAbortError(CancelledError):
     code = "user_abort"
 
 
-class EvalError(MAgentError):
-    """Base class for evaluation harness failures."""
-
-    code = "eval_error"
-
-
-class EvalDatasetError(EvalError):
-    """Raised when a dataset file is missing or malformed."""
-
-    code = "eval_dataset_error"
-
-
-class EvalThresholdError(EvalError):
-    """Raised when an evaluation run scores below its required threshold."""
-
-    code = "eval_threshold"
-    exit_code = 8
-
-
-class ConcurrencyError(MAgentError):
-    """Base class for failures in parallel execution."""
-
-    code = "concurrency_error"
-
-
-class PoolTimeoutError(ConcurrencyError):
-    """Raised when a parallel pass exceeds its overall deadline."""
-
-    code = "pool_timeout"
-    retryable = True
-
-
-class PoolExhaustedError(ConcurrencyError):
-    """Raised when a bounded pool refuses work because every slot is busy."""
-
-    code = "pool_exhausted"
-    retryable = True
-
-
 ERROR_REGISTRY: dict[str, type[MAgentError]] = {
     cls.code: cls
     for cls in (
         MAgentError,
-        ConcurrencyError,
-        EvalError,
-        EvalDatasetError,
-        EvalThresholdError,
-        PoolTimeoutError,
-        PoolExhaustedError,
         ConfigError,
         ConfigFileNotFound,
         ConfigValidationError,
@@ -587,6 +589,13 @@ ERROR_REGISTRY: dict[str, type[MAgentError]] = {
         PluginNotFoundError,
         PluginManifestError,
         PluginSecurityError,
+        SkillError,
+        SkillNotFoundError,
+        SkillFormatError,
+        EvalError,
+        DatasetError,
+        MetricError,
+        EvalThresholdError,
         ServerError_,
         CancelledError,
         UserAbortError,
@@ -638,11 +647,7 @@ __all__ = [
     "ConfigError",
     "ConfigFileNotFound",
     "ConfigValidationError",
-    "ConcurrencyError",
     "ConnectionError_",
-    "EvalDatasetError",
-    "EvalError",
-    "EvalThresholdError",
     "ContentBlockedError",
     "ERROR_REGISTRY",
     "EmbeddingError",
@@ -658,13 +663,18 @@ __all__ = [
     "NotFoundError",
     "PayloadTooLargeError",
     "PermissionDeniedError",
-    "PoolExhaustedError",
-    "PoolTimeoutError",
     "PlanError",
     "PluginError",
     "PluginManifestError",
     "PluginNotFoundError",
+    "DatasetError",
+    "EvalError",
+    "EvalThresholdError",
+    "MetricError",
     "PluginSecurityError",
+    "SkillError",
+    "SkillFormatError",
+    "SkillNotFoundError",
     "PolicyViolationError",
     "PromptInjectionError",
     "RateLimitedError",

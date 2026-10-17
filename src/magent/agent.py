@@ -24,6 +24,7 @@ transcript can be replayed or scored by the evaluation harness.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import time
@@ -300,7 +301,7 @@ class RunOptions:
     allow_network: bool | None = None
     dry_run: bool = False
     stream: bool = False
-    structured: dict[str, Any] | None = None
+    structured: bool | dict[str, Any] | None = None
     context_block: str = ""
     memory_block: str = ""
     examples_block: str = ""
@@ -389,7 +390,8 @@ class Agent:
         self.name = name
         self.logger = logger or LOGGER
         self.estimator = estimator or TokenEstimator()
-        self.events = events or EventBus()
+        # EventBus defines __len__, so an unused bus is falsy: compare with None.
+        self.events = events if events is not None else EventBus()
         self.on_event = on_event
         self.registry = registry if registry is not None else self._build_registry()
         resolved_workspace = Path(
@@ -519,24 +521,32 @@ class Agent:
         memory_block = options.memory_block
         if not memory_block and self.memory is not None:
             memory_block = self._memory_block()
-        return build_system_prompt(
-            agent_name=self.name,
-            tagline=DEFAULT_TAGLINE,
-            persona=persona,
-            backend_name=getattr(self.backend, "name", "local"),
-            model=options.model or self.model,
-            workspace=self.workspace,
-            registry=registry if registry is not None else self.registry,
-            context_block=options.context_block,
-            memory_block=memory_block,
-            task_block=options.task_block,
-            examples_block=options.examples_block,
-            extra_instructions=self.config.extra_instructions,
-            system_prompt_override=options.system or self.config.system_prompt,
-            include_files=options.include_files,
-            max_tokens=int(getattr(self.settings.model, "system_prompt_tokens", 0) or 0),
-            **self.prompt_defaults,
-        )
+        # Agent-level prompt defaults are the base; per-run options override
+        # them, except that an empty option keeps a non-empty default (that is
+        # what lets a preset supply examples without every call repeating them).
+        kwargs: dict[str, Any] = dict(self.prompt_defaults)
+        options_kwargs: dict[str, Any] = {
+            "agent_name": self.name,
+            "tagline": DEFAULT_TAGLINE,
+            "persona": persona,
+            "backend_name": getattr(self.backend, "name", "local"),
+            "model": options.model or self.model,
+            "workspace": self.workspace,
+            "registry": registry if registry is not None else self.registry,
+            "context_block": options.context_block,
+            "memory_block": memory_block,
+            "task_block": options.task_block,
+            "examples_block": options.examples_block,
+            "extra_instructions": self.config.extra_instructions,
+            "system_prompt_override": options.system or self.config.system_prompt,
+            "include_files": options.include_files,
+            "max_tokens": int(getattr(self.settings.model, "system_prompt_tokens", 0) or 0),
+        }
+        for key, value in options_kwargs.items():
+            if value == "" and isinstance(kwargs.get(key), str) and kwargs[key]:
+                continue
+            kwargs[key] = value
+        return build_system_prompt(**kwargs)
 
     def _memory_block(self, query: str = "") -> str:
         """Recall memories and render them as a prompt block."""
@@ -637,6 +647,9 @@ class Agent:
             try:
                 self.run(prompt, on_event=collector, **kwargs)
             except Exception as exc:  # noqa: BLE001 - surface failures as events
+                # ``run`` has already restored the agent's own callback, so the
+                # failure event is emitted (which publishes it to the bus) and
+                # then handed to the collector explicitly.
                 collector(self.emit(EventKind.RUN_FAILED, error=f"{type(exc).__name__}: {exc}"))
             finally:
                 finished.set()
@@ -644,10 +657,6 @@ class Agent:
                     condition.notify_all()
 
         thread = threading.Thread(target=worker, name=f"magent-{self.name}-stream", daemon=True)
-        # ``run(on_event=collector)`` already fans out to the agent's existing
-        # callback and restores it afterwards. Installing collector here as
-        # ``self.on_event`` as well made run combine collector with itself and
-        # yielded every event twice.
         thread.start()
         try:
             while True:
@@ -876,6 +885,11 @@ class Agent:
         except MaxIterationsError as exc:
             stop_reason = StopReason.MAX_ITERATIONS
             error_text = str(exc)
+        except StructuredOutputError:
+            # A caller that asked for a schema wants to know when the model could
+            # not satisfy it, so this one propagates instead of becoming a
+            # half-successful RunResult with ``structured=None``.
+            raise
         except (AgentError, ToolError) as exc:
             stop_reason = StopReason.ERROR
             error_text = f"{type(exc).__name__}: {exc}"
@@ -892,6 +906,8 @@ class Agent:
         result.metadata = {
             "mode": mode,
             "agent": self.name,
+            "prompt": prompt,
+            "session_id": options.session_id,
             "workspace": str(self.workspace),
             "plan": plan.to_dict() if plan else None,
             "tracker": tracker.snapshot(),
@@ -900,13 +916,6 @@ class Agent:
             "options": {key: value for key, value in options.metadata.items()},
             "tool_stats": self.registry.stats(),
         }
-        # EventBus history is shared by reusable agents. A RunResult must carry
-        # only this run's trace; previously the second result also contained all
-        # events from the first. The terminal event is emitted below (and carries
-        # ``result`` itself), so it intentionally lives on the bus/stream rather
-        # than recursively inside ``result.events``.
-        result.events = [event for event in self.events.history(limit=500)
-                         if event.run_id == run_id]
         self.history = list(conversation)
         self.last_run = result
         if options.remember_outcome or (options.remember_outcome is None and
@@ -921,6 +930,9 @@ class Agent:
                   output=ellipsize(result.output, 2000), steps=len(result.steps),
                   tool_calls=result.tool_call_count, usage=result.usage.to_dict(),
                   duration_ms=result.duration_ms, result=result)
+        # Captured after the terminal event so a consumer replaying
+        # ``result.events`` sees the run finish rather than a run that never did.
+        result.events = list(self.events.history(limit=500))
         return result
 
     def _finish_step(self, step: StepRecord, run_id: str) -> None:
@@ -1183,8 +1195,14 @@ class Agent:
 
     def _structured_output(self, text: str, options: RunOptions, conversation: list[Message],
                            run_id: str) -> Any:
-        """Parse and validate a structured response, repairing it once if needed."""
-        schema = options.structured or {}
+        """Parse and validate a structured response, repairing it once if needed.
+
+        ``structured=True`` asks for JSON without a schema; a dict is validated
+        against it.  Normalising here keeps the boolean form from reaching the
+        schema validator, which expects a mapping.
+        """
+        requested = options.structured
+        schema: dict[str, Any] = requested if isinstance(requested, dict) else {}
         parsed = parse_json_payload(text)
         error = "" if parsed is not None else "response did not contain parseable JSON"
         if parsed is not None and schema:
@@ -1451,15 +1469,30 @@ class Agent:
 # --------------------------------------------------------------------------- #
 
 
-def response_format_for(schema: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Convert a caller-supplied output schema into an OpenAI ``response_format``.
+def response_format_for(schema: Any) -> dict[str, Any] | None:
+    """Convert a caller-supplied output request into an OpenAI ``response_format``.
 
-    A bare JSON Schema is wrapped in the ``json_schema`` dialect; an already
-    dialect-shaped value (``{"type": "json_object"}``) is passed through, so
-    callers can use either form.
+    Accepted forms:
+
+    * ``None``/``False`` - no constraint;
+    * ``True`` - "reply with JSON", i.e. ``{"type": "json_object"}``.  Passing a
+      bool used to reach the schema branch and raise ``TypeError``, which made
+      the documented ``structured=True`` run option unusable;
+    * a JSON Schema - wrapped in the ``json_schema`` dialect;
+    * an already dialect-shaped value - passed through unchanged.
     """
-    if not schema:
+    if schema is None or schema is False:
         return None
+    if schema is True:
+        return {"type": "json_object"}
+    if isinstance(schema, str):
+        try:
+            parsed = json.loads(schema)
+        except ValueError:
+            return {"type": "json_object"}
+        return response_format_for(parsed)
+    if not isinstance(schema, dict):
+        return {"type": "json_object"}
     if "type" in schema and schema.get("type") in {"json_object", "json_schema", "text"}:
         if schema.get("type") == "json_schema" and "json_schema" in schema:
             return dict(schema)
@@ -1564,9 +1597,15 @@ def make_agent(backend: Any, **kwargs: Any) -> Agent:
     the agent constructor. This is the convenience entry point used by the CLI,
     the examples, and the test fixtures.
     """
-    agent_fields = {f.name for f in __import__("dataclasses").fields(AgentConfig)}
+    agent_fields = {field.name for field in dataclasses.fields(AgentConfig)}
     config_kwargs = {key: kwargs.pop(key) for key in list(kwargs) if key in agent_fields}
-    config = kwargs.pop("config", None) or AgentConfig(**config_kwargs)
+    supplied = kwargs.pop("config", None)
+    if supplied is not None:
+        for key, value in config_kwargs.items():
+            setattr(supplied, key, value)
+        config = supplied
+    else:
+        config = AgentConfig(**config_kwargs)
     return Agent(backend=backend, config=config, **kwargs)
 
 

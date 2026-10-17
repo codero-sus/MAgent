@@ -18,6 +18,7 @@ message can. Everything is audited.
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 from typing import Any
 
 from ..config import GuardrailsConfig
@@ -28,7 +29,7 @@ from .audit import AuditLog
 from .injection import InjectionScanner
 from .pii import PIIRules, PIIScanner
 from .policy import PolicyEngine, Rule
-from .verdict import Verdict, worst
+from .verdict import Finding, Verdict, worst
 
 LOGGER = get_logger("guardrails")
 """Logger for guardrail activity."""
@@ -38,6 +39,24 @@ MAX_SCANNED_CHARS = 200_000
 
 STAGES: tuple[str, ...] = ("prompt", "output", "tool", "tool_result", "url", "budget")
 """Stages a guardrail can be applied at."""
+
+
+def _redact_credentials(text: str, findings: Sequence[Finding]) -> tuple[str, int]:
+    """Replace credential-shaped spans with a marker.
+
+    Uses the scanner's own offsets, applied back-to-front so earlier spans keep
+    their positions, and only touches findings the scanner classified as a
+    credential probe.
+    """
+    targets = [item for item in findings
+               if item.category == "credential_probe" and item.start >= 0 and item.end > item.start]
+    if not targets:
+        return text, 0
+    out = text
+    for item in sorted(targets, key=lambda entry: entry.start, reverse=True):
+        label = item.metadata.get("kind") or "CREDENTIAL"
+        out = out[: item.start] + f"[REDACTED:{str(label).upper()}]" + out[item.end:]
+    return out, len(targets)
 
 
 class Guardrails:
@@ -152,13 +171,18 @@ class Guardrails:
         reason = (f"tool {tool or 'result'} returned text that looks like an injected "
                   f"instruction (score {report.score:.2f})")
         if action == "warn":
-            verdict = Verdict.allow(text or "", stage="tool_result")
-            verdict.action = "warn"
-            verdict.reason = reason
-            verdict.rule = rule
+            # A credential the scanner recognised is redacted even in warn mode:
+            # handing a live provider key back to the model is the leak this
+            # check exists to prevent, and the surrounding data stays intact.
+            redacted, removed = _redact_credentials(text or "", report.findings)
+            if removed:
+                reason += f" ({removed} credential(s) redacted)"
+            verdict = Verdict.rewrite(
+                redacted, action="warn", reason=reason, rule=rule, findings=report.findings,
+                stage="tool_result", metadata={"redacted": removed},
+            )
             verdict.severity = report.worst_severity
             verdict.score = report.score
-            verdict.findings = list(report.findings)
         elif action == "strip":
             verdict = Verdict.rewrite(
                 self.injection.sanitize(text or "", report=report),

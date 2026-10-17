@@ -1,722 +1,539 @@
-"""Loading plugins: discovery, permission checks, and isolation of failure.
+"""Plugin loading: discover, validate, import and register extensions.
 
-The loader's job is to make third-party code usable without making it trusted.
-Concretely:
+Plugins are ordinary Python packages or single-file modules in a plugin
+directory.  Each one declares a manifest and an entry module exposing either
 
-*discovery is explicit*
-    plugins are found only in configured directories, and a directory is scanned
-    for ``plugin.json`` rather than executing anything that happens to be there;
+``register(registry, context)``
+    the simple form - add tools and return names;
+``PLUGIN = {...}``
+    a declarative dict with ``tools``, ``hooks``, ``personas``, ``templates``,
+    ``skills`` and an optional ``setup(context)`` callable.
 
-*permissions gate registration*
-    a plugin that does not declare ``tools`` cannot register tools, and one that
-    declares a sensitive permission is skipped unless the operator allowed it;
-
-*integrity is checkable*
-    a manifest may pin a SHA-256 over the plugin's sources, and a mismatch is
-    refused rather than warned about;
-
-*failure is contained*
-    a plugin that raises during import is recorded with its traceback and every
-    other plugin still loads, so one broken install does not disable the agent.
+Loading is deliberately paranoid: the entry file must live inside the plugin
+directory (no path traversal), it must not exceed the size ceiling, the manifest
+must validate, and any exception during import or registration is captured on
+the :class:`LoadedPlugin` record instead of propagating.  ``strict=True`` turns
+those captures into exceptions, which is what the test suite and ``magent
+plugins check`` use.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
-import traceback
+import time
+import types
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
-from ..errors import PluginError, PluginManifestError, PluginNotFoundError, PluginSecurityError
+from ..errors import PluginError, PluginNotFoundError, PluginSecurityError
 from ..logging_ import get_logger
-from .hooks import HookRegistry, register_decorated
-from .manifest import (
-    MANIFEST_FILENAME,
-    PERMISSIONS,
-    SENSITIVE_PERMISSIONS,
-    PluginManifest,
-    example_manifest,
-)
+from ..utils.files import ensure_dir, human_size, iter_files
+from ..utils.text import slugify
+from .hooks import HookRegistry
+from .manifest import PluginManifest, manifest_for, verify_checksum
 
 LOGGER = get_logger("plugins.loader")
 """Logger for plugin loading."""
 
-PLUGIN_SUFFIXES: tuple[str, ...] = (".py",)
-"""Entry point file extensions that may be imported."""
+PLUGIN_DIRS: tuple[str, ...] = ("plugins", ".magent/plugins")
+"""Directory names searched inside a workspace."""
 
-DEFAULT_TIMEOUT = 30.0
-"""Ceiling on a single plugin's import, in seconds; advisory only."""
+MAX_ENTRY_BYTES = 2_000_000
+"""Refuse to import an entry file larger than this."""
 
 
 @dataclass(slots=True)
 class LoadedPlugin:
-    """A plugin that was imported successfully."""
+    """A plugin that was loaded, with everything it contributed."""
 
     manifest: PluginManifest
     module: Any = None
-    tools: list[Any] = field(default_factory=list)
-    hooks: int = 0
-    """Number of hooks this plugin attached.
-
-    A count, not a list: :attr:`tools` holds the registered ``Tool``
-    objects because callers inspect them, while hooks belong to the
-    :class:`~magent.plugins.hooks.HookRegistry` and are read back from
-    there. Asking this field for the registrations is a type error.
-    """
-    load_ms: float = 0.0
-    path: str = ""
+    tools: list[str] = field(default_factory=list)
+    hooks: list[str] = field(default_factory=list)
+    personas: list[str] = field(default_factory=list)
+    templates: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    seconds: float = 0.0
+    ok: bool = False
     error: str = ""
-    skipped: str = ""
-    checksum_ok: bool = True
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def name(self) -> str:
-        """The plugin's declared name."""
+        """Plugin name."""
         return self.manifest.name
 
     @property
-    def ok(self) -> bool:
-        """Whether the plugin loaded and was not skipped."""
-        return not self.error and not self.skipped
+    def contributions(self) -> int:
+        """How many things the plugin registered."""
+        return (len(self.tools) + len(self.hooks) + len(self.personas) + len(self.templates)
+                + len(self.skills))
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serialized form."""
+        """Serialise the record."""
         return {
-            "name": self.manifest.name,
+            "name": self.name,
             "version": self.manifest.version,
-            "summary": self.manifest.summary,
-            "path": self.path,
-            "permissions": list(self.manifest.permissions),
-            "tools": [getattr(item, "name", str(item)) for item in self.tools],
-            "hooks": self.hooks,
-            "load_ms": round(self.load_ms, 3),
+            "path": self.manifest.path,
             "ok": self.ok,
             "error": self.error,
-            "skipped": self.skipped,
-            "checksum_ok": self.checksum_ok,
+            "warnings": list(self.warnings),
+            "tools": list(self.tools),
+            "hooks": list(self.hooks),
+            "personas": list(self.personas),
+            "templates": list(self.templates),
+            "skills": list(self.skills),
+            "contributions": self.contributions,
+            "seconds": round(self.seconds, 5),
+            "manifest": self.manifest.to_dict(),
         }
 
-    def describe(self) -> str:
-        """Return a one-line summary for listings."""
-        state = "loaded" if self.ok else (f"skipped: {self.skipped}" if self.skipped
-                                          else f"failed: {self.error}")
-        tools = len(self.tools)
-        return (f"{self.manifest.name} {self.manifest.version} - {state} "
-                f"({tools} tool(s), {self.hooks} hook(s), {self.load_ms:.0f}ms)")
-
-
-@dataclass(slots=True)
-class LoadReport:
-    """What one discovery-and-load pass did."""
-
-    plugins: list[LoadedPlugin] = field(default_factory=list)
-    directories: list[str] = field(default_factory=list)
-    errors: dict[str, str] = field(default_factory=dict)
-    duration_ms: float = 0.0
-
-    @property
-    def loaded(self) -> list[LoadedPlugin]:
-        """Plugins that loaded successfully."""
-        return [item for item in self.plugins if item.ok]
-
-    @property
-    def failed(self) -> list[LoadedPlugin]:
-        """Plugins that raised during load."""
-        return [item for item in self.plugins if item.error]
-
-    @property
-    def skipped(self) -> list[LoadedPlugin]:
-        """Plugins refused on policy grounds."""
-        return [item for item in self.plugins if item.skipped]
-
-    @property
-    def tool_count(self) -> int:
-        """Total tools contributed by loaded plugins."""
-        return sum(len(item.tools) for item in self.loaded)
-
-    def by_name(self, name: str) -> LoadedPlugin | None:
-        """Return one plugin by name."""
-        return next((item for item in self.plugins if item.name == name), None)
-
-    def names(self) -> list[str]:
-        """Return every plugin name seen, loaded or not."""
-        return [item.name for item in self.plugins]
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return the serialized report."""
-        return {
-            "directories": self.directories,
-            "found": len(self.plugins),
-            "loaded": len(self.loaded),
-            "failed": len(self.failed),
-            "skipped": len(self.skipped),
-            "tools": self.tool_count,
-            "duration_ms": round(self.duration_ms, 3),
-            "plugins": [item.to_dict() for item in self.plugins],
-            "errors": self.errors,
-        }
-
-    def render(self, *, width: int = 100) -> str:
-        """Return a text summary of the pass."""
-        lines = [f"plugins: {len(self.loaded)} loaded, {len(self.skipped)} skipped, "
-                 f"{len(self.failed)} failed, {self.tool_count} tools"]
-        for plugin in self.plugins:
-            lines.append(f"  {plugin.describe()}"[: max(40, width)])
-        return "\n".join(lines)
+    def summary_line(self) -> str:
+        """One-line status for ``magent plugins``."""
+        state = "ok" if self.ok else f"FAILED: {self.error}"
+        return (f"{self.name} {self.manifest.version} - {self.contributions} contributions "
+                f"({state})")
 
 
 class PluginLoader:
-    """Discovers, validates, and loads plugins."""
+    """Discover and load plugins from one or more directories."""
 
-    def __init__(self, directories: Sequence[str | Path] = (), *,
-                 allow_sensitive: Sequence[str] = (), deny: Sequence[str] = (),
-                 allow: Sequence[str] | None = None, registry: Any = None,
-                 hooks: HookRegistry | None = None, verify_checksums: bool = True,
-                 strict: bool = False) -> None:
+    def __init__(self, *, registry: Any = None, hooks: HookRegistry | None = None,
+                 allowed: Sequence[str] = (), blocked: Sequence[str] = (),
+                 strict: bool = False, max_entry_bytes: int = MAX_ENTRY_BYTES,
+                 check_checksums: bool = False) -> None:
         """Configure the loader.
 
         Args:
-            directories: where to look for plugin folders
-            allow_sensitive: sensitive permissions the operator has approved
-            deny: plugin names that must never load
-            allow: when set, only these plugin names may load
-            registry: tool registry plugins may register into
-            hooks: hook registry plugins may attach to
-            verify_checksums: refuse a plugin whose checksum does not match
-            strict: re-raise load failures instead of recording them
+            registry: tool registry receiving plugin tools
+            hooks: hook registry receiving plugin hooks
+            allowed: when non-empty, only these plugin names load
+            blocked: plugin names that never load
+            strict: raise instead of recording load failures
+            max_entry_bytes: refuse larger entry files
+            check_checksums: verify declared entry checksums
         """
-        self.directories = [Path(item).expanduser() for item in directories if str(item)]
-        self.allow_sensitive = {str(item).strip().lower() for item in allow_sensitive}
-        self.deny = {str(item).strip() for item in deny if str(item).strip()}
-        self.allow = {str(item).strip() for item in allow} if allow is not None else None
         self.registry = registry
         self.hooks = hooks if hooks is not None else HookRegistry()
-        self.verify_checksums = bool(verify_checksums)
+        self.allowed = {str(item) for item in allowed}
+        self.blocked = {str(item) for item in blocked}
         self.strict = bool(strict)
-        self.last_report: LoadReport | None = None
-        # Per-instance, not a class attribute: a shared mutable dict would let
-        # one loader report another loader's failures.
-        self.errors: dict[str, str] = {}
-
-    def with_policy(self, *, allow_sensitive: Sequence[str] | None = None,
-                    deny: Sequence[str] | None = None,
-                    allow: Sequence[str] | None = None,
-                    directories: Sequence[str | Path] | None = None,
-                    verify_checksums: bool | None = None,
-                    strict: bool | None = None) -> "PluginLoader":
-        """Return a copy of this loader with a different policy.
-
-        The registries are shared, so a loader derived for one command still
-        registers tools into the same catalogue. Copying rather than mutating
-        means a caller can try a stricter policy without losing the original.
-
-        Args:
-            allow_sensitive: sensitive permissions to approve, replacing the set
-            deny: plugin names to refuse, replacing the set
-            allow: when set, only these plugin names may load
-            directories: extra directories to scan, appended to the current ones
-            verify_checksums: whether to enforce manifest checksums
-            strict: whether to re-raise load failures
-        """
-        copy = PluginLoader(
-            list(self.directories) + [Path(item).expanduser()
-                                      for item in (directories or ()) if str(item)],
-            allow_sensitive=self.allow_sensitive if allow_sensitive is None
-            else {str(item).strip().lower() for item in allow_sensitive},
-            deny=self.deny if deny is None
-            else {str(item).strip() for item in deny if str(item).strip()},
-            allow=self.allow if allow is None else list(allow),
-            registry=self.registry,
-            hooks=self.hooks,
-            verify_checksums=self.verify_checksums if verify_checksums is None
-            else bool(verify_checksums),
-            strict=self.strict if strict is None else bool(strict),
-        )
-        return copy
+        self.max_entry_bytes = max(1_024, int(max_entry_bytes))
+        self.check_checksums = bool(check_checksums)
+        self.loaded: dict[str, LoadedPlugin] = {}
+        self.paths: list[Path] = []
 
     # -- discovery -----------------------------------------------------------
 
-    def discover(self) -> list[PluginManifest]:
-        """Find and validate every manifest in the configured directories.
+    def discover(self, *roots: str | Path) -> list[PluginManifest]:
+        """Find plugin manifests under the given roots.
 
-        A directory whose manifest is invalid is recorded and skipped rather
-        than aborting discovery, so one broken plugin does not hide the rest.
-
-        Returns:
-            Validated manifests, in a stable name order.
+        A root may be a plugin directory itself, a directory containing several
+        plugin directories, or a path to a manifest file.
         """
         found: list[PluginManifest] = []
-        seen: set[str] = set()
-        for directory in self.directories:
-            if not directory.exists():
-                LOGGER.debug("plugin directory does not exist: %s", directory)
+        for root in roots:
+            if not root:
                 continue
-            for manifest_path in sorted(directory.rglob(MANIFEST_FILENAME)):
-                if any(part.startswith(".") or part == "__pycache__"
-                       for part in manifest_path.parts):
-                    continue
+            base = Path(root).expanduser()
+            self.paths.append(base)
+            if not base.exists():
+                continue
+            candidates: list[Path] = []
+            if base.is_file():
+                candidates.append(base.parent)
+            else:
+                if (base / "plugin.json").is_file() or (base / "__init__.py").is_file() \
+                        or any(base.glob("*.py")):
+                    candidates.append(base)
+                for child in sorted(base.iterdir()):
+                    if child.is_dir() and not child.name.startswith((".", "__")):
+                        if (child / "plugin.json").is_file() or (child / "__init__.py").is_file() \
+                                or any(child.glob("*.py")):
+                            candidates.append(child)
+                        elif (child / "plugins").is_dir():
+                            candidates.append(child / "plugins")
+            for candidate in candidates:
                 try:
-                    manifest = PluginManifest.load(manifest_path.parent)
-                except PluginManifestError as exc:
-                    LOGGER.warning("skipping %s: %s", manifest_path.parent, exc)
+                    manifest = manifest_for(candidate)
+                except PluginError as exc:
+                    LOGGER.debug("skipping %s: %s", candidate, exc)
                     continue
-                if manifest.name in seen:
-                    LOGGER.warning("duplicate plugin name %r at %s; keeping the first",
-                                   manifest.name, manifest_path.parent)
+                if manifest.name in {item.name for item in found}:
                     continue
-                seen.add(manifest.name)
                 found.append(manifest)
-        found.sort(key=lambda item: item.name)
         return found
 
-    # -- policy --------------------------------------------------------------
-
-    def check_permission(self, manifest: PluginManifest) -> str:
-        """Return a reason to refuse a plugin, or an empty string to allow it.
-
-        Args:
-            manifest: the plugin's declaration
-
-        Raises:
-            PluginSecurityError: in strict mode, instead of returning a reason
-        """
-        if manifest.name in self.deny:
-            reason = "plugin is on the deny list"
-            return self._refuse(manifest, reason)
-        if self.allow is not None and manifest.name not in self.allow:
-            reason = "plugin is not on the allow list"
-            return self._refuse(manifest, reason)
-        if not manifest.enabled:
-            return self._refuse(manifest, "manifest declares enabled=false")
-        unknown = [item for item in manifest.permissions if item not in PERMISSIONS]
-        if unknown:
-            return self._refuse(manifest, f"unknown permission(s): {', '.join(unknown)}")
-        blocked = [item for item in manifest.sensitive_permissions
-                   if item not in self.allow_sensitive]
-        if blocked:
-            return self._refuse(
-                manifest,
-                f"needs sensitive permission(s) {', '.join(sorted(blocked))}; "
-                f"approve with allow_sensitive",
-            )
-        if self.verify_checksums and not manifest.verify_checksum():
-            return self._refuse(manifest, "checksum does not match the manifest")
-        entry = manifest.entry_path()
-        if entry.suffix not in PLUGIN_SUFFIXES:
-            return self._refuse(manifest, f"entrypoint must be one of {PLUGIN_SUFFIXES}")
-        if not entry.exists():
-            return self._refuse(manifest, f"entrypoint {manifest.entrypoint} does not exist")
-        return ""
-
-    def _refuse(self, manifest: PluginManifest, reason: str) -> str:
-        """Record a refusal, raising in strict mode."""
-        LOGGER.warning("refusing plugin %s: %s", manifest.name, reason)
-        if self.strict:
-            raise PluginSecurityError(f"plugin {manifest.name!r} refused: {reason}",
-                                      details={"plugin": manifest.name, "reason": reason})
-        return reason
+    def available(self, *roots: str | Path) -> list[PluginManifest]:
+        """Manifests that pass validation, regardless of the allow/block lists."""
+        return [manifest for manifest in self.discover(*roots) if manifest.is_valid()]
 
     # -- loading -------------------------------------------------------------
 
-    def load(self, manifest: PluginManifest) -> LoadedPlugin:
-        """Import one plugin and register what it declares.
-
-        Args:
-            manifest: a validated manifest
-
-        Returns:
-            A :class:`LoadedPlugin` recording success, refusal, or the error
-        """
-        import time
-
+    def load_directory(self, directory: str | Path) -> LoadedPlugin:
+        """Load one plugin directory, capturing any failure on the record."""
         started = time.perf_counter()
-        record = LoadedPlugin(manifest=manifest, path=str(Path(manifest.path).expanduser()))
-        reason = self.check_permission(manifest)
-        if reason:
-            record.skipped = reason
-            record.load_ms = (time.perf_counter() - started) * 1000.0
-            return record
-        if self.verify_checksums:
-            record.checksum_ok = manifest.verify_checksum()
+        manifest = manifest_for(directory)
+        record = LoadedPlugin(manifest=manifest)
         try:
-            module = self._import(manifest)
-        except Exception as exc:  # noqa: BLE001 - contained per plugin
+            self._check(manifest, directory)
+            module = self._import(manifest, directory)
+            record.module = module
+            self._register(module, manifest, record)
+            record.ok = True
+        except Exception as exc:  # noqa: BLE001 - a broken plugin is data, not a crash
+            record.ok = False
             record.error = f"{type(exc).__name__}: {exc}"
-            record.load_ms = (time.perf_counter() - started) * 1000.0
-            self._record_error(manifest.name, exc)
+            LOGGER.warning("plugin %s failed to load: %s", manifest.name, exc)
             if self.strict:
-                raise PluginError(f"plugin {manifest.name!r} failed to load: {exc}",
-                                  details={"plugin": manifest.name}) from exc
-            return record
-
-        record.module = module
-        record.tools = self._register_tools(manifest, module)
-        record.hooks = self._register_hooks(manifest, module)
-        self._call_lifecycle(module, "register", manifest=manifest, registry=self.registry,
-                             hooks=self.hooks)
-        record.load_ms = (time.perf_counter() - started) * 1000.0
-        LOGGER.info("loaded plugin %s %s (%d tools, %d hooks, %.0fms)", manifest.name,
-                    manifest.version, len(record.tools), record.hooks, record.load_ms)
+                raise
+        record.seconds = time.perf_counter() - started
+        self.loaded[manifest.name] = record
         return record
 
-    def _import(self, manifest: PluginManifest) -> ModuleType:
-        """Import a plugin's entry point under a namespaced module name."""
-        entry = manifest.entry_path()
-        module_name = f"magent_plugin_{manifest.name}"
-        existing = sys.modules.get(module_name)
-        if existing is not None:
-            existing_file = Path(str(getattr(existing, "__file__", "") or "")).resolve()
-            if existing_file == entry.resolve():
-                return existing
-            # Reusing the old module would execute neither the newly inspected
-            # file nor its checksum. Replacing it is unsafe too because tools
-            # already registered from the old module would remain live. Require
-            # an explicit unload before a same-name plugin can move locations.
+    def load_all(self, *roots: str | Path, include_disabled: bool = False) -> list[LoadedPlugin]:
+        """Discover and load every plugin under the given roots."""
+        records: list[LoadedPlugin] = []
+        for manifest in self.discover(*roots):
+            if manifest.name in self.blocked:
+                LOGGER.debug("plugin %s is blocked", manifest.name)
+                continue
+            if self.allowed and manifest.name not in self.allowed:
+                continue
+            if not manifest.enabled and not include_disabled:
+                continue
+            records.append(self.load_directory(manifest.path or Path(manifest.name)))
+        return records
+
+    def load_named(self, name: str, *roots: str | Path) -> LoadedPlugin:
+        """Load one plugin by name.
+
+        Raises:
+            PluginNotFoundError: when no plugin with that name is discovered
+        """
+        for manifest in self.discover(*roots):
+            if manifest.name == name:
+                return self.load_directory(manifest.path or Path(name))
+        raise PluginNotFoundError(f"plugin {name!r} not found",
+                                  details={"searched": [str(path) for path in self.paths],
+                                           "known": sorted(self.loaded)})
+
+    # -- internals -----------------------------------------------------------
+
+    def _check(self, manifest: PluginManifest, directory: str | Path) -> None:
+        """Validate a manifest and the entry file before importing."""
+        problems = manifest.validate()
+        if problems:
+            raise PluginError(f"plugin {manifest.name!r} is invalid: {'; '.join(problems)}",
+                              details={"manifest": manifest.to_dict()})
+        root = Path(directory).expanduser()
+        target = root if root.is_file() else root / manifest.entry
+        if root.is_dir():
+            try:
+                resolved = target.resolve()
+                resolved.relative_to(root.resolve())
+            except ValueError as exc:
+                raise PluginSecurityError(
+                    f"plugin {manifest.name!r} entry escapes its directory",
+                    details={"entry": manifest.entry, "root": str(root)},
+                ) from exc
+        if not target.exists():
+            raise PluginError(f"plugin {manifest.name!r} entry {manifest.entry!r} not found",
+                              details={"path": str(target)})
+        size = target.stat().st_size
+        if size > self.max_entry_bytes:
             raise PluginSecurityError(
-                f"plugin {manifest.name!r} is already loaded from {existing_file}; "
-                f"refusing a second entrypoint at {entry.resolve()}",
-                details={"plugin": manifest.name, "loaded": str(existing_file),
-                         "requested": str(entry.resolve())},
+                f"plugin {manifest.name!r} entry is {human_size(size)}, over the "
+                f"{human_size(self.max_entry_bytes)} limit",
+                details={"path": str(target), "bytes": size},
             )
-        spec = importlib.util.spec_from_file_location(module_name, entry)
+        if self.check_checksums and not verify_checksum(manifest):
+            raise PluginSecurityError(f"plugin {manifest.name!r} checksum mismatch",
+                                      details={"entry": manifest.entry,
+                                               "expected": manifest.checksum})
+
+    def _import(self, manifest: PluginManifest, directory: str | Path) -> Any:
+        """Import the plugin's entry module under a private name."""
+        root = Path(directory).expanduser()
+        if root.is_file():
+            target = root
+        elif (root / "__init__.py").is_file() and manifest.entry in {"", "__init__.py"}:
+            target = root / "__init__.py"
+        else:
+            target = root / manifest.entry
+        module_name = f"magent_plugin_{slugify(manifest.name).replace(chr(45), chr(95)) or 'plugin'}"
+        spec = importlib.util.spec_from_file_location(module_name, target)
         if spec is None or spec.loader is None:
-            raise PluginError(f"cannot create an import spec for {entry}",
-                              details={"plugin": manifest.name, "entrypoint": str(entry)})
+            raise PluginError(f"cannot import plugin {manifest.name!r}",
+                              details={"path": str(target)})
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         try:
             spec.loader.exec_module(module)
-        except BaseException:
-            # A half-initialized module must not linger: a later import would
-            # reuse it and report success for code that never ran.
+        except Exception:
             sys.modules.pop(module_name, None)
             raise
         return module
 
-    def _register_tools(self, manifest: PluginManifest, module: ModuleType) -> list[Any]:
-        """Register the plugin's tools, honouring its declared permission."""
-        if not manifest.grants("tools"):
-            declared = getattr(module, "TOOLS", None)
-            if declared:
-                LOGGER.warning("plugin %s defines TOOLS but did not declare the "
-                               "'tools' permission; not registering", manifest.name)
-            return []
-        if self.registry is None:
-            return []
-        registered: list[Any] = []
-        declared_names = set(manifest.tools)
-        for item in list(getattr(module, "TOOLS", []) or []):
-            tool = getattr(item, "tool", item)
-            spec = getattr(tool, "spec", None)
-            name = getattr(spec, "name", "") if spec is not None else ""
-            if declared_names and name and name not in declared_names:
-                LOGGER.warning("plugin %s tried to register undeclared tool %r; refused",
-                               manifest.name, name)
+    def _register(self, module: Any, manifest: PluginManifest, record: LoadedPlugin) -> None:
+        """Apply whatever registration style the plugin uses."""
+        context = {
+            "name": manifest.name,
+            "version": manifest.version,
+            "manifest": manifest,
+            "loader": self,
+            "hooks": self.hooks,
+            "registry": self.registry,
+            "logger": get_logger(f"plugin.{manifest.name}"),
+        }
+        handled = False
+        declared = getattr(module, "PLUGIN", None)
+        if isinstance(declared, Mapping):
+            self._register_declared(declared, context, record)
+            handled = True
+        setup = getattr(module, "setup", None)
+        if callable(setup) and not handled:
+            result = setup(context)
+            if isinstance(result, Mapping):
+                self._register_declared(result, context, record)
+            handled = True
+        register = getattr(module, "register", None)
+        if callable(register) and not handled:
+            result = register(self.registry, context) if self.registry is not None \
+                else register(context)
+            self._collect_names(result, record.tools)
+            handled = True
+        if not handled:
+            # Single-file plugins usually just decorate functions with @tool and
+            # declare HOOKS; discover those instead of demanding boilerplate.
+            self._autodiscover(module, manifest, record)
+        for hook_name, fn in (getattr(module, "HOOKS", None) or {}).items():
+            handler = self.hooks.register(str(hook_name), fn, plugin=manifest.name)
+            record.hooks.append(f"{hook_name}:{handler.name}")
+        if not handled and not record.contributions:
+            record.warnings.append("plugin exposes no tools, hooks or other contributions")
+
+    def _autodiscover(self, module: Any, manifest: PluginManifest, record: LoadedPlugin) -> None:
+        """Register module-level ``@tool`` functions, skills, personas and templates."""
+        from ..tools.base import Tool
+
+        for attribute, value in sorted(vars(module).items()):
+            if attribute.startswith("_"):
                 continue
-            try:
-                self.registry.register(tool)
-                registered.append(tool)
-            except Exception as exc:  # noqa: BLE001 - one bad tool must not fail the plugin
-                LOGGER.warning("plugin %s could not register tool %r: %s",
-                               manifest.name, name, exc)
-        loader = getattr(module, "load", None)
-        if callable(loader) and not registered:
-            try:
-                loader(self.registry)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("plugin %s load() raised: %s", manifest.name, exc)
-        return registered
+            candidate = getattr(value, "tool", None)
+            if isinstance(candidate, Tool):
+                if self.registry is not None:
+                    self.registry.register(candidate)
+                record.tools.append(candidate.spec.name)
+                continue
+            if isinstance(value, Tool):
+                if self.registry is not None:
+                    self.registry.register(value)
+                record.tools.append(value.spec.name)
+        for value in getattr(module, "SKILLS", []) or []:
+            from ..skills import register_skill
 
-    def _register_hooks(self, manifest: PluginManifest, module: ModuleType) -> int:
-        """Register the plugin's hooks, limited to what it declared."""
-        if not manifest.grants("hooks") and not manifest.hooks:
-            return 0
-        allowed = set(manifest.hooks) or set()
-        before = self.hooks.count()
-        register_decorated(module, self.hooks, plugin=manifest.name)
-        if allowed:
-            for registration in self.hooks.hooks():
-                if registration.plugin == manifest.name and registration.name not in allowed:
-                    self.hooks.unregister(registration.name, plugin=manifest.name,
-                                          fn=registration.fn)
-                    LOGGER.warning("plugin %s attached to undeclared hook %r; removed",
-                                   manifest.name, registration.name)
-        return self.hooks.count() - before
+            register_skill(value)
+            record.skills.append(getattr(value, "name", str(value)))
+        for value in getattr(module, "PERSONAS", []) or []:
+            from ..prompts.personas import register_persona
 
-    def _call_lifecycle(self, module: ModuleType, name: str, **kwargs: Any) -> None:
-        """Call an optional lifecycle function if the plugin defines one."""
-        fn = getattr(module, name, None)
-        if not callable(fn):
+            register_persona(value)
+            record.personas.append(getattr(value, "name", str(value)))
+        for value in getattr(module, "TEMPLATES", []) or []:
+            from ..prompts.templates import register_template
+
+            register_template(value)
+            record.templates.append(getattr(value, "name", str(value)))
+        del manifest
+
+    def _register_declared(self, declared: Mapping[str, Any], context: dict[str, Any],
+                           record: LoadedPlugin) -> None:
+        """Register the entries of a declarative ``PLUGIN`` dictionary."""
+        setup = declared.get("setup")
+        if callable(setup):
+            result = setup(context)
+            if isinstance(result, Mapping) and result is not declared:
+                self._register_declared(result, context, record)
+        if self.registry is not None:
+            for item in declared.get("tools", []) or []:
+                self.registry.register(item)
+                record.tools.append(getattr(getattr(item, "spec", None), "name", "")
+                                    or getattr(item, "name", str(item)))
+        for hook_name, fn in (declared.get("hooks") or {}).items():
+            handler = self.hooks.register(str(hook_name), fn, plugin=context["name"])
+            record.hooks.append(f"{hook_name}:{handler.name}")
+        for fn in declared.get("personas", []) or []:
+            from ..prompts.personas import register_persona
+
+            register_persona(fn)
+            record.personas.append(getattr(fn, "name", str(fn)))
+        for template in declared.get("templates", []) or []:
+            from ..prompts.templates import register_template
+
+            register_template(template)
+            record.templates.append(getattr(template, "name", str(template)))
+        for skill in declared.get("skills", []) or []:
+            from ..skills import register_skill
+
+            register_skill(skill)
+            record.skills.append(getattr(skill, "name", str(skill)))
+
+    def _collect_names(self, result: Any, into: list[str]) -> None:
+        """Record names returned by a ``register`` callable."""
+        if result is None:
             return
-        try:
-            fn(**kwargs)
-        except Exception as exc:  # noqa: BLE001 - lifecycle failures are not fatal
-            LOGGER.warning("plugin lifecycle %s() raised: %s", name, exc)
+        if isinstance(result, Mapping):
+            items = list(result.keys())
+        elif isinstance(result, (list, tuple, set)):
+            items = list(result)
+        else:
+            items = [result]
+        for item in items:
+            name = getattr(item, "name", None) or getattr(getattr(item, "spec", None), "name", None)
+            into.append(str(name or item))
 
-    def _record_error(self, name: str, exc: BaseException) -> None:
-        """Store a plugin's load failure for later inspection."""
-        self.errors[name] = f"{type(exc).__name__}: {exc}\n" + \
-            traceback.format_exc(limit=4)
+    # -- views ---------------------------------------------------------------
 
-    # -- orchestration -------------------------------------------------------
+    def names(self) -> list[str]:
+        """Loaded plugin names."""
+        return sorted(self.loaded)
 
-    def load_all(self) -> LoadReport:
-        """Discover and load every permitted plugin."""
-        import time
+    def succeeded(self) -> list[LoadedPlugin]:
+        """Plugins that loaded cleanly."""
+        return [item for item in self.loaded.values() if item.ok]
 
-        started = time.perf_counter()
-        report = LoadReport(directories=[str(item) for item in self.directories])
-        self.errors = {}
-        manifests = self.discover()
-        for manifest in manifests:
-            if not manifest.enabled:
-                report.plugins.append(LoadedPlugin(manifest=manifest,
-                                                   path=manifest.path,
-                                                   skipped="disabled in its manifest"))
-                continue
-            report.plugins.append(self.load(manifest))
-        report.errors = dict(self.errors)
-        report.duration_ms = (time.perf_counter() - started) * 1000.0
-        self.last_report = report
-        LOGGER.info("plugins: %d loaded, %d skipped, %d failed in %.0fms",
-                    len(report.loaded), len(report.skipped), len(report.failed),
-                    report.duration_ms)
-        return report
+    def failed(self) -> list[LoadedPlugin]:
+        """Plugins that failed to load."""
+        return [item for item in self.loaded.values() if not item.ok]
 
     def unload(self, name: str) -> bool:
-        """Remove a plugin's hooks and forget its module."""
-        self.hooks.unregister_plugin(name)
-        module_name = f"magent_plugin_{name}"
-        existed = sys.modules.pop(module_name, None) is not None
-        if self.registry is not None and existed:
-            LOGGER.info("plugin %s unloaded; tools it registered remain until the "
-                        "registry is rebuilt", name)
-        return existed
-
-    def unload_all(self) -> int:
-        """Unload every loaded plugin, returning how many were removed."""
-        report = self.last_report
-        names = [item.name for item in (report.loaded if report else [])]
-        return sum(1 for name in names if self.unload(name))
-
-    def get(self, name: str) -> LoadedPlugin:
-        """Return one loaded plugin by name.
-
-        Raises:
-            PluginNotFoundError: no plugin of that name was loaded
-        """
-        report = self.last_report
-        found = report.by_name(name) if report else None
-        if found is None:
-            known = report.names() if report else []
-            raise PluginNotFoundError(f"no plugin named {name!r}",
-                                      details={"name": name, "known": known})
-        return found
+        """Forget a loaded plugin (tools it registered stay registered)."""
+        record = self.loaded.pop(name, None)
+        if record is None:
+            return False
+        module_name = getattr(record.module, "__name__", "")
+        if module_name in sys.modules:
+            sys.modules.pop(module_name, None)
+        return True
 
     def stats(self) -> dict[str, Any]:
-        """Return loader statistics."""
-        report = self.last_report
-        payload: dict[str, Any] = {
-            "directories": [str(item) for item in self.directories],
-            "allow_sensitive": sorted(self.allow_sensitive),
-            "deny": sorted(self.deny),
-            "allow": sorted(self.allow) if self.allow is not None else None,
-            "verify_checksums": self.verify_checksums,
-            "strict": self.strict,
-            "hooks": self.hooks.stats(),
+        """Counters describing everything loaded."""
+        records = list(self.loaded.values())
+        return {
+            "loaded": len(records),
+            "failed": len(self.failed()),
+            "tools": sum(len(item.tools) for item in records),
+            "hooks": sum(len(item.hooks) for item in records),
+            "personas": sum(len(item.personas) for item in records),
+            "templates": sum(len(item.templates) for item in records),
+            "skills": sum(len(item.skills) for item in records),
+            "seconds": round(sum(item.seconds for item in records), 5),
+            "paths": [str(path) for path in self.paths],
+            "names": self.names(),
         }
-        if report is not None:
-            payload.update({
-                "found": len(report.plugins),
-                "loaded": len(report.loaded),
-                "skipped": len(report.skipped),
-                "failed": len(report.failed),
-                "tools": report.tool_count,
-                "duration_ms": round(report.duration_ms, 3),
-            })
-        return payload
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise every loaded plugin."""
+        return {"plugins": {name: record.to_dict() for name, record in sorted(self.loaded.items())},
+                "stats": self.stats()}
+
+    def __len__(self) -> int:
+        """Number of loaded plugins."""
+        return len(self.loaded)
+
+    def __contains__(self, name: object) -> bool:
+        """True when a plugin was loaded."""
+        return str(name) in self.loaded
+
+    def __repr__(self) -> str:
+        """Compact developer representation."""
+        return f"PluginLoader(loaded={len(self.loaded)}, paths={len(self.paths)})"
 
 
-def loader_from_config(config: Any, *, registry: Any = None,
-                       hooks: HookRegistry | None = None,
-                       extra_directories: Iterable[str | Path] = ()) -> PluginLoader:
-    """Build a loader from a resolved configuration.
+def default_plugin_paths(config: Any = None, *, workspace: str | Path | None = None,
+                         data_dir: str | Path | None = None) -> list[Path]:
+    """Resolve the plugin directories to search.
 
-    Args:
-        config: configuration carrying a ``tools`` section
-        registry: tool registry plugins register into
-        hooks: hook registry, created when omitted
-        extra_directories: additional directories to scan
+    Order matters: user plugins, then project plugins, then any explicit
+    ``tools.plugins_dir``.  Duplicates are dropped, keeping the first occurrence.
     """
-    section = getattr(config, "tools", None)
-    configured = str(getattr(section, "plugins_dir", "") or "")
-    directories: list[Path] = []
-    if configured:
-        directories.append(Path(configured).expanduser())
-    data_dir = str(getattr(config, "data_dir", "") or "")
-    if data_dir:
-        directories.append(Path(data_dir).expanduser() / "plugins")
-    directories.extend(Path(item).expanduser() for item in extra_directories if str(item))
-    # De-duplicate while keeping order: [tools] plugins_dir defaults to
-    # <data_dir>/plugins, so both branches above can yield the same path, and
-    # reporting one directory twice reads as a configuration bug.
+    paths: list[Path] = []
+    tools = getattr(config, "tools", None)
+    explicit = getattr(tools, "plugins_dir", "") if tools is not None else ""
+    home = Path(data_dir or getattr(config, "data_dir", "") or (Path.home() / ".local/share/magent"))
+    paths.append(home / "plugins")
+    root = Path(workspace or getattr(tools, "workspace", "") or Path.cwd())
+    for name in PLUGIN_DIRS:
+        paths.append(root / name)
+    if explicit:
+        paths.append(Path(explicit).expanduser())
+    seen: set[str] = set()
     unique: list[Path] = []
-    for directory in directories:
-        if directory not in unique:
-            unique.append(directory)
-    directories = unique
-    plugins_section = getattr(config, "plugins", None)
-    return PluginLoader(
-        directories,
-        allow_sensitive=list(getattr(plugins_section, "allow_sensitive", []) or []),
-        deny=list(getattr(plugins_section, "deny", []) or []),
-        allow=list(getattr(plugins_section, "allow", []) or []) or None,
-        registry=registry,
-        hooks=hooks,
-        verify_checksums=bool(getattr(plugins_section, "verify_checksums", True)),
-    )
+    for path in paths:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            unique.append(path)
+    return unique
 
 
-def scaffold(directory: str | Path, name: str = "example_plugin", *,
-             force: bool = False) -> Path:
-    """Write a minimal working plugin, for ``magent plugins init``.
+def load_plugins(config: Any = None, *, registry: Any = None, hooks: HookRegistry | None = None,
+                 workspace: str | Path | None = None, strict: bool = False,
+                 create: bool = False) -> PluginLoader:
+    """Load every plugin configured for this workspace.
 
     Args:
-        directory: parent directory to create the plugin in
-        name: plugin name
-        force: overwrite existing files
-
-    Returns:
-        The created plugin directory.
-
-    Raises:
-        PluginError: the directory exists and ``force`` was not given
+        config: loaded configuration
+        registry: tool registry to receive plugin tools
+        hooks: hook registry to receive plugin hooks
+        workspace: workspace root, overriding the configured one
+        strict: raise on the first load failure
+        create: create the first plugin directory when it does not exist
     """
-    target = Path(directory).expanduser() / name
-    if target.exists() and not force:
-        raise PluginError(f"{target} already exists; pass force=True to overwrite",
-                          details={"path": str(target)})
-    target.mkdir(parents=True, exist_ok=True)
-    manifest = example_manifest(name)
-    # The declared tool list gates registration, so it must name the tool the
-    # template actually defines - otherwise a freshly scaffolded plugin loads
-    # cleanly and registers nothing, which reads as a framework bug.
-    manifest.tools = [f"{name}_hello"]
-    manifest.hooks = ["before_run"]
-    manifest.save(target)
-    entry = target / "plugin.py"
-    entry.write_text(_PLUGIN_TEMPLATE.format(name=name), encoding="utf-8")
-    return target
+    tools = getattr(config, "tools", None)
+    enabled = bool(getattr(tools, "autoload_plugins", True)) if tools is not None else True
+    loader = PluginLoader(registry=registry, hooks=hooks, strict=strict)
+    if not enabled:
+        return loader
+    paths = default_plugin_paths(config, workspace=workspace)
+    if create and paths:
+        ensure_dir(paths[0])
+    loader.load_all(*paths)
+    return loader
 
 
-_PLUGIN_TEMPLATE = '''"""The {name} plugin for MAgent."""
-
-from __future__ import annotations
-
-from typing import Any
-
-from magent.plugins import hook
-from magent.tools import tool
-
-CALLS: list[str] = []
-"""Recorded invocations, so the plugin can be inspected in tests."""
+def iter_plugin_files(directory: str | Path, *, patterns: Iterable[str] = ("*.py", "*.json",
+                                                                          "*.md")) -> list[Path]:
+    """List the files that make up a plugin directory."""
+    root = Path(directory).expanduser()
+    if not root.is_dir():
+        return []
+    return list(iter_files(root, patterns=tuple(patterns), max_depth=2))
 
 
-@tool(name="{name}_hello", category="meta", risk="safe",
-      description="Greet by name, provided by the {name} plugin.")
-def hello(name: str = "world") -> str:
-    """Return a greeting.
-
-    Args:
-        name: who to greet
-    """
-    CALLS.append(name)
-    return f"hello, {{name}}"
-
-
-TOOLS = [hello]
-"""Tools this plugin registers."""
-
-
-@hook("before_run", plugin="{name}")
-def record_run(payload: Any) -> None:
-    """Observe each run without changing it."""
-    CALLS.append("run")
-'''
-
-
-def describe_permissions() -> dict[str, str]:
-    """Return each permission and what it allows, for ``magent plugins permissions``."""
-    meanings = {
-        "tools": "register new tools the agent can call",
-        "hooks": "attach to agent lifecycle events",
-        "filesystem.read": "read files inside the workspace",
-        "filesystem.write": "create or modify files inside the workspace",
-        "network": "make outbound network requests",
-        "shell": "execute shell commands",
-        "memory.read": "query long-term memory",
-        "memory.write": "write to long-term memory",
-        "secrets.read": "resolve configured secrets",
-        "config.read": "read the resolved configuration",
-    }
-    return {name: meanings.get(name, "") for name in PERMISSIONS}
-
-
-def sensitive_permissions() -> list[str]:
-    """Return the permissions that need explicit operator approval."""
-    return sorted(SENSITIVE_PERMISSIONS)
-
-
-def write_manifest_template(path: str | Path, name: str = "example_plugin") -> Path:
-    """Write a standalone ``plugin.json`` template."""
-    target = Path(path).expanduser()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(example_manifest(name).to_json() + "\n", encoding="utf-8")
-    return target
-
-
-def inspect_plugin(directory: str | Path) -> dict[str, Any]:
-    """Validate a plugin directory and report what it declares.
-
-    Useful before installing a plugin: it answers "what would this be allowed to
-    do?" without importing any of its code.
-    """
-    manifest = PluginManifest.load(directory)
-    entry = manifest.entry_path()
+def plugin_module(name: str, module: types.ModuleType | Any) -> dict[str, Any]:
+    """Describe a plugin module for diagnostics."""
     return {
-        "name": manifest.name,
-        "version": manifest.version,
-        "summary": manifest.summary,
-        "author": manifest.author,
-        "path": manifest.path,
-        "entrypoint": manifest.entrypoint,
-        "entrypoint_exists": entry.exists(),
-        "permissions": list(manifest.permissions),
-        "sensitive": manifest.sensitive_permissions,
-        "declared_tools": list(manifest.tools),
-        "declared_hooks": list(manifest.hooks),
-        "checksum": manifest.checksum,
-        "computed_checksum": manifest.compute_checksum(),
-        "checksum_ok": manifest.verify_checksum(),
-        "min_magent_version": manifest.min_magent_version,
+        "name": name,
+        "module": getattr(module, "__name__", ""),
+        "file": getattr(module, "__file__", ""),
+        "has_register": callable(getattr(module, "register", None)),
+        "has_setup": callable(getattr(module, "setup", None)),
+        "declared": sorted((getattr(module, "PLUGIN", None) or {}).keys())
+        if isinstance(getattr(module, "PLUGIN", None), Mapping) else [],
     }
 
 
 __all__ = [
-    "DEFAULT_TIMEOUT",
-    "MANIFEST_FILENAME",
-    "PLUGIN_SUFFIXES",
-    "LoadReport",
+    "MAX_ENTRY_BYTES",
+    "PLUGIN_DIRS",
     "LoadedPlugin",
     "PluginLoader",
-    "describe_permissions",
-    "inspect_plugin",
-    "loader_from_config",
-    "scaffold",
-    "sensitive_permissions",
-    "write_manifest_template",
+    "default_plugin_paths",
+    "iter_plugin_files",
+    "load_plugins",
+    "plugin_module",
 ]

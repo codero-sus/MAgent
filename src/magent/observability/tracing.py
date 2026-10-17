@@ -1,604 +1,513 @@
-"""Tracing: nested spans that show where a run actually spent its time.
+"""Tracing: spans, traces and an ASCII flame graph.
 
-An agent run is a tree - a run contains steps, a step contains an LLM call and
-several tool executions, and a tool may call the model again. A flat log cannot
-show that shape, so timing questions ("was it the model or the filesystem?")
-stay unanswered.
+A run is a tree - the run itself, each reasoning step, each tool call, each LLM
+request, each guardrail check.  :class:`Tracer` builds that tree with
+:class:`Span` objects that can be used as context managers, exports it as JSONL
+(one span per line, so a long session can be appended to forever), and renders
+it as a flame graph for the terminal:
 
-Spans are propagated through :mod:`contextvars`, which means they cross
-``ThreadPoolExecutor`` boundaries correctly when the pool copies the context,
-and a nested ``with tracer.span(...)`` automatically becomes a child without
-any threading of arguments through the call stack.
+    run  1240ms
+    ├─ step.0  1180ms
+    │  ├─ llm.chat  900ms
+    │  └─ tool.calculate  4ms
 
-Export is JSONL, one span per line, so a trace can be appended incrementally
-and read back without loading a whole run into memory.
+Spans are thread-safe and carry attributes plus timestamped events, which is
+what makes a slow run diagnosable after the fact rather than only while watching
+it happen.
 """
 
 from __future__ import annotations
 
-import contextvars
-import json
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Sequence
+from typing import Any, Iterator, Sequence
 
 from ..logging_ import get_logger
 from ..utils.files import ensure_dir
 from ..utils.ids import span_id as new_span_id
 from ..utils.ids import trace_id as new_trace_id
-from ..utils.timeutil import format_duration
 
 LOGGER = get_logger("observability.trace")
-"""Logger for tracing faults."""
+"""Logger for tracing problems."""
 
-STATUS_OK = "ok"
-"""Span finished without an error."""
+SPAN_STATUS: tuple[str, ...] = ("running", "ok", "error", "cancelled")
+"""Lifecycle states a span can be in."""
 
-STATUS_ERROR = "error"
-"""Span finished with an exception recorded on it."""
+MAX_SPANS_PER_TRACE = 2_000
+"""Ceiling on spans kept for one trace, so a runaway loop cannot eat memory."""
 
-STATUS_UNSET = "unset"
-"""Span was never explicitly finished."""
-
-STATUSES: tuple[str, ...] = (STATUS_UNSET, STATUS_OK, STATUS_ERROR)
-"""Every status a span may carry."""
-
-MAX_EVENTS_PER_SPAN = 128
-"""Cap on annotations per span, so a looping tool cannot grow one without bound."""
-
-_current_span: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
-    "magent_current_span", default=None
-)
-"""Context variable carrying the active span."""
+MAX_EVENTS_PER_SPAN = 100
+"""Ceiling on events recorded inside one span."""
 
 
 @dataclass(slots=True)
 class SpanEvent:
-    """A timestamped annotation attached to a span."""
+    """A timestamped note inside a span."""
 
     name: str
-    timestamp: float = field(default_factory=time.time)
+    ts: float = field(default_factory=time.time)
     attributes: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serialized form."""
-        payload: dict[str, Any] = {"name": self.name, "timestamp": round(self.timestamp, 6)}
-        if self.attributes:
-            payload["attributes"] = self.attributes
-        return payload
+        """Serialise the event."""
+        return {"name": self.name, "ts": self.ts, "attributes": dict(self.attributes)}
 
 
+@dataclass(slots=True)
 class Span:
-    """One timed unit of work, optionally nested inside a parent."""
+    """One timed unit of work inside a trace."""
 
-    def __init__(self, name: str, *, trace_id: str = "", parent_id: str = "",
-                 span_id: str = "", kind: str = "internal",
-                 attributes: Mapping[str, Any] | None = None,
-                 tracer: Tracer | None = None) -> None:
-        """Start a span; the clock begins here.
+    name: str
+    trace_id: str = ""
+    span_id: str = ""
+    parent_id: str = ""
+    kind: str = "internal"
+    started_at: float = field(default_factory=time.time)
+    ended_at: float = 0.0
+    status: str = "running"
+    attributes: dict[str, Any] = field(default_factory=dict)
+    events: list[SpanEvent] = field(default_factory=list)
+    error: str = ""
+    children: list[Span] = field(default_factory=list)
 
-        Args:
-            name: what the span measures, e.g. ``llm.complete``
-            trace_id: identifier shared by every span in one run
-            parent_id: identifier of the enclosing span, empty for a root
-            span_id: this span's identifier, generated when empty
-            kind: ``internal``, ``llm``, ``tool``, ``retrieval``, or ``http``
-            attributes: initial dimensions recorded on the span
-            tracer: owning tracer, used to publish the span when it ends
-        """
-        self.name = str(name)
-        self.trace_id = trace_id or new_trace_id()
-        self.span_id = span_id or new_span_id()
-        self.parent_id = parent_id
-        self.kind = kind
-        self.attributes: dict[str, Any] = dict(attributes or {})
-        self.events: list[SpanEvent] = []
-        self.status = STATUS_UNSET
-        self.error: str = ""
-        self.start_time = time.perf_counter()
-        self.started_at = time.time()
-        self.end_time = 0.0
-        self.duration_ms = 0.0
-        self._ended = False
-        self._tracer = tracer
+    def __post_init__(self) -> None:
+        """Assign identifiers when the caller did not."""
+        if not self.span_id:
+            self.span_id = new_span_id()
+        if not self.trace_id:
+            self.trace_id = new_trace_id()
 
-    # -- recording -----------------------------------------------------------
+    @property
+    def duration_ms(self) -> float:
+        """Elapsed milliseconds, live when the span is still running."""
+        end = self.ended_at or time.time()
+        return max(0.0, (end - self.started_at) * 1000.0)
+
+    @property
+    def finished(self) -> bool:
+        """True once the span has ended."""
+        return self.ended_at > 0
 
     def set_attribute(self, key: str, value: Any) -> Span:
-        """Record one attribute, returning the span for chaining."""
-        self.attributes[str(key)] = value
+        """Record one attribute; returns self for chaining."""
+        self.attributes[key] = value
         return self
 
-    def set_attributes(self, values: Mapping[str, Any]) -> Span:
-        """Record many attributes at once."""
-        for key, value in dict(values).items():
-            self.attributes[str(key)] = value
+    def set_attributes(self, values: dict[str, Any]) -> Span:
+        """Record several attributes."""
+        self.attributes.update(values)
         return self
 
-    def add_event(self, name: str, **attributes: Any) -> Span:
-        """Attach a timestamped annotation.
+    def add_event(self, event_name: str, **attributes: Any) -> Span:
+        """Append a timestamped event to the span.
 
-        Events past :data:`MAX_EVENTS_PER_SPAN` are dropped rather than
-        appended, because a tool looping in a tight cycle would otherwise grow
-        a single span until it dominated the trace file.
+        The event name is positional and separately named so callers can pass an
+        attribute called ``name`` - ``span.add_event("tool", name="calculate")`` -
+        without colliding with the parameter.
         """
+        attributes.pop("event_name", None)
         if len(self.events) < MAX_EVENTS_PER_SPAN:
-            self.events.append(SpanEvent(name=str(name), attributes=dict(attributes)))
-        elif len(self.events) == MAX_EVENTS_PER_SPAN:
-            self.events.append(SpanEvent(name="events_truncated",
-                                         attributes={"limit": MAX_EVENTS_PER_SPAN}))
+            self.events.append(SpanEvent(name=event_name, attributes=dict(attributes)))
         return self
 
-    def set_status(self, status: str, *, error: str = "") -> Span:
-        """Mark the span's outcome."""
-        self.status = status if status in STATUSES else STATUS_UNSET
-        if error:
-            self.error = str(error)
-            self.status = STATUS_ERROR
+    def fail(self, error: str) -> Span:
+        """Mark the span as failed and end it."""
+        self.error = str(error)
+        return self.finish("error")
+
+    def finish(self, status: str = "ok") -> Span:
+        """End the span."""
+        if not self.finished:
+            self.ended_at = time.time()
+        self.status = status if status in SPAN_STATUS else "ok"
         return self
 
-    @property
-    def ended(self) -> bool:
-        """Whether :meth:`end` has been called."""
-        return self._ended
+    def child(self, name: str, *, kind: str = "internal", **attributes: Any) -> Span:
+        """Create a nested span sharing this span's trace."""
+        span = Span(name=name, trace_id=self.trace_id, parent_id=self.span_id, kind=kind,
+                    attributes=dict(attributes))
+        if len(self.children) < MAX_SPANS_PER_TRACE:
+            self.children.append(span)
+        return span
 
-    @property
-    def elapsed_ms(self) -> float:
-        """Milliseconds since the span started, live if still running."""
-        if self._ended:
-            return self.duration_ms
-        return max(0.0, (time.perf_counter() - self.start_time) * 1000.0)
+    def walk(self) -> Iterator[Span]:
+        """Yield this span and every descendant, depth first."""
+        yield self
+        for item in self.children:
+            yield from item.walk()
 
-    @property
-    def is_root(self) -> bool:
-        """Whether this span has no parent."""
-        return not self.parent_id
+    def depth(self) -> int:
+        """Nesting depth of the deepest descendant."""
+        if not self.children:
+            return 0
+        return 1 + max(child.depth() for child in self.children)
 
-    def end(self, *, status: str = STATUS_OK, error: str = "") -> Span:
-        """Stop the clock and hand the span to the tracer.
-
-        Ending twice is a no-op, so a span can be closed in a ``finally`` block
-        without racing the context manager.
-        """
-        if self._ended:
-            return self
-        self._ended = True
-        self.end_time = time.perf_counter()
-        self.duration_ms = max(0.0, (self.end_time - self.start_time) * 1000.0)
-        # A status recorded during the span wins: a tool that called
-        # set_status("error") and then returned normally must not be rewritten
-        # to "ok" by the context manager exiting without an exception.
-        if error or self.status == STATUS_UNSET:
-            self.set_status(status, error=error)
-        if self._tracer is not None:
-            self._tracer._publish(self)
-        return self
-
-    # -- export --------------------------------------------------------------
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return the serialized span, one JSONL line."""
+    def to_dict(self, *, include_children: bool = False) -> dict[str, Any]:
+        """Serialise the span, optionally with its subtree."""
         payload: dict[str, Any] = {
             "trace_id": self.trace_id,
             "span_id": self.span_id,
+            "parent_id": self.parent_id,
             "name": self.name,
             "kind": self.kind,
-            "status": self.status,
-            "started_at": round(self.started_at, 6),
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
             "duration_ms": round(self.duration_ms, 3),
+            "status": self.status,
+            "attributes": dict(self.attributes),
+            "events": [event.to_dict() for event in self.events],
+            "error": self.error,
         }
-        if self.parent_id:
-            payload["parent_id"] = self.parent_id
-        if self.attributes:
-            payload["attributes"] = _jsonable(self.attributes)
-        if self.events:
-            payload["events"] = [event.to_dict() for event in self.events]
-        if self.error:
-            payload["error"] = self.error
+        if include_children:
+            payload["children"] = [child.to_dict(include_children=True) for child in self.children]
         return payload
 
-    def to_json(self) -> str:
-        """Return the span as a single JSON line."""
-        return json.dumps(self.to_dict(), ensure_ascii=False, default=str)
-
-    def children(self, spans: Sequence[Span]) -> list[Span]:
-        """Return the spans whose parent is this one."""
-        return [span for span in spans if span.parent_id == self.span_id]
+    def flame(self, *, indent: int = 0, width: int = 60, unicode: bool = True) -> str:
+        """Render the subtree as an ASCII flame graph."""
+        branch, last, pipe = ("├─", "└─", "│") if unicode else ("|-", "`-", "|")
+        bar = _bar(self.duration_ms, width)
+        lines = [f"{'  ' * indent}{self.name}  {self.duration_ms:.0f}ms {bar}"
+                 f"{' ERR' if self.status == 'error' else ''}"]
+        for index, child in enumerate(self.children):
+            connector = last if index == len(self.children) - 1 else branch
+            child_lines = child.flame(indent=0, width=width, unicode=unicode).split("\n")
+            lines.append(f"{'  ' * indent}{connector} {child_lines[0]}")
+            continuation = f"{pipe} " if connector == branch else "   "
+            for extra in child_lines[1:]:
+                lines.append(f"{'  ' * indent}{continuation}{extra}")
+        return "\n".join(lines)
 
     def __enter__(self) -> Span:
-        """Activate the span for the duration of a ``with`` block."""
-        if self._tracer is not None:
-            self._tracer._activate(self)
+        """Start using the span as a context manager."""
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, _tb: Any) -> None:
-        """End the span, recording an exception when one propagated."""
-        if exc_type is not None:
-            self.end(status=STATUS_ERROR, error=f"{exc_type.__name__}: {exc}")
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Finish the span, recording an exception when one propagated."""
+        if exc is not None:
+            self.fail(f"{type(exc).__name__}: {exc}")
         else:
-            self.end(status=STATUS_OK)
-        if self._tracer is not None:
-            self._tracer._deactivate(self)
+            self.finish()
 
-    def __repr__(self) -> str:
-        """Debug representation."""
-        return (f"Span(name={self.name!r}, kind={self.kind!r}, status={self.status!r}, "
-                f"duration_ms={self.duration_ms:.2f})")
+
+def _bar(duration_ms: float, width: int) -> str:
+    """Render a duration as a small bar, relative to a 5 second scale."""
+    scale = max(1.0, 5_000.0)
+    filled = int(min(width, max(0, round(duration_ms / scale * width))))
+    return "[" + "#" * filled + "." * (width - filled) + "]"
+
+
+@dataclass(slots=True)
+class Trace:
+    """A tree of spans sharing one trace id."""
+
+    name: str = "trace"
+    trace_id: str = ""
+    root: Span | None = None
+    started_at: float = field(default_factory=time.time)
+    ended_at: float = 0.0
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Create the trace id and root span when they are missing."""
+        if not self.trace_id:
+            self.trace_id = new_trace_id()
+        if self.root is None:
+            self.root = Span(name=self.name, trace_id=self.trace_id, kind="run",
+                             started_at=self.started_at)
+
+    @property
+    def duration_ms(self) -> float:
+        """Elapsed milliseconds for the whole trace."""
+        end = self.ended_at or time.time()
+        return max(0.0, (end - self.started_at) * 1000.0)
+
+    def spans(self) -> list[Span]:
+        """Every span in the trace, depth first."""
+        return list(self.root.walk()) if self.root else []
+
+    def find(self, name: str) -> Span | None:
+        """First span with this name."""
+        for span in self.spans():
+            if span.name == name:
+                return span
+        return None
+
+    def errors(self) -> list[Span]:
+        """Spans that finished in an error state."""
+        return [span for span in self.spans() if span.status == "error"]
+
+    def slowest(self, limit: int = 5) -> list[Span]:
+        """Slowest spans, excluding the root."""
+        spans = [span for span in self.spans() if span is not self.root]
+        spans.sort(key=lambda span: -span.duration_ms)
+        return spans[: max(1, limit)]
+
+    def finish(self, status: str = "ok") -> Trace:
+        """End the trace and any span still running."""
+        for span in self.spans():
+            if not span.finished:
+                span.finish(status if span is self.root else "ok")
+        self.ended_at = time.time()
+        return self
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise the whole trace."""
+        return {
+            "trace_id": self.trace_id,
+            "name": self.name,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "duration_ms": round(self.duration_ms, 3),
+            "spans": len(self.spans()),
+            "errors": len(self.errors()),
+            "attributes": dict(self.attributes),
+            "root": self.root.to_dict(include_children=True) if self.root else None,
+        }
+
+    def flame(self, *, width: int = 60, unicode: bool = True) -> str:
+        """Render the trace as an ASCII flame graph."""
+        return self.root.flame(width=width, unicode=unicode) if self.root else ""
+
+    def jsonl(self) -> str:
+        """Serialise every span as one JSON line."""
+        import json
+
+        return "\n".join(json.dumps(span.to_dict(), default=str, ensure_ascii=False)
+                         for span in self.spans())
 
 
 class Tracer:
-    """Creates spans, tracks the active one, and collects what finished."""
+    """Create traces and track the span currently in flight."""
 
-    def __init__(self, *, name: str = "magent", enabled: bool = True,
-                 export_path: str | Path | None = None, keep: int = 2000,
-                 default_attributes: Mapping[str, Any] | None = None) -> None:
-        """Configure a tracer.
+    def __init__(self, *, enabled: bool = True, export_path: str | Path | None = None,
+                 sample_rate: float = 1.0, service: str = "magent") -> None:
+        """Configure the tracer.
 
         Args:
-            name: tracer name recorded on the root span
-            enabled: when false, spans are inert and nothing is stored
-            export_path: JSONL file that finished spans are appended to
-            keep: maximum spans retained in memory
-            default_attributes: attributes copied onto every new span
+            enabled: when false every call is a no-op returning a dummy span
+            export_path: file to append finished traces to as JSONL
+            sample_rate: fraction of traces to keep, 0..1
+            service: service name recorded on every span
         """
-        self.name = name
         self.enabled = bool(enabled)
         self.export_path = Path(export_path).expanduser() if export_path else None
-        self.keep = max(16, int(keep))
-        self.default_attributes = dict(default_attributes or {})
-        self._spans: list[Span] = []
-        self._lock = threading.RLock()
-        self._token_stack: list[Any] = []
-        self.created_spans = 0
-        self.exported = 0
-        self.export_failures = 0
+        self.sample_rate = max(0.0, min(1.0, float(sample_rate)))
+        self.service = service
+        self._local = threading.local()
+        self._lock = threading.Lock()
+        self._traces: list[Trace] = []
+        self.spans_created = 0
+        self.spans_exported = 0
+        self.dropped = 0
 
-    # -- creation ------------------------------------------------------------
+    @property
+    def current_trace(self) -> Trace | None:
+        """Trace active on this thread."""
+        return getattr(self._local, "trace", None)
 
-    def span(self, name: str, *, kind: str = "internal", trace_id: str = "",
-             parent: Span | None = None, **attributes: Any) -> Span:
-        """Create a span parented to the currently active one.
+    @property
+    def current_span(self) -> Span | None:
+        """Span active on this thread."""
+        return getattr(self._local, "span", None)
 
-        Args:
-            name: what the span measures
-            kind: span category
-            trace_id: force a trace identifier; inherited when empty
-            parent: explicit parent, defaulting to the active span
-            attributes: dimensions recorded on the span
-        """
+    def start_trace(self, name: str = "run", **attributes: Any) -> Trace:
+        """Begin a new trace on this thread."""
+        trace = Trace(name=name, attributes={"service": self.service, **attributes})
+        if not self._sampled():
+            self.dropped += 1
+            trace.attributes["sampled_out"] = True
+        self._local.trace = trace
+        self._local.span = trace.root
+        with self._lock:
+            self._traces.append(trace)
+            if len(self._traces) > 64:
+                self._traces = self._traces[-64:]
+        return trace
+
+    def _sampled(self) -> bool:
+        """Decide whether the current trace is kept."""
+        if self.sample_rate >= 1.0:
+            return True
+        import random
+
+        return random.random() < self.sample_rate
+
+    @contextmanager
+    def trace(self, name: str = "run", **attributes: Any) -> Iterator[Trace]:
+        """Context manager that starts, finishes and exports a trace."""
+        active = self.start_trace(name, **attributes)
+        try:
+            yield active
+        finally:
+            self.end_trace()
+
+    def start_span(self, name: str, *, kind: str = "internal", parent: Span | None = None,
+                   **attributes: Any) -> Span:
+        """Start a span inside the current trace."""
         if not self.enabled:
-            return _InertSpan(name, tracer=self)
-        active = parent if parent is not None else self.current()
-        merged = dict(self.default_attributes)
-        merged.update(attributes)
-        span = Span(
-            name,
-            trace_id=trace_id or (active.trace_id if active else ""),
-            parent_id=active.span_id if active else "",
-            kind=kind,
-            attributes=merged,
-            tracer=self,
-        )
-        with self._lock:
-            self.created_spans += 1
+            return Span(name=name, kind=kind, status="ok", ended_at=time.time())
+        trace = self.current_trace
+        if trace is None or trace.root is None:
+            trace = self.start_trace(name)
+        owner = parent or self.current_span or trace.root
+        assert owner is not None
+        span = owner.child(name, kind=kind, service=self.service, **attributes)
+        self.spans_created += 1
+        self._local.span = span
         return span
 
-    def start(self, name: str, **kwargs: Any) -> Span:
-        """Create and immediately activate a span."""
-        span = self.span(name, **kwargs)
-        span.__enter__()
-        return span
+    @contextmanager
+    def span(self, name: str, *, kind: str = "internal", **attributes: Any) -> Iterator[Span]:
+        """Context manager that starts and finishes one span."""
+        previous = self.current_span
+        active = self.start_span(name, kind=kind, **attributes)
+        try:
+            yield active
+        except Exception as exc:
+            active.fail(f"{type(exc).__name__}: {exc}")
+            raise
+        else:
+            active.finish()
+        finally:
+            self._local.span = previous
 
-    def current(self) -> Span | None:
-        """Return the active span for this context, or ``None``."""
-        return _current_span.get()
+    def end_trace(self, *, status: str = "ok", export: bool = True) -> Trace | None:
+        """Finish the current trace, export it and clear thread state."""
+        trace = self.current_trace
+        if trace is None:
+            return None
+        trace.finish(status)
+        self._local.trace = None
+        self._local.span = None
+        if export and self.enabled and not trace.attributes.get("sampled_out"):
+            self.export(trace)
+        return trace
 
-    def current_trace_id(self) -> str:
-        """Return the active trace identifier, or an empty string."""
-        active = self.current()
-        return active.trace_id if active else ""
-
-    def trace(self, name: str = "run", **attributes: Any) -> Span:
-        """Start a root span, beginning a new trace."""
-        return self.span(name, trace_id=new_trace_id(), parent=None, **attributes)
-
-    # -- context management --------------------------------------------------
-
-    def _activate(self, span: Span) -> None:
-        """Make ``span`` the active one, remembering how to undo it."""
-        token = _current_span.set(span)
-        with self._lock:
-            self._token_stack.append(token)
-
-    def _deactivate(self, span: Span) -> None:
-        """Restore the previous active span."""
-        with self._lock:
-            token = self._token_stack.pop() if self._token_stack else None
-        if token is not None:
-            try:
-                _current_span.reset(token)
-            except ValueError:
-                # The token belongs to another context (a worker thread); the
-                # variable there will be garbage-collected with that context.
-                LOGGER.debug("span context token from another context for %s", span.name)
-
-    # -- collection ----------------------------------------------------------
-
-    def _publish(self, span: Span) -> None:
-        """Record a finished span and export it when configured."""
-        with self._lock:
-            self._spans.append(span)
-            overflow = len(self._spans) - self.keep
-            if overflow > 0:
-                del self._spans[:overflow]
-        if self.export_path is not None:
-            self._export(span)
-
-    def _export(self, span: Span) -> None:
-        """Append one span to the JSONL export file."""
+    def export(self, trace: Trace) -> Path | None:
+        """Append a trace's spans to the export file."""
+        if self.export_path is None:
+            return None
         try:
             ensure_dir(self.export_path.parent)
             with self.export_path.open("a", encoding="utf-8") as handle:
-                handle.write(span.to_json() + "\n")
-            self.exported += 1
+                handle.write(trace.jsonl() + "\n")
         except OSError as exc:
-            self.export_failures += 1
-            LOGGER.debug("could not export span %s: %s", span.name, exc)
+            LOGGER.warning("trace export failed: %s", exc)
+            return None
+        self.spans_exported += len(trace.spans())
+        return self.export_path
 
-    def spans(self, *, trace_id: str = "", kind: str = "", name: str = "") -> list[Span]:
-        """Return collected spans, optionally filtered."""
+    def record(self, trace: Trace) -> Trace:
+        """Adopt a trace built elsewhere so it shows up in :meth:`traces`."""
         with self._lock:
-            items = list(self._spans)
-        if trace_id:
-            items = [span for span in items if span.trace_id == trace_id]
-        if kind:
-            items = [span for span in items if span.kind == kind]
-        if name:
-            items = [span for span in items if name in span.name]
-        return items
+            self._traces.append(trace)
+            if len(self._traces) > 64:
+                self._traces = self._traces[-64:]
+        return trace
 
-    def clear(self) -> int:
-        """Forget collected spans, returning how many were dropped."""
+    def traces(self, *, limit: int = 10) -> list[Trace]:
+        """Recent traces, newest last."""
         with self._lock:
-            count = len(self._spans)
-            self._spans.clear()
-        return count
+            return list(self._traces[-max(1, limit):])
 
-    # -- analysis ------------------------------------------------------------
-
-    def tree(self, trace_id: str = "") -> list[dict[str, Any]]:
-        """Return the span tree for one trace as nested dicts."""
-        items = self.spans(trace_id=trace_id)
-        if not items:
-            return []
-        target = trace_id or items[0].trace_id
-        items = [span for span in items if span.trace_id == target]
-        by_parent: dict[str, list[Span]] = {}
-        for span in items:
-            by_parent.setdefault(span.parent_id, []).append(span)
-        for children in by_parent.values():
-            children.sort(key=lambda span: span.started_at)
-
-        def build(span: Span) -> dict[str, Any]:
-            return {
-                "name": span.name,
-                "kind": span.kind,
-                "duration_ms": round(span.duration_ms, 3),
-                "status": span.status,
-                "children": [build(child) for child in by_parent.get(span.span_id, [])],
-            }
-
-        return [build(span) for span in by_parent.get("", [])]
-
-    def render_tree(self, trace_id: str = "", *, show_attributes: bool = False) -> str:
-        """Render one trace as an indented tree, for the CLI and bug reports."""
-        items = self.spans(trace_id=trace_id)
-        if not items:
-            return "(no spans)"
-        target = trace_id or items[0].trace_id
-        items = [span for span in items if span.trace_id == target]
-        by_parent: dict[str, list[Span]] = {}
-        for span in items:
-            by_parent.setdefault(span.parent_id, []).append(span)
-        for children in by_parent.values():
-            children.sort(key=lambda span: span.started_at)
-        lines: list[str] = [f"trace {target}"]
-
-        def describe(span: Span) -> str:
-            marker = "!" if span.status == STATUS_ERROR else " "
-            detail = f" [{span.kind}]" if span.kind != "internal" else ""
-            attrs = ""
-            if show_attributes and span.attributes:
-                attrs = " " + " ".join(f"{key}={value}"
-                                       for key, value in sorted(span.attributes.items()))
-            return (f"{marker}{span.name}{detail} "
-                    f"{format_duration(span.duration_ms / 1000.0)}{attrs}")
-
-        def walk(span: Span, prefix: str, connector: str, child_prefix: str) -> None:
-            lines.append(f"{prefix}{connector}{describe(span)}")
-            children = by_parent.get(span.span_id, [])
-            for index, child in enumerate(children):
-                last = index == len(children) - 1
-                walk(child, child_prefix, "└─ " if last else "├─ ",
-                     child_prefix + ("   " if last else "│  "))
-
-        for root in by_parent.get("", []):
-            walk(root, "  ", "", "  ")
-        return "\n".join(lines)
-
-    def slowest(self, limit: int = 5, *, trace_id: str = "") -> list[Span]:
-        """Return the slowest spans, which is usually where the time went."""
-        items = self.spans(trace_id=trace_id)
-        items.sort(key=lambda span: span.duration_ms, reverse=True)
-        return items[: max(1, limit)]
-
-    def errors(self, *, trace_id: str = "") -> list[Span]:
-        """Return spans that ended in an error."""
-        return [span for span in self.spans(trace_id=trace_id) if span.status == STATUS_ERROR]
+    def last_trace(self) -> Trace | None:
+        """Most recent trace."""
+        with self._lock:
+            return self._traces[-1] if self._traces else None
 
     def stats(self) -> dict[str, Any]:
-        """Return tracer counters and per-kind timing summaries."""
+        """Tracer counters."""
         with self._lock:
-            items = list(self._spans)
-        by_kind: dict[str, dict[str, Any]] = {}
-        for span in items:
-            record = by_kind.setdefault(span.kind, {"count": 0, "total_ms": 0.0, "errors": 0})
-            record["count"] += 1
-            record["total_ms"] += span.duration_ms
-            if span.status == STATUS_ERROR:
-                record["errors"] += 1
-        for record in by_kind.values():
-            record["total_ms"] = round(record["total_ms"], 3)
-            record["mean_ms"] = round(record["total_ms"] / record["count"], 3) if record["count"] else 0.0
+            traces = list(self._traces)
         return {
-            "name": self.name,
             "enabled": self.enabled,
-            "collected": len(items),
-            "created": self.created_spans,
-            "exported": self.exported,
-            "export_failures": self.export_failures,
+            "service": self.service,
+            "sample_rate": self.sample_rate,
             "export_path": str(self.export_path) if self.export_path else "",
-            "traces": len({span.trace_id for span in items}),
-            "errors": sum(1 for span in items if span.status == STATUS_ERROR),
-            "by_kind": by_kind,
+            "traces": len(traces),
+            "spans": sum(len(trace.spans()) for trace in traces),
+            "spans_created": self.spans_created,
+            "spans_exported": self.spans_exported,
+            "dropped": self.dropped,
+            "errors": sum(len(trace.errors()) for trace in traces),
         }
 
-    def describe(self) -> str:
-        """Return a one-line tracer summary."""
-        info = self.stats()
-        return (f"{info['collected']} spans across {info['traces']} traces, "
-                f"{info['errors']} errors, {info['exported']} exported")
-
-    # -- helpers -------------------------------------------------------------
-
-    def instrument(self, name: str = "", *, kind: str = "internal") -> Callable[[Any], Any]:
-        """Return a decorator that wraps a callable in a span."""
-        import functools
-
-        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
-            label = name or f"{fn.__module__}.{fn.__qualname__}"
-
-            @functools.wraps(fn)
-            def wrapper(*args: Any, **kwargs: Any) -> Any:
-                with self.span(label, kind=kind):
-                    return fn(*args, **kwargs)
-
-            return wrapper
-
-        return decorator
-
-    def close(self) -> None:
-        """End any spans still open and clear the context stack."""
+    def reset(self) -> None:
+        """Forget every trace."""
         with self._lock:
-            pending = [span for span in self._spans if not span.ended]
-            self._token_stack.clear()
-        for span in pending:
-            span.end(status=STATUS_OK)
-        active = self.current()
-        if active is not None and not active.ended:
-            active.end(status=STATUS_OK)
+            self._traces.clear()
+        self._local.trace = None
+        self._local.span = None
 
 
-class _InertSpan(Span):
-    """A span that records nothing, used when tracing is disabled."""
+def trace_from_events(events: Sequence[Any], *, name: str = "run") -> Trace:
+    """Rebuild a trace from agent events, for after-the-fact analysis.
 
-    def __init__(self, name: str, *, tracer: Tracer | None = None) -> None:
-        """Create an inert span with a fixed identity."""
-        super().__init__(name, tracer=None)
-        self._tracer = None
-        self._ended = True
-        self.duration_ms = 0.0
-        self.status = STATUS_UNSET
-
-    def set_attribute(self, key: str, value: Any) -> Span:
-        """No-op."""
-        return self
-
-    def set_attributes(self, values: Mapping[str, Any]) -> Span:
-        """No-op."""
-        return self
-
-    def add_event(self, name: str, **attributes: Any) -> Span:
-        """No-op."""
-        return self
-
-    def end(self, *, status: str = STATUS_OK, error: str = "") -> Span:
-        """No-op."""
-        return self
-
-    def __enter__(self) -> Span:
-        """No-op activation."""
-        return self
-
-    def __exit__(self, *_exc: Any) -> None:
-        """No-op deactivation."""
-        return None
-
-
-def load_spans(path: str | Path) -> list[dict[str, Any]]:
-    """Read a JSONL trace export, skipping lines that will not parse."""
-    target = Path(path).expanduser()
-    if not target.exists():
-        return []
-    spans: list[dict[str, Any]] = []
-    for line in target.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            spans.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return spans
-
-
-def tracer_from_config(config: Any, *, enabled: bool | None = None) -> Tracer:
-    """Build a :class:`Tracer` from a resolved config's ``observability`` section."""
-    section = getattr(config, "observability", None)
-    active = bool(getattr(section, "trace_enabled", True)) if enabled is None else enabled
-    path = str(getattr(section, "trace_file", "") or "") or None
-    return Tracer(enabled=active, export_path=path,
-                  name=str(getattr(config, "profile", "") or "magent") or "magent")
-
-
-def _jsonable(value: Mapping[str, Any]) -> dict[str, Any]:
-    """Coerce attribute values into JSON-safe primitives."""
-    out: dict[str, Any] = {}
-    for key, item in dict(value).items():
-        if isinstance(item, (str, int, float, bool)) or item is None:
-            out[str(key)] = item
-        elif isinstance(item, Mapping):
-            out[str(key)] = _jsonable(item)
-        elif isinstance(item, (list, tuple, set)):
-            out[str(key)] = [str(entry) for entry in item]
-        else:
-            out[str(key)] = str(item)
-    return out
-
-
-def current_span() -> Span | None:
-    """Return the active span without needing a tracer reference."""
-    return _current_span.get()
-
-
-def iter_trace(path: str | Path) -> Iterator[dict[str, Any]]:
-    """Stream a trace export line by line."""
-    yield from load_spans(path)
+    Args:
+        events: :class:`~magent.types.AgentEvent` objects from a run
+        name: trace name
+    """
+    trace = Trace(name=name)
+    if trace.root is None:
+        return trace
+    if events:
+        trace.started_at = min(getattr(event, "ts", trace.started_at) for event in events)
+    stack: list[Span] = [trace.root]
+    open_steps: dict[Any, Span] = {}
+    open_tools: dict[Any, Span] = {}
+    for event in events:
+        kind = str(getattr(getattr(event, "kind", ""), "value", getattr(event, "kind", "")))
+        data = getattr(event, "data", {}) or {}
+        ts = float(getattr(event, "ts", time.time()) or time.time())
+        if kind == "run.started":
+            trace.root.set_attributes({"run_id": data.get("run_id", ""),
+                                       "model": data.get("model", "")})
+        elif kind == "step.started":
+            span = stack[0].child(f"step.{data.get('index', 0)}", kind="step")
+            span.started_at = ts
+            open_steps[data.get("index", len(open_steps))] = span
+        elif kind == "step.finished":
+            span = open_steps.get(data.get("index"))
+            if span is not None:
+                span.ended_at = ts
+                span.set_attribute("tool_calls", data.get("tool_calls", 0))
+                span.finish()
+        elif kind == "tool.call":
+            parent = open_steps.get(data.get("step"), stack[0]) or stack[0]
+            span = parent.child(f"tool.{data.get('name', 'tool')}", kind="tool")
+            span.started_at = ts
+            span.set_attribute("call_id", data.get("call_id", ""))
+            open_tools[data.get("call_id", span.span_id)] = span
+        elif kind == "tool.result":
+            span = open_tools.pop(data.get("call_id", ""), None)
+            if span is not None:
+                span.ended_at = ts
+                span.set_attribute("ok", data.get("ok", True))
+                span.finish("ok" if data.get("ok", True) else "error")
+        elif kind in {"llm.request", "llm.response"}:
+            span = stack[0].child(kind, kind="llm")
+            span.started_at = ts
+            span.ended_at = ts
+            span.set_attributes({key: value for key, value in data.items()
+                                 if isinstance(value, (str, int, float, bool))})
+            span.finish()
+        elif kind == "run.finished":
+            trace.root.set_attribute("stop_reason", data.get("stop_reason", ""))
+            trace.root.ended_at = ts
+    trace.finish()
+    return trace
 
 
 __all__ = [
     "MAX_EVENTS_PER_SPAN",
-    "STATUSES",
-    "STATUS_ERROR",
-    "STATUS_OK",
-    "STATUS_UNSET",
+    "MAX_SPANS_PER_TRACE",
+    "SPAN_STATUS",
     "Span",
     "SpanEvent",
+    "Trace",
     "Tracer",
-    "current_span",
-    "iter_trace",
-    "load_spans",
-    "tracer_from_config",
+    "trace_from_events",
 ]

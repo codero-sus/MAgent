@@ -1,187 +1,101 @@
 # Quickstart
 
-This guide goes from a checkout to a real MAgent run through Cortex LLMHoster. It also shows the offline path used by CI and development.
+Five minutes from a clone to an agent that uses tools, memory and citations.
 
-## 1. Check Python
-
-MAgent supports CPython 3.11 and newer:
+## 1. Check the installation
 
 ```bash
-python3 --version
+python -m magent version        # or `magent version` after pip install -e .
+python -m magent doctor         # every check should pass or warn
 ```
 
-No mandatory package is installed at runtime. Packaging uses Hatchling, but running from a checkout needs only the standard library.
+`doctor` probes the backend, the sandbox, guardrails, memory, sessions, plugins,
+skills and disk. A `warn` on the backend means Cortex LLMHoster is not running
+yet, so MAgent fell back to its offline echo backend.
 
-## 2. Install MAgent
+## 2. Talk to your own models
+
+Start Cortex LLMHoster, then:
 
 ```bash
-git clone https://github.com/codero-sus/MAgent.git
-cd MAgent
-python3 -m pip install -e . --no-deps
-magent version
+magent models                    # list what Cortex serves
+magent cortex state              # admin view: runtime, hardware, metrics
+magent ask "explain what you can do"
 ```
 
-Without installation:
+Point MAgent at a different host with `MAGENT_CORTEX_URL`, choose a model with
+`--model`, or force the offline backend with `--offline`.
 
-```bash
-PYTHONPATH=src python3 -m magent --help
-```
-
-The product is **MAgent**; `magent` is the executable and import package.
-
-## 3. Start Cortex LLMHoster
-
-Follow Cortex's own repository instructions. Its defaults, which MAgent uses, are:
-
-- root URL: `http://127.0.0.1:8624`;
-- liveness: `GET /health`;
-- readiness: `GET /ready`;
-- model list: `GET /v1/models`;
-- inference: `POST /v1/chat/completions`;
-- control plane: `/admin/api`.
-
-Check it directly:
-
-```bash
-curl http://127.0.0.1:8624/health
-curl http://127.0.0.1:8624/ready
-curl http://127.0.0.1:8624/v1/models
-```
-
-If authentication is enabled:
-
-```bash
-export MAGENT_CORTEX_API_KEY='replace-me'
-```
-
-Set a non-default URL when needed:
-
-```bash
-export MAGENT_CORTEX_URL='http://127.0.0.1:8624'
-```
-
-`MAGENT_CORTEX_*` variables take precedence over Cortex's generic variables.
-
-## 4. Diagnose the connection
-
-```bash
-magent doctor
-magent cortex status
-magent cortex models
-```
-
-`doctor` checks the interpreter, package, configuration, backend, Cortex reachability, model list, tool registry, sandbox, workspace, memory, sessions, plugins, and improvement manifest. A Cortex connection failure is expected when deliberately working offline.
-
-## 5. Run a task
-
-```bash
-magent run 'Read README.md and summarize the project in five bullets'
-```
-
-Useful options:
-
-```bash
-magent run --model MODEL_ID --persona coder --workspace . 'Run the tests and explain failures'
-magent run --no-tools 'Answer without tools'
-magent run --dry-run 'Show which operations would be attempted'
-magent run -v 'Explain the repository'
-```
-
-Interactive mode:
-
-```bash
-magent chat
-```
-
-Inside chat, `/help`, `/model`, `/persona`, `/tools`, `/stats`, `/clear`, `/verbose`, and `/quit` control the session.
-
-## 6. Run offline
-
-The echo backend opens no socket and returns deterministic text:
-
-```bash
-magent --offline run 'hello'
-# echo:hello
-```
-
-Python:
+## 3. Use it from Python
 
 ```python
-from magent import Agent, EchoBackend
+from magent import Agent, build_backend
 
-agent = Agent(backend=EchoBackend(), workspace=".")
-result = agent.run("hello")
-assert result.output == "echo:hello"
+agent = Agent(backend=build_backend())
+result = agent.run("what tools do you have?")
+print(result.output)
+print(f"{result.usage.total_tokens} tokens in {result.duration_ms:.0f} ms")
 ```
 
-The testing package also has a scripted backend that asks for a tool, consumes its result, and answers. That lets the complete agent loop run in CI without a model.
+## 4. Give it tools and a workspace
 
-## 7. Inspect tools
+```python
+from magent.agent import Agent
+from magent.llm.factory import build_backend
+from magent.tools import default_registry
+
+agent = Agent(backend=build_backend(), workspace=".", registry=default_registry())
+result = agent.run("read README.md and list the three most important sections")
+for step in result.steps:
+    for call in step.tool_calls:
+        print("called", call.name, call.arguments)
+```
+
+Tools run inside a sandbox: paths are resolved and jailed to the workspace,
+denied patterns win over allowed ones, and dangerous commands are refused
+outright. See [tools.md](tools.md).
+
+## 5. Remember something
+
+```python
+from magent.memory import build_store
+
+store = build_store()
+store.add("the deploy key lives in ~/.config/magent/secrets.toml", kind="fact", tags=["ops"])
+store.save()
+
+for entry in store.search("where is the deploy key"):
+    print(entry.score, entry.content)
+```
+
+## 6. Answer from your own documents
 
 ```bash
-magent tools categories
-magent tools list --category files
-magent tools show read_file
-magent tools schema calculate
+magent rag ingest docs/
+magent rag search --query "how do guardrails work"
 ```
 
-MAgent loads 113 built-in tools in 16 categories. A tool declares JSON Schema, risk, side effects, timeout, output limit, tags, and approval requirements.
+```python
+from magent.rag import Retriever
 
-## 8. Add configuration
+retriever = Retriever()
+retriever.ingest_directory("docs")
+result = retriever.retrieve("how do guardrails work", limit=3)
+print(result.context)          # numbered, cited context
+print(result.verify("..."))    # are the citations real?
+```
+
+## 7. Evaluate it
 
 ```bash
-magent config init --file ./magent.toml
-magent config validate
-magent config show
+magent eval sample --output evals/smoke.json
+magent eval --dataset evals/smoke.json --threshold 0.9
 ```
 
-Then edit `magent.toml`:
+The exit code is non-zero below the threshold, so it drops straight into CI.
 
-```toml
-[model]
-backend = "cortex"
-model = ""
-fallback_to_echo = true
+## Next
 
-[agent]
-loop_mode = "react"
-max_iterations = 12
-persona = "assistant"
-
-[tools]
-workspace = "."
-approval_mode = "dangerous"
-allow_network = false
-```
-
-Environment and CLI overrides remain higher precedence:
-
-```bash
-magent --set agent.max_iterations=4 run 'Do one bounded task'
-```
-
-## 9. Start the web console
-
-```bash
-magent serve
-```
-
-Open `http://127.0.0.1:8700/`. The server binds only to loopback by default. A public bind is refused unless an API key is supplied:
-
-```bash
-export MAGENT_SERVER_KEY="$(magent serve --generate-key -q)"
-magent serve --host 0.0.0.0 --server-key "$MAGENT_SERVER_KEY"
-```
-
-## 10. Verify the checkout
-
-```bash
-make test
-make smoke
-make smoke-tools
-make verify
-# or all four:
-make check
-```
-
-All checks run without external network access or a live Cortex process.
+* [agents.md](agents.md) for loop modes, plans and streaming
+* [guardrails.md](guardrails.md) before you let an agent touch a real system
+* [cli.md](cli.md) for the full command list

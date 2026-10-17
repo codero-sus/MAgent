@@ -1,77 +1,88 @@
-"""Output rendering: results to text, JSON, or Markdown, plus live feedback.
+"""Rendering agent output for humans and machines.
 
-Two halves that share one set of options:
+Public API:
 
-- :mod:`magent.output.renderer` formats finished work - a :class:`RunResult`,
-  tool calls, usage, errors, statistics.
-- :mod:`magent.output.terminal` shows work in progress - a :class:`Printer`,
-  a :class:`Spinner`, a :class:`ProgressBar`.
+:class:`ResultRenderer` / :class:`RenderOptions`
+    turn a :class:`~magent.types.RunResult` into terminal text, JSON, YAML, CSV
+    or Markdown, honouring ``OutputConfig``;
+:class:`Spinner`
+    animated progress for long runs, auto-disabled on non-tty streams;
+:func:`render_value` / :func:`to_yaml` / :func:`to_csv` / :func:`to_markdown`
+    format-agnostic payload rendering, including a dependency-free YAML emitter;
+:func:`render_markdown`
+    Markdown to ANSI conversion for model answers;
+:class:`OutputSink` and friends
+    where text goes: console, buffer, file, tee, timestamp, null.
 
-Build options once from the resolved config and pass them everywhere, so a
-piped JSON run and an interactive terminal run cannot disagree about colour,
-verbosity, or whether animation is allowed::
-
-    opts = OutputOptions.from_config(settings)
-    printer = Printer(opts)
-    with Spinner("thinking", printer=printer):
-        result = agent.run(task)
-    printer.write(render_result(result, options=opts))
+>>> from magent.output import render_value, render_markdown, to_yaml
+>>> render_value({"a": 1}, "yaml")
+'a: 1'
+>>> "b:" in to_yaml({"a": 1, "b": [1, 2]})
+True
+>>> "bold" in render_markdown("**bold**", color=False)
+True
 """
 
 from __future__ import annotations
 
-from .renderer import (
-    DEFAULT_WIDTH,
-    FORMATS,
-    VERBOSITY_LEVELS,
-    OutputOptions,
-    plain,
-    render_error,
-    render_messages,
-    render_progress,
-    render_result,
-    render_result_json,
-    render_result_markdown,
-    render_result_text,
-    render_session_info,
-    render_stats,
-    render_tool_call,
-    render_tool_result,
-    render_usage,
-)
-from .terminal import (
-    DEFAULT_SPINNER_INTERVAL,
-    Printer,
-    ProgressBar,
-    Spinner,
-    is_interactive,
-    progress,
-    spinner,
-)
+from .format import (DEFAULT_FORMAT, FORMATS, YAML_INDENT, dump_formats, iter_records,
+                     normalize_format, parse_format_choice, render_jsonl, render_value, to_csv,
+                     to_markdown, to_plain, to_text, to_yaml, write_formatted)
+from .markdown import (MarkdownOptions, bullet_list, extract_code_blocks, inline,
+                       looks_like_markdown, plain_text, render_code_block, render_diff,
+                       render_heading, render_list, render_markdown, render_table,
+                       summarize_markdown)
+from .render import (LEVEL_STYLES, MAX_THOUGHT_CHARS, MAX_TOOL_OUTPUT, RenderOptions,
+                     ResultRenderer, Spinner, print_run, render_run)
+from .sink import (BufferSink, ConsoleSink, FileSink, NullSink, OutputSink, TeeSink,
+                   TimestampSink, build_sink, capture_lines, redirect_stdout, write_capture)
 
 __all__ = [
-    "DEFAULT_SPINNER_INTERVAL",
-    "DEFAULT_WIDTH",
+    "DEFAULT_FORMAT",
     "FORMATS",
-    "VERBOSITY_LEVELS",
-    "OutputOptions",
-    "Printer",
-    "ProgressBar",
+    "LEVEL_STYLES",
+    "MAX_THOUGHT_CHARS",
+    "MAX_TOOL_OUTPUT",
+    "YAML_INDENT",
+    "BufferSink",
+    "ConsoleSink",
+    "FileSink",
+    "MarkdownOptions",
+    "NullSink",
+    "OutputSink",
+    "RenderOptions",
+    "ResultRenderer",
     "Spinner",
-    "is_interactive",
-    "plain",
-    "progress",
-    "render_error",
-    "render_messages",
-    "render_progress",
-    "render_result",
-    "render_result_json",
-    "render_result_markdown",
-    "render_result_text",
-    "render_session_info",
-    "render_stats",
-    "render_tool_call",
-    "render_tool_result",
-    "render_usage",
-    "spinner",
+    "TeeSink",
+    "TimestampSink",
+    "build_sink",
+    "bullet_list",
+    "capture_lines",
+    "dump_formats",
+    "extract_code_blocks",
+    "inline",
+    "iter_records",
+    "looks_like_markdown",
+    "normalize_format",
+    "parse_format_choice",
+    "plain_text",
+    "print_run",
+    "redirect_stdout",
+    "render_code_block",
+    "render_diff",
+    "render_heading",
+    "render_jsonl",
+    "render_list",
+    "render_markdown",
+    "render_run",
+    "render_table",
+    "render_value",
+    "summarize_markdown",
+    "to_csv",
+    "to_markdown",
+    "to_plain",
+    "to_text",
+    "to_yaml",
+    "write_capture",
+    "write_formatted",
 ]

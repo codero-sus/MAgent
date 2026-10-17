@@ -54,32 +54,23 @@ class BackendRequest:
     def from_config(cls, config: Any) -> BackendRequest:
         """Build a request from a loaded :class:`~magent.config.Config`.
 
-        The resolved configuration splits backend concerns across three
-        sections - ``[model]`` chooses the backend and model ids, ``[server]``
-        carries the Cortex URL, credentials and timeouts, ``[cache]`` controls
-        response caching - so all three are read here. An ``api_key`` written as
-        a secret reference (``env:CORTEX_API_KEY``, ``file:~/.key``) is resolved
-        rather than passed through literally.
-
-        Args:
-            config: a resolved :class:`~magent.config.Config`; anything else
-                yields defaults
+        The request is assembled from MAgent's real configuration sections -
+        ``[model]``, ``[server]`` and ``[cache]`` - because a request derived from
+        anywhere else would silently ignore the file the user actually edited.
         """
-        model = getattr(config, "model", None)
-        server = getattr(config, "server", None)
-        if model is None and server is None:
+        llm = getattr(config, "llm", None)
+        model = getattr(config, "model", llm)
+        server = getattr(config, "server", llm)
+        cache = getattr(config, "cache", llm)
+        if model is None and server is None and cache is None:
             return cls()
-        cache = getattr(config, "cache", None)
-        from ..secrets import is_secret_reference, resolve_secret
-
-        raw_key = str(getattr(server, "api_key", "") or "")
-        api_key = resolve_secret(raw_key) if is_secret_reference(raw_key) else raw_key
+        base_url = str(getattr(server, "base_url", "") or getattr(llm, "base_url", "") or "")
         return cls(
             kind=str(getattr(model, "backend", "auto") or "auto"),
             model=str(getattr(model, "model", "") or ""),
             embedding_model=str(getattr(model, "embedding_model", "") or ""),
-            base_url=str(getattr(server, "base_url", "") or ""),
-            api_key=api_key,
+            base_url=base_url,
+            api_key=str(getattr(server, "api_key", "") or ""),
             timeout=float(getattr(server, "timeout", 120.0) or 120.0),
             api_prefix=str(getattr(server, "api_prefix", "/v1") or "/v1"),
             verify_ssl=bool(getattr(server, "verify_ssl", True)),
@@ -312,9 +303,23 @@ def _probe_cortex(url: str, *, timeout: float = 3.0) -> bool:
         client.close()
 
 
-def build_backend(**kwargs: Any) -> BaseBackend:
-    """Module level shortcut: build a backend from keyword overrides."""
-    return BackendFactory().build(BackendRequest.from_env(), **kwargs)
+def build_backend(config: Any = None, *, offline: bool | None = None, **kwargs: Any) -> BaseBackend:
+    """Build a backend from configuration plus keyword overrides.
+
+    Precedence: an explicit ``config`` wins over the environment, because a user
+    who edited ``magent.toml`` means it.  ``offline=True`` forces the echo
+    backend, which is what ``--offline`` and the test suite use.
+
+    Args:
+        config: a loaded :class:`~magent.config.Config`
+        offline: force the dependency-free echo backend
+        **kwargs: :class:`BackendRequest` fields, e.g. ``kind`` or ``model``
+    """
+    if offline:
+        return build_offline_backend(kwargs.get("model") or "echo-small")
+    request = (BackendRequest.from_config(config) if config is not None
+               else BackendRequest.from_env())
+    return BackendFactory().build(request, **kwargs)
 
 
 def build_offline_backend(model: str = "echo-small") -> EchoBackend:

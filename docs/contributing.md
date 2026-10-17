@@ -1,137 +1,80 @@
 # Contributing
 
-Contributions should preserve MAgent's zero-mandatory-dependency design, Cortex HTTP boundary, safety defaults, naming, tests, and verified-improvement contract.
+## Layout
 
-## Naming
+```
+src/magent/
+├── agent.py            the loop, plans, reflection, streaming
+├── config.py            layering, profiles, env, redaction
+├── errors.py            63 typed errors with codes and exit codes
+├── paths.py             XDG layout, MAGENT_HOME, repo discovery
+├── tools/               registry, schema inference, sandbox, approval, 113 builtins
+├── llm/                 backends, router, cache, retry, tokens, usage, Cortex admin
+├── memory/              entries, embeddings, vector index, ranking, store, window
+├── rag/                 chunkers, index, re-ranking, citations, retriever
+├── guardrails/          injection, PII, policy, audit, manager
+├── context/             blocks, compression, workspace scanning, builder
+├── prompts/             templates, personas, system prompt builder
+├── agents/              presets, teams, handoffs
+├── skills/              skill parsing and the built-in library
+├── plugins/             manifests, loader, hooks
+├── session/             records, store, transcripts, manager
+├── eval/                datasets, metrics, runner, reports
+├── observability/       spans, traces, metrics, wiring
+├── concurrency/         pools, rate limits, debouncing
+├── output/              formats, markdown, rendering, sinks
+├── server/              HTTP API, router, web UI
+├── cli/                 parser, context, REPL, 26 commands
+├── testing/             fake Cortex server, fixtures, scripted backends
+└── utils/               13 dependency-free helper modules
+```
 
-The product is **MAgent**. Use exactly that spelling in prose, terminal banners, server headers, docs, and user-facing errors.
+## Conventions
 
-Use lowercase only where required by technical convention:
+* **stdlib only** in `src/magent`. No third-party imports, ever.
+* **Sync first.** Threads, not asyncio, for parallelism.
+* **Type hints everywhere**, `from __future__ import annotations`, and ruff at
+  100 columns.
+* **Every public symbol has a docstring.** The improvements manifest requires it,
+  and `make verify` fails without one.
+* **Report, do not raise**, at the edges: a missing session, an unreachable
+  model, a plugin that will not import and a broken summariser are all data the
+  caller can inspect. Raise only when the caller asked for a contract
+  (`StructuredOutputError`) or cannot continue.
+* **No dead code.** If a branch cannot be reached, delete it.
 
-- `import magent`;
-- the `magent` command;
-- `src/magent` and user data/config paths;
-- `MAGENT_*` environment variables (uppercase namespace);
-- distribution-name normalization by package indexes.
+## Adding a tool
 
-Never write “Magent.”
+1. Put it in the module that matches its category under `src/magent/tools/builtin/`.
+2. Decorate it with `@tool(...)`, annotate the arguments, document them in a
+   Google-style docstring.
+3. If it touches paths, commands or URLs, take `context: ToolContext` and let the
+   sandbox check first.
+4. Add it to the module's `TOOLS` tuple.
+5. Add a test in `tests/test_tools.py` and run `make smoke-tools` - the harness
+   fails if a registered tool is neither exercised nor explicitly skipped.
+6. Regenerate the manifest: `make improvements`.
 
-## Setup
+## Adding a CLI command
+
+Add a `Command(...)` to the matching `COMMANDS` tuple in
+`src/magent/cli/commands/`. The parser, `--help`, `magent commands` and shell
+completions follow from it. Give it examples - `magent <cmd> --help` shows them.
+
+## Checklist before a pull request
 
 ```bash
-git clone https://github.com/codero-sus/MAgent.git
-cd MAgent
-python3 -m pip install -e . --no-deps
-make test
+make fmt          # ruff format
+make lint         # ruff check
+make type         # mypy on src
+make test         # 438 tests
+make smoke        # end-to-end, offline
+make smoke-tools  # every registered tool
+make verify       # the improvements manifest
 ```
 
-Optional developer tools:
+## Working with Cortex LLMHoster
 
-```bash
-python3 -m pip install ruff mypy build
-```
-
-They are not runtime dependencies.
-
-## Design rules
-
-1. **Cortex stays external.** Do not copy, patch, vendor, or redistribute Cortex source. Integrate only through its public HTTP API.
-2. **Stdlib baseline.** New mandatory behavior must work on stock Python 3.11+. Optional accelerators need graceful fallbacks.
-3. **Sync first.** Use bounded threads for concurrency; preserve deterministic result ordering.
-4. **Typed values.** Cross-layer data belongs in dataclasses/enums with JSON round trips.
-5. **Explicit failures.** Return typed `ToolResult` failures or raise a specific `MAgentError`; never silently shrink a batch.
-6. **Safe defaults.** Loopback binds, redaction, bounded bodies/output, approvals, and path checks must not regress.
-7. **No guessed APIs.** Read the implementation/contract before calling a method. Add an integration test for wire behavior.
-8. **Public docstrings.** Every public symbol requires a meaningful docstring; the improvement collector/verifier relies on it.
-9. **No filler improvements.** Add implementation/tests/docs, regenerate the manifest, and let the count follow.
-
-## Repository layout
-
-```text
-src/magent/          package
-  llm/               Cortex, base backends, routing, cache, tokens, usage
-  tools/             schema/registry/sandbox/approval + built-ins
-  memory/            short- and long-term memory
-  rag/               chunking/index/retrieval/reranking/citations
-  guardrails/        policy checks, budgets, audit
-  plugins/           manifests, hooks, loader
-  server/            embedded HTTP server/routes/console
-  cli/               argparse and command handlers
-  testing/           deterministic backends and fake Cortex
-tests/               stdlib unittest suite
-docs/                documentation included in wheel
-examples/            runnable examples
-scripts/             smoke and improvement verification
-```
-
-## Tests
-
-```bash
-make test
-make unit
-make smoke
-make smoke-tools
-make verify
-make check
-```
-
-Tests must isolate XDG homes and workspaces. Use `magent.testing.FakeCortexServer` for HTTP contract tests and `make_backend` for tool-loop tests. Use real loopback sockets when testing framing, CORS, authentication, or SSE.
-
-When fixing a defect:
-
-1. reproduce it with the narrowest failing test;
-2. verify whether the assumption or implementation is wrong by reading the real API;
-3. fix the implementation;
-4. retain a regression assertion;
-5. run the relevant module and then `make check`.
-
-## Tools
-
-Every built-in tool module exports `TOOLS` and `load(registry)`. Tool handlers:
-
-- declare complete type hints and Google-style argument docs;
-- use `ToolContext` for workspace/policy/services;
-- perform sandbox checks before side effects;
-- declare risk and side-effect flags honestly;
-- bound output and time;
-- avoid global mutable state;
-- remain testable offline.
-
-## HTTP and streams
-
-- Bind test servers to `127.0.0.1` and ephemeral ports.
-- Correct HTTP/1.1 streams use chunked framing.
-- Apply CORS and auth on error paths as well as success.
-- Never send duplicate framing/response headers.
-- Sanitize URLs before including them in errors.
-- Close pools, streams, servers, and worker threads in `finally`.
-
-## Configuration
-
-Do not mutate shared section objects when deriving policy; `Config.clone()` exists for independent copies. Keep precedence and environment mappings documented. Unknown plugin tables belong in `Config.extra`.
-
-## Generated manifest
-
-Never hand-edit `IMPROVEMENTS.md`:
-
-```bash
-PYTHONPATH=src python3 scripts/count_improvements.py --write
-PYTHONPATH=src python3 scripts/verify_improvements.py
-```
-
-Commit the regenerated file with the implementation.
-
-## Documentation
-
-Commands and signatures in docs should be executed or compared with `--help`/`inspect.signature`. Explain security limits directly. Include a runnable example for a major new surface.
-
-## Pull request checklist
-
-- [ ] Product spelling is MAgent in prose.
-- [ ] No Cortex source is copied.
-- [ ] No mandatory dependency was added without an architectural reason.
-- [ ] Public symbols have docstrings/type hints.
-- [ ] New behavior has tests; bug fixes have regressions.
-- [ ] `make check` passes.
-- [ ] `IMPROVEMENTS.md` is regenerated and verifies.
-- [ ] README/docs/examples are updated where behavior is user-visible.
+MAgent talks to Cortex over HTTP only. Cortex's licence forbids modification and
+redistribution, so never vendor, patch or copy its source into this repository -
+and never make MAgent depend on an undocumented endpoint.

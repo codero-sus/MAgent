@@ -1,81 +1,62 @@
-# MAgent documentation
+# MAgent
 
-**MAgent — Mr. Agent, Powerful.** is a Python 3.11+ agent framework, operator CLI, and embedded HTTP service designed around [Cortex LLMHoster](https://github.com/codero-sus/Cortex_LLMHoster).
+**Mr. Agent, Powerful.** A local-first Python agent framework for
+[Cortex LLMHoster](https://github.com/codero-sus/Cortex_LLMHoster): it plans,
+calls tools, remembers, retrieves, guards itself, works in teams and explains
+what it did - with **zero mandatory dependencies** beyond the standard library.
 
-MAgent is sync-first and has no mandatory third-party runtime dependencies. It includes its own stdlib HTTP transport and connection pool, SSE parser, tool engine, approval policy, SQLite memory, retrieval stack, event bus, metrics, plugin loader, evaluation runner, terminal UI, threaded HTTP server, and deterministic test doubles.
+## What you get
 
-> The product name is **MAgent**. `magent` is the lowercase import package and command.
+| Area | What is in the box |
+| --- | --- |
+| Agent loop | react, plan, reflect and single-shot modes, streaming, structured output |
+| Tools | 113 built-in tools in 16 categories behind a deny-by-default sandbox |
+| Backends | Cortex LLMHoster over its OpenAI-compatible `/v1` API, plus echo and scripted backends for tests |
+| Memory | hybrid BM25 + vector long-term store, token-aware short-term window, rolling summaries |
+| Retrieval | five chunking strategies, hybrid search, MMR re-ranking, citations you can verify |
+| Safety | injection detection, PII redaction, policy rules, budgets, rate limits, audit log, approvals |
+| Teams | sequential, round-robin, supervisor, debate and vote orchestration with handoffs |
+| Sessions | JSON records, transcripts, search, export, pruning, redaction |
+| Extensibility | presets, personas, prompt templates, skills, plugins with hooks |
+| Interface | a 26-command CLI, an interactive REPL, a REST API and a single-page web UI |
+| Quality | evaluation datasets with deterministic metrics, tracing, metrics, 438 tests, 3,266 verified improvements |
 
-## Read this first
-
-1. [Quickstart](quickstart.md) — install, connect Cortex, and run the first task.
-2. [Cortex LLMHoster](cortex.md) — exact routes, authentication, streaming, and admin control.
-3. [Agents](agents.md) — loop modes, `RunResult`, events, and structured output.
-4. [Tools](tools.md) — schemas, the 113 built-ins, sandbox policy, and approvals.
-5. [Configuration](configuration.md) — TOML, profiles, environment variables, and precedence.
-
-## Build applications
-
-- [Python API](api.md)
-- [Memory and state](memory-and-state.md)
-- [RAG and citations](rag.md)
-- [Guardrails](guardrails.md)
-- [Plugins and hooks](plugins.md)
-- [HTTP server and web console](server.md)
-
-## Operate and verify
-
-- [CLI reference](cli.md)
-- [Testing](testing.md)
-- [Verified improvements](improvements.md)
-- [Contributing](contributing.md)
-
-## Architecture at a glance
-
-```text
-CLI / Python / HTTP / web console
-               │
-               ▼
-       Agent + prompt builder
-     ┌─────────┼─────────┐
-     ▼         ▼         ▼
-  Tools     Memory/RAG  Guardrails
-     └─────────┼─────────┘
-               ▼
-      LLMBackend / router
-               │ HTTP/SSE
-               ▼
-       Cortex LLMHoster
-```
-
-Cross-cutting services are sessions, events, traces, metrics, usage/cost budgets, concurrency pools, evaluation, and plugins.
-
-## What “built for Cortex” means
-
-MAgent does not guess an OpenAI-like route and hope it works. The client implements Cortex's root liveness/readiness endpoints, its OpenAI-compatible inference routes under `/v1`, and its administrative control plane under `/admin/api`. The test suite exercises these over real loopback HTTP against a protocol-compatible fake hoster. Cortex remains an external process; its source is never vendored or modified.
-
-## Guarantees
-
-- A model-requested tool is schema-validated before execution.
-- Every dispatch returns a `ToolResult`, including validation and handler failures.
-- Agent loops have iteration, tool, token, time, and cost bounds.
-- Public HTTP binds require an API key.
-- Configuration and diagnostic output redact secrets by default.
-- Plugin entrypoints cannot leave their directory, and sensitive permissions require explicit approval.
-- Each row of `IMPROVEMENTS.md` resolves to a real path and symbol.
-
-## Get help
+## Install
 
 ```bash
-magent --help
-magent doctor
-magent COMMAND --help
-make help
+git clone https://github.com/codero-sus/MAgent
+cd MAgent
+pip install -e .          # optional: the package runs from a checkout too
+magent doctor             # checks backend, sandbox, memory, sessions, plugins
 ```
 
-For a completely offline check:
+## First run
 
 ```bash
-magent --offline run 'hello'
-make check
+magent ask "what does magent.config do?"          # one question, one answer
+magent run "summarise docs/" --stream             # watch it work
+magent chat                                       # interactive session
+magent serve                                      # REST API + web UI
 ```
+
+## Pages
+
+* [quickstart.md](quickstart.md) - five minutes from clone to a working agent
+* [agents.md](agents.md) - the loop, options, plans, reflection, streaming
+* [tools.md](tools.md) - writing tools, schemas, the sandbox, approvals
+* [providers.md](providers.md) - Cortex LLMHoster, routing, caching, token budgets
+* [memory-and-rag.md](memory-and-rag.md) - remembering things and citing sources
+* [guardrails.md](guardrails.md) - injection, PII, policy, budgets, audit
+* [teams.md](teams.md) - multi-agent orchestration and handoffs
+* [cli.md](cli.md) - every command with examples
+* [api.md](api.md) - the HTTP API and the web UI
+* [plugins-and-skills.md](plugins-and-skills.md) - extending MAgent
+* [testing.md](testing.md) - the test suite, evaluation and the improvements manifest
+* [contributing.md](contributing.md) - layout, conventions, how to add a tool
+
+## Licence note
+
+MAgent talks to Cortex LLMHoster over HTTP. Cortex is licensed
+`LicenseRef-Cortex-Personal-NonCommercial-NoModification-NoRedistribution`, so
+MAgent never vendors, patches or copies its source - integration happens through
+the documented API only.

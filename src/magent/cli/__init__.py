@@ -1,58 +1,63 @@
-"""The MAgent command line interface.
+"""The command line interface: 26 subcommands over one shared context.
 
-Three modules make up the CLI:
+Public API:
 
-- :mod:`magent.cli.args` resolves configuration and output settings once per
-  invocation and hands every command a :class:`~magent.cli.args.CliContext`.
-- :mod:`magent.cli.main` assembles the parser, dispatches to a command, and owns
-  the exit-code contract.
-- :mod:`magent.cli.commands` holds one module per command group; each exposes a
-  ``register(subparsers)`` function, so adding a command means adding a module
-  rather than editing a growing dispatch chain.
+:func:`main` / :func:`run`
+    the entry points wired to the ``magent`` console script;
+:class:`CliContext`
+    lazy access to the backend, tools, memory, sessions, guardrails, retrieval,
+    skills and observability, shared by every command;
+:class:`Command` / :func:`all_commands`
+    the registry each command module contributes to;
+:func:`build_parser`
+    the argparse tree, built from that registry.
 
-Run it as ``magent`` after installing, or as ``python -m magent`` from a source
-checkout.
+>>> from magent.cli import all_commands
+>>> "doctor" in [item.name for item in all_commands()]
+True
 """
 
 from __future__ import annotations
 
-from .args import (
-    EXIT_CONFIG,
-    EXIT_ERROR,
-    EXIT_INTERRUPT,
-    EXIT_OK,
-    EXIT_USAGE,
-    GLOBAL_FLAGS,
-    CliContext,
-    add_global_flags,
-    build_context,
-    confirm,
-    fail,
-    handle_error,
-    parse_overrides,
-    read_prompt_text,
-)
-from .main import DESCRIPTION, EPILOG, PROG, build_parser, command_names, main
+from .commands import Command, CommandGroup, build_groups, command, describe_commands
+from .commands.registry import COMMAND_MODULES, all_commands, find
+from .context import CliContext, build_context, offline_context
+from .main import (ERROR_EXIT_CODES, EXIT_BACKEND, EXIT_CONFIG, EXIT_FAILURE, EXIT_GUARDRAIL,
+                   EXIT_INTERRUPTED, EXIT_OK, EXIT_PERMISSION, EXIT_USAGE, exit_code_for, main,
+                   run)
+from .parser import build_parser, command_help, completions, known_commands, parse_args
+from .repl import Repl, SlashCommand, run_repl
 
 __all__ = [
-    "DESCRIPTION",
-    "EPILOG",
+    "COMMAND_MODULES",
+    "ERROR_EXIT_CODES",
+    "EXIT_BACKEND",
     "EXIT_CONFIG",
-    "EXIT_ERROR",
-    "EXIT_INTERRUPT",
+    "EXIT_FAILURE",
+    "EXIT_GUARDRAIL",
+    "EXIT_INTERRUPTED",
     "EXIT_OK",
+    "EXIT_PERMISSION",
     "EXIT_USAGE",
-    "GLOBAL_FLAGS",
-    "PROG",
     "CliContext",
-    "add_global_flags",
+    "Command",
+    "CommandGroup",
+    "Repl",
+    "SlashCommand",
+    "all_commands",
     "build_context",
+    "build_groups",
     "build_parser",
-    "command_names",
-    "confirm",
-    "fail",
-    "handle_error",
+    "command",
+    "command_help",
+    "completions",
+    "describe_commands",
+    "exit_code_for",
+    "find",
+    "known_commands",
     "main",
-    "parse_overrides",
-    "read_prompt_text",
+    "offline_context",
+    "parse_args",
+    "run",
+    "run_repl",
 ]

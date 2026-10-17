@@ -1,143 +1,98 @@
-# Tools, sandbox, and approvals
+# Tools
 
-MAgent ships 113 tools in 16 categories. Each tool is an ordinary Python callable plus a `ToolSpec`: model-facing description, JSON Schema, return type, category/tags, risk, side-effect flags, timeout, output limit, parallel-safety declaration, examples, aliases, dependency hints, and approval policy.
+MAgent ships 113 tools in 16 categories. They are ordinary Python functions with
+type hints and docstrings; the JSON schema the model sees is inferred from both.
 
-## Inspect the catalogue
-
-```bash
-magent tools categories
-magent tools list
-magent tools list --category files
-magent tools search 'regular expression'
-magent tools show read_file
-magent tools schema calculate read_file
-magent tools risks
-```
-
-Categories are `cortex`, `data`, `datetime`, `files`, `git`, `math`, `media`, `memory`, `meta`, `output`, `python`, `search`, `shell`, `system`, `text`, and `web`.
-
-## Define a tool
+## Writing a tool
 
 ```python
-from magent import tool
-from magent.tools import ToolContext
+from pathlib import Path
+from magent.tools import tool
 
-@tool(
-    category="inventory",
-    risk="read",
-    filesystem=True,
-    tags=["warehouse"],
-    timeout=5.0,
-    output_limit=8_000,
-)
-def inventory_count(sku: str, *, context: ToolContext) -> dict[str, object]:
-    """Read an inventory count from the current workspace.
+@tool(name="count_lines", description="Count the lines in a file", category="files")
+def count_lines(path: Path, skip_blank: bool = False) -> dict:
+    """Count lines, optionally ignoring blank ones.
 
     Args:
-        sku: product identifier
-        context: constrained invocation context supplied by MAgent
+        path: file to read, inside the workspace
+        skip_blank: ignore lines that are empty after stripping
     """
-    path = context.resolve_path("inventory.json")
-    # Read and parse path here.
-    return {"sku": sku, "count": 0, "source": str(path)}
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    if skip_blank:
+        lines = [line for line in lines if line.strip()]
+    return {"lines": len(lines)}
 ```
 
-Register it:
+The decorator keeps the function callable, and attaches the tool:
 
 ```python
-from magent import default_registry
-
-registry = default_registry()
-registry.register(inventory_count)
+count_lines("README.md")               # normal call
+count_lines.tool.run({"path": "README.md", "skip_blank": True})
+count_lines.tool.spec.parameters       # JSON Schema
 ```
 
-The decorator derives schemas from type hints, defaults, literals/enums, lists, dictionaries, optionals, dataclasses, and Google-style `Args:` documentation. The function remains callable as normal Python; its `.tool` attribute contains the built `Tool`.
+Inference handles `Literal` (enum), `X | None` (nullable), `Path` (path format),
+defaults (not required) and `**Argument docs in the docstring** (descriptions).
 
-## Dispatch contract
+## Categories and risk
+
+| Category | Count | Examples |
+| --- | --- | --- |
+| files | 17 | `read_file`, `write_file`, `edit_file`, `glob_files`, `delete_path` |
+| cortex | 12 | `cortex_health`, `cortex_models`, `cortex_model_control` |
+| text | 10 | `text_stats`, `regex_replace`, `extractive_summary` |
+| git | 10 | `git_status`, `git_diff`, `git_commit`, `git_blame` |
+| data | 8 | `csv_read`, `csv_stats`, `sqlite_query`, `group_aggregate` |
+| shell / system | 12 | `run_command`, `run_script`, `env_get`, `list_processes` |
+| python | 3 | `python_exec`, `inspect_python`, `audit_python` |
+| web / search | 7 | `fetch_page`, `http_get`, `search_documents` |
+
+Risk levels are ordered: `safe < read < write < execute < destructive < network`.
+`--preset sandboxed` caps the whole run at `max_risk="read"`.
+
+## The sandbox
+
+Every path a tool touches is resolved and checked against the workspace jail:
 
 ```python
-from magent.types import ToolCall
-from magent.tools import ToolContext
+from magent.tools import build_sandbox
+from magent.config import default_config
 
-call = ToolCall(id="call_1", name="calculate", arguments={"expression": "6*7"})
-result = registry.dispatch(call, ToolContext(workspace="."))
+sandbox = build_sandbox(default_config(), workspace=".")
+sandbox.check_read("docs/index.md").allowed        # True
+sandbox.check_read("/etc/hostname")                 # raises PermissionDeniedError
+sandbox.check_command("ls -la").allowed             # True
+sandbox.check_command("rm -rf /")                   # raises
 ```
 
-Dispatch always returns `ToolResult`:
+Deny rules win over allow rules, `ALWAYS_DENIED_COMMANDS` can never be allowed,
+byte ceilings apply to reads and writes, and every decision is recorded for
+`magent doctor` and the audit log. Set `[tools].deny_action = "warn"` to get a
+decision object instead of an exception.
 
-- valid arguments are safely coerced;
-- missing/wrong arguments return `tool_validation_error`;
-- unknown names return `tool_not_found` and suggestions;
-- handler exceptions return `tool_execution_error`;
-- call id and name always survive;
-- output is truncated to the declared limit;
-- timings and category/risk metadata are recorded.
+> The sandbox is a guardrail, not a security boundary. Run untrusted code in a
+> container.
 
-A failure is sent back to Cortex as a `tool` message so the model can change approach. It does not tear down the entire run unless configured to stop on errors.
+## Approvals
 
-## Parallel dispatch
-
-`dispatch_many()` uses a bounded thread pool only when every selected tool declares `parallel_safe=True`. Results are returned in input order even when they complete out of order. An overall timeout still produces one failure result per input call, so Cortex is never left waiting for a missing tool-call id.
-
-## Risk ladder
-
-```text
-safe < read < write < execute < destructive < network
+```toml
+[tools]
+approval_mode = "dangerous"   # never | ask | always | dangerous
 ```
 
-Risk is independent of side-effect flags. A tool can also declare:
+* `never` - no prompts (use for CI with a read-only tool set)
+* `ask` - prompt for anything risky
+* `dangerous` - prompt for `write`/`execute`/`destructive`/`network`
+* `always` - prompt for every call
 
-- `destructive`;
-- `network`;
-- `filesystem`;
-- `executes_code`;
-- `requires_approval`.
+A denied request becomes a tool result with `error_code="approval_denied"`; the
+run continues and the model is told the call was refused.
 
-These fields feed filtering, prompts, approvals, and operator displays.
+## Calling tools directly
 
-## Approval modes
-
-| Mode | Behavior |
-|---|---|
-| `never` | deny approval-requiring actions |
-| `ask` | ask for every action covered by policy |
-| `always` | approve automatically |
-| `dangerous` | ask only for risky/destructive actions (default) |
-
-Per-tool decisions, allow/deny lists, and an audit history are supported. `magent run --yes` is an explicit non-interactive approval. `--dry-run` validates calls and returns the would-run tool/arguments without invoking the handler.
-
-The server returns HTTP 428 `approval_required` for a protected direct tool call unless the request explicitly includes approval.
-
-## Sandbox policy
-
-`ToolContext.resolve_path()` resolves relative paths under the workspace and delegates to `Sandbox`. Policy controls:
-
-- allowed roots and read/write outside-root behavior;
-- denied/sensitive path patterns;
-- command allow/deny lists and executable policy;
-- network enablement and domain allow/deny lists;
-- process, read, write, and output bounds;
-- subprocess environment passthrough and umask.
-
-Built-in file, shell, Python, web, Git, and media tools call these checks before side effects.
-
-> The Python-level sandbox is defense in depth for framework tools. It is not an OS isolation boundary against deliberately hostile Python. Run untrusted code/plugins in a container, VM, or restricted operating-system account.
-
-## Built-in tool design
-
-Every module under `magent.tools.builtin` exports `TOOLS` and `load(registry)`. Loading failures are reported; they are not silently swallowed. Optional external executables are checked at call time and represented in tool requirements.
-
-Safe tools are covered by `scripts/smoke_tools.py`, which executes 83 cases in an isolated workspace. Network, live Cortex, repository-mutating Git, and persistent-memory cases are deliberately skipped there and covered by targeted tests/fakes instead.
-
-## Filtering for one run
-
-```python
-result = agent.run(
-    "Analyze the CSV",
-    tools=["csv_read", "csv_stats", "compute_statistics"],
-    disabled_tools=["run_command"],
-    allow_network=False,
-)
+```bash
+magent tools                                   # list everything
+magent tools --category git --format json
+magent tools inspect write_file                # the exact schema the model sees
+magent tools call calculate '{"expression": "6*7"}'
 ```
-
-Filtering creates a run-local view; it does not mutate the shared registry.

@@ -1,482 +1,295 @@
-"""Transcripts: an ordered record of what a conversation did.
+"""Transcripts: read a session as text, and turn text back into messages.
 
-A transcript is more than the message list. It carries the tool calls, their
-results, timings, token usage, and the model that produced each turn, because
-that is what makes a past run reviewable. Storing only the messages would
-answer "what was said" but not "why".
-
-Three renderings are provided: ``jsonl`` for machines and resume, ``markdown``
-for humans and issue reports, and ``text`` for terminals. Redaction happens
-once, at write time, so a secret that appeared in a tool result never reaches
-disk in any format.
+``magent sessions show`` and the web UI both need a readable rendering of a
+stored conversation, and ``magent sessions import`` needs the inverse - a plain
+``user:`` / ``assistant:`` transcript parsed back into
+:class:`~magent.types.Message` objects.  Keeping both directions here means the
+round trip is tested in one place.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import re
+from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from ..secrets import redact_mapping, redact_text
-from ..types import Message, now_ts
-from ..utils.timeutil import format_duration, format_timestamp
+from ..secrets import redact_text
+from ..types import Message
+from ..utils.files import atomic_write_text, ensure_dir
+from ..utils.text import ellipsize, normalize_newlines
+from ..utils.timeutil import format_timestamp
+from .record import SessionRecord
 
-FORMATS: tuple[str, ...] = ("jsonl", "markdown", "text", "json")
-"""Transcript renderings this module can produce."""
+TRANSCRIPT_FORMATS: tuple[str, ...] = ("markdown", "text", "json", "jsonl", "html")
+"""Transcript renderings this module produces."""
 
-ROLE_LABELS: dict[str, str] = {
-    "system": "System",
-    "user": "User",
-    "assistant": "MAgent",
-    "tool": "Tool",
-}
-"""Human-readable names for each message role."""
+SPEAKER_RE = re.compile(r"^\s*(user|assistant|system|tool)\s*[:>]?\s*(.*)$", re.IGNORECASE)
+"""Line that starts a new speaker turn in a plain transcript."""
 
+TOOL_LINE_RE = re.compile(r"^\s*(?:->|→)\s*(\w+)\s*\((.*)\)\s*$")
+"""Tool-call line emitted in text transcripts."""
 
-@dataclass(slots=True)
-class TranscriptEntry:
-    """One turn, with everything needed to replay or audit it."""
-
-    role: str
-    content: str = ""
-    timestamp: float = field(default_factory=now_ts)
-    model: str = ""
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    tool_name: str = ""
-    tool_call_id: str = ""
-    tokens: int = 0
-    duration_ms: float = 0.0
-    step: int = 0
-    run_id: str = ""
-    ok: bool = True
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_message(cls, message: Message, *, step: int = 0, run_id: str = "",
-                     model: str = "", duration_ms: float = 0.0,
-                     timestamp: float | None = None) -> TranscriptEntry:
-        """Build an entry from a :class:`~magent.types.Message`.
-
-        Args:
-            message: the turn to record
-            step: agent loop iteration this turn belongs to
-            run_id: identifier of the run that produced the turn
-            model: model that generated an assistant turn
-            duration_ms: generation time for an assistant turn
-            timestamp: explicit time, defaulting to now
-        """
-        calls = [call.to_dict() if hasattr(call, "to_dict") else dict(call)
-                 for call in (message.tool_calls or [])]
-        return cls(
-            role=message.role,
-            content=message.content or "",
-            timestamp=timestamp if timestamp is not None else now_ts(),
-            model=model if message.role == "assistant" else "",
-            tool_calls=calls,
-            tool_name=getattr(message, "name", "") or "",
-            tool_call_id=getattr(message, "tool_call_id", "") or "",
-            duration_ms=duration_ms,
-            step=step,
-            run_id=run_id,
-        )
-
-    @classmethod
-    def from_tool_result(cls, result: Any, *, step: int = 0, run_id: str = "") -> TranscriptEntry:
-        """Build an entry from a :class:`~magent.types.ToolResult`."""
-        content = getattr(result, "content", "")
-        if not isinstance(content, str):
-            content = json.dumps(content, default=str, ensure_ascii=False)
-        return cls(
-            role="tool",
-            content=content,
-            tool_name=getattr(result, "name", "") or "",
-            tool_call_id=getattr(result, "call_id", "") or "",
-            duration_ms=float(getattr(result, "duration_ms", 0.0) or 0.0),
-            ok=bool(getattr(result, "ok", True)),
-            step=step,
-            run_id=run_id,
-            metadata={
-                "error_code": getattr(result, "error_code", "") or "",
-                "truncated": bool(getattr(result, "truncated", False)),
-            },
-        )
-
-    def redacted(self, *, extra_secrets: Sequence[str] = ()) -> TranscriptEntry:
-        """Return a copy with secrets removed from content and metadata."""
-        secrets = list(extra_secrets)
-        return TranscriptEntry(
-            role=self.role,
-            content=redact_text(self.content, extra_secrets=secrets),
-            timestamp=self.timestamp,
-            model=self.model,
-            tool_calls=[redact_mapping(call, extra_secrets=secrets) for call in self.tool_calls],
-            tool_name=self.tool_name,
-            tool_call_id=self.tool_call_id,
-            tokens=self.tokens,
-            duration_ms=self.duration_ms,
-            step=self.step,
-            run_id=self.run_id,
-            ok=self.ok,
-            metadata=redact_mapping(self.metadata, extra_secrets=secrets),
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return the JSON-serializable form written to disk."""
-        payload: dict[str, Any] = {
-            "role": self.role,
-            "content": self.content,
-            "timestamp": round(self.timestamp, 3),
-        }
-        if self.model:
-            payload["model"] = self.model
-        if self.tool_calls:
-            payload["tool_calls"] = self.tool_calls
-        if self.tool_name:
-            payload["tool"] = self.tool_name
-        if self.tool_call_id:
-            payload["tool_call_id"] = self.tool_call_id
-        if self.tokens:
-            payload["tokens"] = self.tokens
-        if self.duration_ms:
-            payload["duration_ms"] = round(self.duration_ms, 1)
-        if self.step:
-            payload["step"] = self.step
-        if self.run_id:
-            payload["run_id"] = self.run_id
-        if not self.ok:
-            payload["ok"] = False
-        if self.metadata:
-            payload["metadata"] = self.metadata
-        return payload
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TranscriptEntry:
-        """Rebuild an entry from its stored dict."""
-        metadata = dict(data.get("metadata") or {})
-        return cls(
-            role=str(data.get("role", "user")),
-            content=str(data.get("content", "") or ""),
-            timestamp=float(data.get("timestamp", 0.0) or now_ts()),
-            model=str(data.get("model", "") or ""),
-            tool_calls=list(data.get("tool_calls") or []),
-            tool_name=str(data.get("tool", "") or data.get("tool_name", "") or ""),
-            tool_call_id=str(data.get("tool_call_id", "") or ""),
-            tokens=int(data.get("tokens", 0) or 0),
-            duration_ms=float(data.get("duration_ms", 0.0) or 0.0),
-            step=int(data.get("step", 0) or 0),
-            run_id=str(data.get("run_id", "") or ""),
-            ok=bool(data.get("ok", True)),
-            metadata=metadata,
-        )
-
-    def to_message(self) -> Message:
-        """Return the entry as a :class:`~magent.types.Message` for replay."""
-        return Message(role=self.role, content=self.content, name=self.tool_name or None,
-                       tool_call_id=self.tool_call_id or None)
-
-    def label(self) -> str:
-        """Return the display label for this entry's role."""
-        return ROLE_LABELS.get(self.role, self.role.title())
-
-    @property
-    def chars(self) -> int:
-        """Length of the recorded content."""
-        return len(self.content)
+MAX_ANSWER_CHARS = 100_000
+"""Safety ceiling for one rendered answer."""
 
 
-@dataclass(slots=True)
-class Transcript:
-    """An ordered list of entries plus run-level metadata."""
+def render_transcript(record: SessionRecord, *, fmt: str = "markdown", redact: bool = False,
+                      include_metadata: bool = True, max_chars: int = MAX_ANSWER_CHARS) -> str:
+    """Render a session record in one of :data:`TRANSCRIPT_FORMATS`.
 
-    entries: list[TranscriptEntry] = field(default_factory=list)
-    title: str = ""
-    started_at: float = field(default_factory=now_ts)
-    finished_at: float = 0.0
-    model: str = ""
-    run_id: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def add(self, entry: TranscriptEntry) -> TranscriptEntry:
-        """Append one entry and return it."""
-        self.entries.append(entry)
-        return entry
-
-    def add_message(self, message: Message, **kwargs: Any) -> TranscriptEntry:
-        """Append a message, converting it to an entry."""
-        return self.add(TranscriptEntry.from_message(message, **kwargs))
-
-    def extend(self, messages: Iterable[Message], **kwargs: Any) -> int:
-        """Append many messages, returning how many were added."""
-        count = 0
-        for message in messages:
-            self.add_message(message, **kwargs)
-            count += 1
-        return count
-
-    def close(self, *, finished_at: float | None = None) -> Transcript:
-        """Mark the transcript finished."""
-        self.finished_at = finished_at or now_ts()
-        return self
-
-    def redacted(self, *, extra_secrets: Sequence[str] = ()) -> Transcript:
-        """Return a copy with every entry redacted."""
-        return Transcript(
-            entries=[entry.redacted(extra_secrets=extra_secrets) for entry in self.entries],
-            title=redact_text(self.title, extra_secrets=list(extra_secrets)),
-            started_at=self.started_at,
-            finished_at=self.finished_at,
-            model=self.model,
-            run_id=self.run_id,
-            metadata=redact_mapping(self.metadata, extra_secrets=list(extra_secrets)),
-        )
-
-    def messages(self, *, include_tools: bool = True) -> list[Message]:
-        """Return the transcript as replayable messages."""
-        return [entry.to_message() for entry in self.entries
-                if include_tools or entry.role != "tool"]
-
-    @property
-    def duration_ms(self) -> float:
-        """Wall-clock duration, or the sum of turn durations if unfinished."""
-        if self.finished_at:
-            return max(0.0, (self.finished_at - self.started_at) * 1000.0)
-        return sum(entry.duration_ms for entry in self.entries)
-
-    @property
-    def tokens(self) -> int:
-        """Total tokens recorded across entries."""
-        return sum(entry.tokens for entry in self.entries)
-
-    def tool_counts(self) -> dict[str, int]:
-        """Count tool invocations by name."""
-        counts: dict[str, int] = {}
-        for entry in self.entries:
-            if entry.role == "tool" and entry.tool_name:
-                counts[entry.tool_name] = counts.get(entry.tool_name, 0) + 1
-        return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
-
-    def failures(self) -> list[TranscriptEntry]:
-        """Return entries that recorded an error."""
-        return [entry for entry in self.entries if not entry.ok]
-
-    def summary(self) -> dict[str, Any]:
-        """Return aggregate statistics for display and indexing."""
-        roles: dict[str, int] = {}
-        for entry in self.entries:
-            roles[entry.role] = roles.get(entry.role, 0) + 1
-        return {
-            "entries": len(self.entries),
-            "roles": roles,
-            "chars": sum(entry.chars for entry in self.entries),
-            "tokens": self.tokens,
-            "duration_ms": round(self.duration_ms, 1),
-            "tools": self.tool_counts(),
-            "failures": len(self.failures()),
-            "model": self.model,
-            "run_id": self.run_id,
-            "title": self.title,
-            "started_at": self.started_at,
-        }
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return the full JSON form."""
-        return {
-            "title": self.title,
-            "started_at": round(self.started_at, 3),
-            "finished_at": round(self.finished_at, 3) if self.finished_at else None,
-            "model": self.model,
-            "run_id": self.run_id,
-            "metadata": self.metadata,
-            "summary": self.summary(),
-            "entries": [entry.to_dict() for entry in self.entries],
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Transcript:
-        """Rebuild a transcript from :meth:`to_dict` output."""
-        return cls(
-            entries=[TranscriptEntry.from_dict(item) for item in (data.get("entries") or [])],
-            title=str(data.get("title", "") or ""),
-            started_at=float(data.get("started_at", 0.0) or now_ts()),
-            finished_at=float(data.get("finished_at") or 0.0),
-            model=str(data.get("model", "") or ""),
-            run_id=str(data.get("run_id", "") or ""),
-            metadata=dict(data.get("metadata") or {}),
-        )
-
-    def render(self, fmt: str = "markdown", *, width: int = 100,
-               include_metadata: bool = False) -> str:
-        """Render the transcript in one of :data:`FORMATS`.
-
-        Args:
-            fmt: ``jsonl``, ``json``, ``markdown``, or ``text``
-            width: wrap column for the text and markdown renderings
-            include_metadata: show per-entry metadata dictionaries
-        """
-        active = fmt if fmt in FORMATS else "markdown"
-        if active == "jsonl":
-            return render_jsonl(self)
-        if active == "json":
-            return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
-        if active == "text":
-            return render_text(self, width=width, include_metadata=include_metadata)
-        return render_markdown(self, width=width, include_metadata=include_metadata)
-
-    def __len__(self) -> int:
-        """Number of entries."""
-        return len(self.entries)
-
-    def __iter__(self) -> Any:
-        """Iterate entries."""
-        return iter(self.entries)
-
-
-def render_jsonl(transcript: Transcript) -> str:
-    """Render one JSON object per line, the on-disk resume format."""
-    header = {"type": "meta", "title": transcript.title, "model": transcript.model,
-              "run_id": transcript.run_id, "started_at": round(transcript.started_at, 3)}
-    lines = [json.dumps(header, ensure_ascii=False)]
-    for entry in transcript.entries:
-        payload = entry.to_dict()
-        payload["type"] = "entry"
-        lines.append(json.dumps(payload, ensure_ascii=False))
-    if transcript.finished_at:
-        lines.append(json.dumps({"type": "end", "summary": transcript.summary()},
-                                ensure_ascii=False, default=str))
-    return "\n".join(lines) + "\n"
-
-
-def parse_jsonl(text: str) -> Transcript:
-    """Parse :func:`render_jsonl` output back into a transcript.
-
-    Malformed lines are skipped rather than fatal: a partially written file
-    from an interrupted run should still resume.
+    Args:
+        record: the session
+        fmt: ``markdown``, ``text``, ``json``, ``jsonl`` or ``html``
+        redact: scrub secret-looking strings
+        include_metadata: add the header block with model, tokens and tags
+        max_chars: clip each message body
     """
-    transcript = Transcript()
-    for line in (text or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        kind = payload.get("type")
-        if kind == "meta":
-            transcript.title = str(payload.get("title", "") or "")
-            transcript.model = str(payload.get("model", "") or "")
-            transcript.run_id = str(payload.get("run_id", "") or "")
-            transcript.started_at = float(payload.get("started_at", 0.0) or now_ts())
-        elif kind == "end":
-            summary = payload.get("summary") or {}
-            transcript.finished_at = float(summary.get("started_at", 0.0) or now_ts())
-            transcript.metadata["summary"] = summary
-        else:
-            transcript.entries.append(TranscriptEntry.from_dict(payload))
-    return transcript
+    active = (fmt or "markdown").strip().lower()
+    if active == "json":
+        payload = record.to_dict()
+        text = json.dumps(payload, indent=2, default=str, ensure_ascii=False)
+    elif active == "jsonl":
+        text = "\n".join(json.dumps(message.to_dict(), default=str, ensure_ascii=False)
+                         for message in record.messages)
+    elif active == "html":
+        text = transcript_html(record, include_metadata=include_metadata, max_chars=max_chars)
+    elif active == "text":
+        text = transcript_text(record, include_metadata=include_metadata, max_chars=max_chars)
+    else:
+        text = transcript_markdown(record, include_metadata=include_metadata, max_chars=max_chars)
+    return redact_text(text) if redact else text
 
 
-def render_markdown(transcript: Transcript, *, width: int = 100,
-                    include_metadata: bool = False) -> str:
-    """Render a transcript as readable Markdown."""
+def _header_lines(record: SessionRecord) -> list[str]:
+    """Metadata lines shared by the markdown and text renderings."""
+    lines = [
+        f"Session: {record.id}",
+        f"Title: {record.title or '(untitled)'}",
+        f"Created: {format_timestamp(record.created_at)}",
+        f"Updated: {format_timestamp(record.updated_at)}",
+    ]
+    if record.model:
+        lines.append(f"Model: {record.model}")
+    if record.workspace:
+        lines.append(f"Workspace: {record.workspace}")
+    if record.tags:
+        lines.append(f"Tags: {', '.join(record.tags)}")
+    lines.append(f"Messages: {len(record.messages)}  Turns: {len(record.turns)}  "
+                 f"Tokens: {record.usage.total_tokens}  Cost: {record.cost:.4f}")
+    return lines
+
+
+def transcript_markdown(record: SessionRecord, *, include_metadata: bool = True,
+                        max_chars: int = MAX_ANSWER_CHARS) -> str:
+    """Render a session as a Markdown document."""
+    parts: list[str] = [f"# {record.title or 'Session'}"]
+    if include_metadata:
+        parts.append("\n".join(f"- {line}" for line in _header_lines(record)))
+    if record.summary:
+        parts.append("## Summary\n\n" + record.summary)
+    if not record.messages and record.turns:
+        # Records built from turns alone still deserve a readable transcript.
+        exchange: list[str] = ["## Conversation"]
+        for turn in record.turns:
+            exchange.append(f"**USER**\n\n{turn.prompt}")
+            if turn.answer:
+                exchange.append(f"**ASSISTANT**\n\n{ellipsize(turn.answer, max_chars)}")
+        parts.append("\n\n".join(exchange))
+    if record.messages:
+        body: list[str] = ["## Conversation"]
+        for message in record.messages:
+            role = str(getattr(message.role, "value", message.role)).upper()
+            text = ellipsize(normalize_newlines(message.text()), max_chars)
+            body.append(f"**{role}**\n\n{text}")
+            for call in message.tool_calls or []:
+                body.append(f"- tool call: `{call.name}` "
+                            f"`{json.dumps(call.arguments, default=str)[:200]}`")
+        parts.append("\n\n".join(body))
+    if record.turns:
+        rows = ["## Turns", "", "| # | Prompt | Seconds | Tools | Tokens | OK |",
+                "| --- | --- | --- | --- | --- | --- |"]
+        for turn in record.turns:
+            rows.append(f"| {turn.index + 1} | {_cell(turn.prompt)} | {turn.seconds:.2f} | "
+                        f"{', '.join(turn.tools) or '-'} | {turn.tokens} | "
+                        f"{'yes' if turn.ok else 'no'} |")
+        parts.append("\n".join(rows))
+    return "\n\n".join(parts).strip() + "\n"
+
+
+def _cell(text: str, limit: int = 60) -> str:
+    """Escape one Markdown table cell."""
+    return ellipsize((text or "").replace("\n", " ").replace("|", "\\|"), limit)
+
+
+def transcript_text(record: SessionRecord, *, include_metadata: bool = True,
+                    max_chars: int = MAX_ANSWER_CHARS) -> str:
+    """Render a session as plain text suitable for a terminal or a log."""
     lines: list[str] = []
-    title = transcript.title or "MAgent session"
-    lines.append(f"# {title}")
-    lines.append("")
-    stats = transcript.summary()
-    lines.append(f"- Started: {format_timestamp(transcript.started_at)}")
-    if transcript.finished_at:
-        lines.append(f"- Duration: {format_duration(transcript.duration_ms / 1000.0)}")
-    if transcript.model:
-        lines.append(f"- Model: `{transcript.model}`")
-    lines.append(f"- Turns: {stats['entries']} | tools: "
-                 f"{', '.join(f'{name} x{count}' for name, count in stats['tools'].items()) or 'none'}")
-    if stats["failures"]:
-        lines.append(f"- Failures: {stats['failures']}")
-    lines.append("")
-    for entry in transcript.entries:
-        stamp = format_timestamp(entry.timestamp, fmt="%H:%M:%S")
-        suffix = f" · `{entry.tool_name}`" if entry.tool_name else ""
-        timing = f" · {format_duration(entry.duration_ms / 1000.0)}" if entry.duration_ms else ""
-        marker = "" if entry.ok else " · **failed**"
-        lines.append(f"### {entry.label()}{suffix} — {stamp}{timing}{marker}")
+    if include_metadata:
+        lines.extend(_header_lines(record))
         lines.append("")
-        body = _wrap(entry.content.strip(), width) if entry.content.strip() else "_no content_"
-        lines.append(body)
-        for call in entry.tool_calls:
-            name = call.get("function", {}).get("name") if isinstance(call, dict) else ""
-            arguments = call.get("function", {}).get("arguments") if isinstance(call, dict) else ""
-            lines.append("")
-            lines.append(f"- calls `{name or 'tool'}` with `{_short(str(arguments), 200)}`")
-        if include_metadata and entry.metadata:
-            lines.append("")
-            lines.append(f"- metadata: `{json.dumps(entry.metadata, ensure_ascii=False, default=str)}`")
+    if record.summary:
+        lines.append(f"summary: {record.summary}")
+        lines.append("")
+    for message in record.messages:
+        role = str(getattr(message.role, "value", message.role))
+        lines.append(f"{role}: {ellipsize(normalize_newlines(message.text()), max_chars)}")
+        for call in message.tool_calls or []:
+            args = json.dumps(call.arguments, default=str, ensure_ascii=False)
+            lines.append(f"  -> {call.name}({ellipsize(args, 160)})")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_text(transcript: Transcript, *, width: int = 100,
-                include_metadata: bool = False) -> str:
-    """Render a transcript as plain text for a terminal."""
-    lines: list[str] = []
-    rule = "-" * min(width, 72)
-    if transcript.title:
-        lines.append(transcript.title)
-        lines.append(rule)
-    for entry in transcript.entries:
-        stamp = format_timestamp(entry.timestamp, fmt="%H:%M:%S")
-        label = entry.label() + (f" ({entry.tool_name})" if entry.tool_name else "")
-        flag = "" if entry.ok else " [failed]"
-        lines.append(f"[{stamp}] {label}{flag}")
-        if entry.content.strip():
-            lines.append(_indent(_wrap(entry.content.strip(), width - 2), "  "))
-        for call in entry.tool_calls:
-            function = call.get("function", {}) if isinstance(call, dict) else {}
-            lines.append(f"  -> {function.get('name', 'tool')} {_short(str(function.get('arguments', '')), 160)}")
-        if include_metadata and entry.metadata:
-            lines.append(f"  .. {json.dumps(entry.metadata, ensure_ascii=False, default=str)}")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+def transcript_html(record: SessionRecord, *, include_metadata: bool = True,
+                    max_chars: int = MAX_ANSWER_CHARS) -> str:
+    """Render a session as a standalone HTML page."""
+    from html import escape
+
+    styles = (
+        "body{font:14px/1.55 ui-sans-serif,system-ui,sans-serif;margin:0;padding:24px;"
+        "background:#0f1115;color:#e6e6e6}"
+        "h1{font-size:20px;margin:0 0 8px}"
+        ".meta{color:#8b93a7;font-size:12px;margin-bottom:16px}"
+        ".msg{margin:12px 0;padding:10px 14px;border-radius:10px;background:#171a21}"
+        ".role{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#7fd1ff;"
+        "margin-bottom:4px}"
+        ".msg.assistant .role{color:#9be29b}"
+        ".msg.system .role{color:#8b93a7}"
+        "pre{white-space:pre-wrap;margin:0;font:13px/1.5 ui-monospace,SFMono-Regular,monospace}"
+        ".tool{color:#c9a0ff;font-size:12px;margin-top:6px}"
+    )
+    parts: list[str] = ["<!doctype html>", "<html lang='en'><head><meta charset='utf-8'>",
+                        f"<title>{escape(record.title or record.id)}</title>",
+                        f"<style>{styles}</style></head><body>"]
+    parts.append(f"<h1>{escape(record.title or 'Session')}</h1>")
+    if include_metadata:
+        parts.append("<div class='meta'>" + "<br>".join(escape(line) for line in
+                                                        _header_lines(record)) + "</div>")
+    if record.summary:
+        parts.append(f"<div class='msg system'><div class='role'>summary</div>"
+                     f"<pre>{escape(record.summary)}</pre></div>")
+    for message in record.messages:
+        role = str(getattr(message.role, "value", message.role))
+        text = ellipsize(normalize_newlines(message.text()), max_chars)
+        block = [f"<div class='msg {escape(role)}'><div class='role'>{escape(role)}</div>",
+                 f"<pre>{escape(text)}</pre>"]
+        for call in message.tool_calls or []:
+            args = json.dumps(call.arguments, default=str, ensure_ascii=False)
+            block.append(f"<div class='tool'>→ {escape(call.name)}({escape(args[:200])})</div>")
+        block.append("</div>")
+        parts.append("".join(block))
+    parts.append("</body></html>")
+    return "\n".join(parts)
 
 
-def _wrap(text: str, width: int) -> str:
-    """Wrap text to a column width, preserving existing line breaks."""
-    limit = max(20, int(width))
-    out: list[str] = []
-    for paragraph in text.split("\n"):
-        words = paragraph.split()
-        if not words:
-            out.append("")
+def export_transcript(record: SessionRecord, path: str | Path, *, fmt: str = "markdown",
+                      redact: bool = False) -> Path:
+    """Write a transcript to disk, deriving the format from the extension."""
+    target = Path(path).expanduser()
+    ensure_dir(target.parent)
+    active = fmt
+    if target.suffix.lower() in {".md", ".markdown"}:
+        active = "markdown"
+    elif target.suffix.lower() in {".html", ".htm"}:
+        active = "html"
+    elif target.suffix.lower() == ".jsonl":
+        active = "jsonl"
+    elif target.suffix.lower() == ".json":
+        active = "json"
+    elif target.suffix.lower() == ".txt":
+        active = "text"
+    return atomic_write_text(target, render_transcript(record, fmt=active, redact=redact))
+
+
+def parse_transcript(text: str, *, default_role: str = "user") -> list[Message]:
+    """Parse a ``user:`` / ``assistant:`` transcript back into messages.
+
+    Lines that do not start with a known speaker continue the previous message,
+    so multi-paragraph answers survive the round trip.  Tool-call lines are
+    dropped: they are rendered output, not conversation state.
+    """
+    messages: list[Message] = []
+    current_role = default_role
+    buffer: list[str] = []
+
+    def flush() -> None:
+        body = "\n".join(buffer).strip()
+        buffer.clear()
+        if body:
+            messages.append(Message(role=current_role, content=body))
+
+    for raw_line in normalize_newlines(text or "").split("\n"):
+        if TOOL_LINE_RE.match(raw_line):
             continue
-        line = ""
-        for word in words:
-            if len(line) + len(word) + 1 <= limit:
-                line = f"{line} {word}".strip()
-            else:
-                out.append(line)
-                line = word
-        out.append(line)
-    return "\n".join(out)
+        match = SPEAKER_RE.match(raw_line)
+        if match and match.group(1).lower() in {"user", "assistant", "system", "tool"}:
+            flush()
+            current_role = match.group(1).lower()
+            rest = match.group(2)
+            if rest:
+                buffer.append(rest)
+            continue
+        buffer.append(raw_line)
+    flush()
+    return messages
 
 
-def _indent(text: str, prefix: str) -> str:
-    """Prefix every line of ``text``."""
-    return "\n".join(prefix + line for line in text.split("\n"))
+def messages_to_transcript(messages: Iterable[Message], *, include_roles: bool = True) -> str:
+    """Render raw messages as a plain transcript."""
+    lines: list[str] = []
+    for message in messages:
+        role = str(getattr(message.role, "value", message.role))
+        text = normalize_newlines(message.text())
+        lines.append(f"{role}: {text}" if include_roles else text)
+    return "\n".join(lines)
 
 
-def _short(text: str, limit: int) -> str:
-    """Truncate to one line no longer than ``limit``."""
-    flat = " ".join((text or "").split())
-    return flat if len(flat) <= limit else flat[: max(0, limit - 1)] + "…"
+def transcript_stats(record: SessionRecord) -> dict[str, Any]:
+    """Character and turn statistics for a transcript."""
+    chars = sum(len(message.text()) for message in record.messages)
+    roles: dict[str, int] = {}
+    for message in record.messages:
+        key = str(getattr(message.role, "value", message.role))
+        roles[key] = roles.get(key, 0) + 1
+    return {
+        "messages": len(record.messages),
+        "turns": len(record.turns),
+        "chars": chars,
+        "words": sum(len(message.text().split()) for message in record.messages),
+        "roles": roles,
+        "tokens": record.usage.total_tokens,
+        "seconds": round(sum(turn.seconds for turn in record.turns), 3),
+        "tools": record.tool_usage(),
+    }
+
+
+def diff_transcripts(before: Sequence[Message], after: Sequence[Message]) -> dict[str, Any]:
+    """Compare two message lists, for resume/compaction diagnostics."""
+    before_ids = {message.id for message in before}
+    after_ids = {message.id for message in after}
+    return {
+        "before": len(before),
+        "after": len(after),
+        "added": len(after_ids - before_ids),
+        "removed": len(before_ids - after_ids),
+        "kept": len(before_ids & after_ids),
+    }
 
 
 __all__ = [
-    "FORMATS",
-    "ROLE_LABELS",
-    "Transcript",
-    "TranscriptEntry",
-    "parse_jsonl",
-    "render_jsonl",
-    "render_markdown",
-    "render_text",
+    "MAX_ANSWER_CHARS",
+    "SPEAKER_RE",
+    "TOOL_LINE_RE",
+    "TRANSCRIPT_FORMATS",
+    "diff_transcripts",
+    "export_transcript",
+    "messages_to_transcript",
+    "parse_transcript",
+    "render_transcript",
+    "transcript_html",
+    "transcript_markdown",
+    "transcript_stats",
+    "transcript_text",
 ]

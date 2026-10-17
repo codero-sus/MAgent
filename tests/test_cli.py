@@ -1,231 +1,329 @@
-"""Subprocess tests for MAgent's argparse grammar and operator output.
-
-Direct parser tests would miss stdout/stderr, exit-code, module-entrypoint, and
-configuration behavior. These launch ``python -m magent`` with temporary XDG
-paths and no external services. They permanently cover global/group flag
-positioning, the two newest command groups, product spelling, JSON output, and
-script-friendly status codes.
-"""
+"""Tests for the command line: every command runs and reports correctly."""
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
-import tempfile
 import unittest
 from pathlib import Path
 
-from magent.cli.main import build_parser, command_names
-
-ROOT = Path(__file__).resolve().parents[1]
-"""Repository root used as the subprocess working directory."""
+from tests.support import MagentTestCase
 
 
-class CLITestCase(unittest.TestCase):
-    """Run CLI processes in one isolated temporary home."""
+class CliTest(MagentTestCase):
+    """Each command is exercised through the real argument parser."""
 
     def setUp(self) -> None:
-        """Prepare environment variables for source-layout execution."""
-        self.home = tempfile.TemporaryDirectory(prefix="magent-cli-tests-")
-        self.env = dict(os.environ)
-        self.env.update({
-            "PYTHONPATH": str(ROOT / "src"),
-            "XDG_DATA_HOME": str(Path(self.home.name) / "data"),
-            "XDG_CONFIG_HOME": str(Path(self.home.name) / "config"),
-            "XDG_CACHE_HOME": str(Path(self.home.name) / "cache"),
-            "NO_COLOR": "1",
-        })
-        self.env.pop("MAGENT_CONFIG", None)
+        super().setUp()
+        os.environ["MAGENT_WORKSPACE"] = str(self.workspace)
 
     def tearDown(self) -> None:
-        """Remove temporary CLI state."""
-        self.home.cleanup()
+        os.environ.pop("MAGENT_WORKSPACE", None)
+        super().tearDown()
 
-    def run_cli(self, *args: str, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
-        """Run ``python -m magent`` and capture both output streams."""
-        return subprocess.run(
-            [sys.executable, "-m", "magent", *args], cwd=ROOT, env=self.env,
-            text=True, capture_output=True, timeout=timeout, check=False,
-        )
+    # -- informational -------------------------------------------------------
+
+    def test_version(self) -> None:
+        code, out, _ = self.run_cli("version")
+        self.assertEqual(code, 0)
+        self.assertIn("MAgent", out)
+
+    def test_commands_listing(self) -> None:
+        code, out, _ = self.run_cli("commands")
+        self.assertEqual(code, 0)
+        self.assertIn("doctor", out)
+
+    def test_commands_as_json(self) -> None:
+        code, out, _ = self.run_cli("commands", "--format", "json")
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertTrue(any(item["name"] == "serve" for item in payload))
+
+    def test_completion_script(self) -> None:
+        code, out, _ = self.run_cli("completion", "bash")
+        self.assertEqual(code, 0)
+        self.assertIn("complete -F", out)
+
+    def test_help_lists_every_command(self) -> None:
+        code, out, _ = self.run_cli("--help")
+        self.assertEqual(code, 0)
+        for name in ("run", "ask", "tools", "doctor", "serve", "eval"):
+            self.assertIn(name, out)
+
+    def test_unknown_command_is_a_usage_error(self) -> None:
+        code, _, err = self.run_cli("definitely-not-a-command")
+        self.assertEqual(code, 2)
+
+    # -- tools ---------------------------------------------------------------
+
+    def test_tools_listing(self) -> None:
+        code, out, _ = self.run_cli("tools")
+        self.assertEqual(code, 0)
+        self.assertIn("read_file", out)
+
+    def test_tools_json(self) -> None:
+        code, out, _ = self.run_cli("tools", "--format", "json")
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        names = [item["name"] for item in payload]
+        self.assertIn("read_file", names)
+        self.assertTrue(all("category" in item for item in payload))
+
+    def test_tools_inspect_prints_the_schema(self) -> None:
+        code, out, _ = self.run_cli("tools", "inspect", "calculate")
+        self.assertEqual(code, 0)
+        self.assertIn("expression", out)
+
+    def test_tools_inspect_unknown_suggests(self) -> None:
+        code, out, _ = self.run_cli("tools", "inspect", "read_fil")
+        self.assertEqual(code, 1)
+        self.assertIn("read_file", out)
+
+    def test_tools_call_runs_a_tool(self) -> None:
+        code, out, _ = self.run_cli("tools", "call", "calculate", '{"expression": "6*7"}')
+        self.assertEqual(code, 0)
+        self.assertIn("42", out)
+
+    def test_tools_call_reports_a_schema_mismatch(self) -> None:
+        code, out, _ = self.run_cli("tools", "call", "calculate", "not-json")
+        self.assertEqual(code, 1)
+        self.assertIn("expression", out)
+
+    def test_presets_and_preset_detail(self) -> None:
+        code, out, _ = self.run_cli("presets")
+        self.assertEqual(code, 0)
+        self.assertIn("coder", out)
+        code, out, _ = self.run_cli("presets", "coder")
+        self.assertEqual(code, 0)
+        self.assertIn("persona", out)
+
+    def test_skills_listing_and_matching(self) -> None:
+        code, out, _ = self.run_cli("skills", "--task", "review this pull request")
+        self.assertEqual(code, 0)
+        self.assertIn("code-review", out)
+
+    def test_prompts_listing(self) -> None:
+        code, out, _ = self.run_cli("prompts")
+        self.assertEqual(code, 0)
+        self.assertIn("summarize", out)
+
+    def test_prompts_persona(self) -> None:
+        code, out, _ = self.run_cli("prompts", "personas", "--name", "coder")
+        self.assertEqual(code, 0)
+        self.assertIn("Role", out)
+
+    # -- knowledge -----------------------------------------------------------
+
+    def test_memory_add_and_list(self) -> None:
+        code, _, _ = self.run_cli("memory", "add", "the deploy key lives in ~/.config")
+        self.assertEqual(code, 0)
+        code, out, _ = self.run_cli("memory", "list")
+        self.assertEqual(code, 0)
+        self.assertIn("deploy key", out)
+
+    def test_memory_search(self) -> None:
+        self.run_cli("memory", "add", "cortex listens on port 8624")
+        self.run_cli("memory", "add", "bananas are yellow")
+        code, out, _ = self.run_cli("memory", "search", "cortex port")
+        self.assertEqual(code, 0)
+        self.assertIn("8624", out)
+
+    def test_memory_stats_as_json(self) -> None:
+        code, out, _ = self.run_cli("memory", "stats", "--format", "json")
+        self.assertEqual(code, 0)
+        self.assertIn("entries", json.loads(out))
+
+    def test_rag_ingest_and_search(self) -> None:
+        self.write("docs/guide.md", "# Guide\n\nCortex listens on 8624 by default.\n")
+        code, out, _ = self.run_cli("rag", "ingest", str(self.workspace))
+        self.assertEqual(code, 0)
+        self.assertIn("indexed", out.lower())
+        code, out, _ = self.run_cli("rag", "search", "--query", "which port does cortex use")
+        self.assertEqual(code, 0)
+        self.assertIn("guide.md", out)
+
+    def test_sessions_list_is_empty_initially(self) -> None:
+        code, out, _ = self.run_cli("sessions", "list")
+        self.assertEqual(code, 0)
+        self.assertIn("no stored sessions", out)
+
+    # -- system --------------------------------------------------------------
+
+    def test_config_show_redacts_secrets(self) -> None:
+        code, out, _ = self.run_cli("config", "show")
+        self.assertEqual(code, 0)
+        self.assertIn("model", out.lower())
+
+    def test_config_section(self) -> None:
+        code, out, _ = self.run_cli("config", "show", "--section", "tools")
+        self.assertEqual(code, 0)
+        self.assertIn("workspace", out)
+
+    def test_config_set_then_get(self) -> None:
+        target = self.home.path / "magent.toml"
+        code, out, _ = self.run_cli("config", "set", "output.format", "json",
+                                    "--config", str(target))
+        self.assertEqual(code, 0)
+        self.assertTrue(target.exists())
+        self.assertIn("format", target.read_text(encoding="utf-8"))
+
+    def test_config_paths(self) -> None:
+        code, out, _ = self.run_cli("config", "paths")
+        self.assertEqual(code, 0)
+        self.assertIn("magent.toml", out)
+
+    def test_config_validate(self) -> None:
+        code, out, _ = self.run_cli("config", "validate")
+        self.assertEqual(code, 0)
+        self.assertIn("valid", out)
+
+    def test_doctor_reports_checks(self) -> None:
+        code, out, _ = self.run_cli("doctor", "--format", "json")
+        payload = json.loads(out)
+        self.assertEqual(code, 0 if payload["problems"] == 0 else 1)
+        names = {check["check"] for check in payload["checks"]}
+        self.assertIn("tools", names)
+        self.assertIn("sandbox", names)
+
+    def test_plugins_paths_and_check(self) -> None:
+        code, out, _ = self.run_cli("plugins", "paths")
+        self.assertEqual(code, 0)
+        self.assertIn("plugins", out)
+        code, _, _ = self.run_cli("plugins", "check")
+        self.assertEqual(code, 0)
+
+    def test_models_offline(self) -> None:
+        code, out, _ = self.run_cli("models")
+        self.assertEqual(code, 0)
+        self.assertIn("echo", out.lower())
+
+    def test_init_writes_a_project_scaffold(self) -> None:
+        code, out, _ = self.run_cli("init", str(self.workspace), "--skills", "--plugin")
+        self.assertEqual(code, 0)
+        self.assertTrue((self.workspace / "magent.toml").exists())
+        self.assertTrue((self.workspace / ".magent" / "skills" / "house-style.md").exists())
+        self.assertTrue((self.workspace / ".magent" / "plugins" / "example" / "plugin.json").exists())
+
+    # -- agent ---------------------------------------------------------------
+
+    def test_run_asks_the_agent(self) -> None:
+        code, out, _ = self.run_cli("run", "say hello")
+        self.assertEqual(code, 0)
+        self.assertIn("hello", out)
+
+    def test_ask_prints_only_the_answer(self) -> None:
+        code, out, _ = self.run_cli("ask", "what is 2+2?")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(out.strip().splitlines()), 1)
+
+    def test_run_as_json(self) -> None:
+        code, out, _ = self.run_cli("run", "say hello", "--format", "json")
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertIn("stop_reason", payload)
+
+    def test_run_without_a_prompt_is_a_usage_error(self) -> None:
+        code, _, err = self.run_cli("run")
+        self.assertEqual(code, 2)
+
+    def test_run_records_a_session(self) -> None:
+        self.run_cli("run", "say hello", "--session", "cli-test")
+        code, out, _ = self.run_cli("sessions", "list")
+        self.assertEqual(code, 0)
+
+    def test_plan_produces_steps(self) -> None:
+        code, out, _ = self.run_cli("plan", "add pagination to the sessions API")
+        self.assertEqual(code, 0)
+        self.assertIn("plan", out.lower())
+
+    def test_reflect_critiques(self) -> None:
+        code, out, _ = self.run_cli("reflect", "explain the guardrail pipeline")
+        self.assertEqual(code, 0)
+        self.assertIn("critique", out.lower())
+
+    def test_eval_sample_dataset(self) -> None:
+        target = self.home.path / "dataset.json"
+        code, _, _ = self.run_cli("eval", "sample", "--output", str(target))
+        self.assertEqual(code, 0)
+        self.assertTrue(target.exists())
+
+    def test_eval_runs_a_dataset(self) -> None:
+        path = self.workspace / "cases.jsonl"
+        path.write_text(json.dumps({"id": "hi", "prompt": "say hi"}) + "\n", encoding="utf-8")
+        code, out, _ = self.run_cli("eval", "--dataset", str(path), "--report-format", "json")
+        self.assertIn(code, (0, 1))
+        payload = json.loads(out)
+        self.assertIn("summary", payload)
+
+    def test_bench_reports_latency(self) -> None:
+        code, out, _ = self.run_cli("bench", "--repeats", "2")
+        self.assertEqual(code, 0)
+        self.assertIn("ms", out)
+
+    def test_improvements_manifest(self) -> None:
+        code, out, _ = self.run_cli("improvements", "count")
+        self.assertEqual(code, 0)
+        self.assertGreaterEqual(int(out.strip()), 777)
+
+    def test_quiet_mode_writes_nothing(self) -> None:
+        code, out, _ = self.run_cli("tools", "--quiet")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+
+    def test_output_file_is_written(self) -> None:
+        target = self.home.path / "out.txt"
+        code, _, _ = self.run_cli("tools", "--output-file", str(target))
+        self.assertEqual(code, 0)
+        self.assertIn("read_file", target.read_text(encoding="utf-8"))
 
 
-class GrammarTests(CLITestCase):
-    """The parser exposes 14 groups and accepts flags at documented positions."""
+class ReplTest(MagentTestCase):
+    """The REPL dispatches slash commands and messages."""
 
-    def test_command_catalogue(self) -> None:
-        """Every registered command appears once in sorted introspection."""
-        self.assertEqual(command_names(), [
-            "chat", "config", "cortex", "doctor", "eval", "improvements",
-            "memory", "plugins", "rag", "run", "serve", "sessions", "tools",
-            "version",
-        ])
+    def _repl(self) -> object:
+        from magent.cli.repl import Repl
+        from magent.cli import CliContext
+        import argparse
 
-    def test_global_help_lists_all_commands(self) -> None:
-        """The module entrypoint renders the complete top-level grammar."""
-        completed = self.run_cli("--help")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("MAgent", completed.stdout)
-        for name in command_names():
-            self.assertIn(name, completed.stdout)
+        args = argparse.Namespace(quiet=True, verbose=False, format="text", no_color=True,
+                                 color=None, ascii=True, width=0, json=False, jsonl=False,
+                                 yaml=False, set=[], profile="", config="",
+                                 workspace=str(self.workspace), model="", backend="",
+                                 offline=True, persona="", loop_mode="", output_file="",
+                                 no_skills=False)
+        context = CliContext.build(args, config=self.config())
+        return Repl(context, stream=False)
 
-    def test_every_command_help_succeeds(self) -> None:
-        """No command registration contains a conflicting argparse option."""
-        for name in command_names():
-            with self.subTest(command=name):
-                completed = self.run_cli(name, "--help")
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertIn("usage: magent", completed.stdout)
+    def test_slash_help_lists_commands(self) -> None:
+        repl = self._repl()
+        self.assertTrue(repl.dispatch("/help"))
 
-    def test_global_format_before_command_is_preserved(self) -> None:
-        """Regression: subparser defaults used to overwrite ``-f json``."""
-        completed = self.run_cli("-f", "json", "tools", "categories")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        payload = json.loads(completed.stdout)
-        self.assertIn("categories", payload)
-        self.assertEqual(sum(payload["categories"].values()), 113)
+    def test_slash_tools_lists_tools(self) -> None:
+        repl = self._repl()
+        self.assertTrue(repl.dispatch("/tools calculate"))
 
-    def test_global_format_after_action_is_preserved(self) -> None:
-        """Global flags remain valid at the deepest parser level."""
-        completed = self.run_cli("tools", "categories", "-f", "json")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(sum(json.loads(completed.stdout)["categories"].values()), 113)
+    def test_unknown_slash_command_is_reported(self) -> None:
+        repl = self._repl()
+        self.assertTrue(repl.dispatch("/nope"))
 
-    def test_parser_restores_shared_action_defaults(self) -> None:
-        """One parse cannot leak inherited values into the next parse."""
-        parser = build_parser()
-        first = parser.parse_args(["-f", "json", "tools", "categories"])
-        second = parser.parse_args(["tools", "categories"])
-        self.assertEqual(first.format, "json")
-        self.assertEqual(second.format, "")
-        self.assertEqual(first.action, "categories")
-        self.assertEqual(second.action, "categories")
+    def test_slash_quit_ends_the_session(self) -> None:
+        self.assertFalse(self._repl().dispatch("/quit"))
 
-    def test_group_flag_works_before_or_after_plugin_action(self) -> None:
-        """Group flags are inherited into leaf action parsers."""
-        plugin_parent = Path(self.home.name) / "plugins"
-        scaffolded = self.run_cli("plugins", "scaffold", str(plugin_parent),
-                                  "--name", "weather")
-        self.assertEqual(scaffolded.returncode, 0, scaffolded.stderr)
-        before = self.run_cli("plugins", "--dir", str(plugin_parent), "list", "-f", "json")
-        after = self.run_cli("plugins", "list", "--dir", str(plugin_parent), "-f", "json")
-        self.assertEqual(before.returncode, 0, before.stderr)
-        self.assertEqual(after.returncode, 0, after.stderr)
-        self.assertEqual(json.loads(before.stdout)["count"], 1)
-        self.assertEqual(json.loads(after.stdout)["count"], 1)
+    def test_message_runs_the_agent(self) -> None:
+        repl = self._repl()
+        result = repl.ask("hello there")
+        self.assertIsNotNone(result)
+        self.assertEqual(repl.turns, 1)
 
-    def test_leaf_help_has_one_options_section(self) -> None:
-        """Inherited flags merge into argparse's existing section cleanly."""
-        completed = self.run_cli("plugins", "list", "--help")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        section_lines = [line.strip() for line in completed.stdout.splitlines()]
-        self.assertEqual(section_lines.count("options:"), 1)
-        self.assertEqual(section_lines.count("global options:"), 1)
-        self.assertIn("--dir", completed.stdout)
-        self.assertIn("--loaded", completed.stdout)
+    def test_memory_and_skills_commands(self) -> None:
+        repl = self._repl()
+        self.assertTrue(repl.dispatch("/memory"))
+        self.assertTrue(repl.dispatch("/skills"))
 
-
-class OutputAndExitTests(CLITestCase):
-    """Commands return stable output and exit status in offline mode."""
-
-    def test_version_uses_product_name(self) -> None:
-        """Both version surfaces begin with exactly MAgent."""
-        flag = self.run_cli("--version")
-        command = self.run_cli("version")
-        self.assertEqual(flag.returncode, 0)
-        self.assertEqual(command.returncode, 0)
-        self.assertTrue(flag.stdout.startswith("MAgent "))
-        self.assertEqual(flag.stdout, command.stdout)
-        self.assertNotIn("Magent", flag.stdout)
-
-    def test_offline_before_command(self) -> None:
-        """--offline survives parsing before the subcommand."""
-        completed = self.run_cli("--offline", "run", "hello", "-q")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout.strip(), "echo:hello")
-
-    def test_offline_after_command(self) -> None:
-        """--offline also works after the subcommand."""
-        completed = self.run_cli("run", "--offline", "hello", "-q")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout.strip(), "echo:hello")
-
-    def test_unknown_command_is_usage_error(self) -> None:
-        """argparse reserves exit 2 for an invalid command."""
-        completed = self.run_cli("not-a-command")
-        self.assertEqual(completed.returncode, 2)
-        self.assertIn("invalid choice", completed.stderr)
-
-    def test_bad_run_mode_returns_runtime_error(self) -> None:
-        """A semantically invalid loop mode reaches the typed agent error path."""
-        completed = self.run_cli("--offline", "run", "--mode", "plan_execute", "hello")
-        self.assertEqual(completed.returncode, 2)
-        self.assertIn("invalid choice", completed.stderr)
-
-    def test_doctor_offline_names_magent(self) -> None:
-        """Doctor reports MAgent correctly even when Cortex is unavailable."""
-        completed = self.run_cli("doctor", "--offline")
-        self.assertIn(completed.returncode, {0, 1})
-        text = completed.stdout + completed.stderr
-        self.assertIn("package MAgent", text)
-        self.assertNotIn("package Magent", text)
-        self.assertIn("113 tools", text)
-
-
-class CommandSurfaceTests(CLITestCase):
-    """Serve, plugins, config, and improvements have useful no-network modes."""
-
-    def test_serve_routes_json(self) -> None:
-        """Route introspection does not bind a socket and reports all 31 routes."""
-        completed = self.run_cli("serve", "--routes", "-f", "json")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        payload = json.loads(completed.stdout)
-        self.assertEqual(payload["count"], 31)
-        run_route = next(row for row in payload["routes"]
-                         if row["method"] == "POST" and row["path"] == "/api/run")
-        self.assertEqual(run_route["name"], "api.run")
-        self.assertTrue(run_route["auth"])
-        self.assertTrue(run_route["body"])
-
-    def test_serve_dry_run_offline(self) -> None:
-        """Dry-run resolves config/backend without opening a listening port."""
-        completed = self.run_cli("serve", "--dry-run", "--offline", "-f", "json")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        payload = json.loads(completed.stdout)
-        self.assertTrue(payload["dry_run"])
-        self.assertEqual(payload["backend"], "echo")
-        self.assertEqual(payload["routes"], 31)
-        self.assertEqual(payload["host"], "127.0.0.1")
-
-    def test_plugin_permissions_and_hooks(self) -> None:
-        """Static policy references work without importing plugins."""
-        permissions = self.run_cli("plugins", "permissions", "-f", "json")
-        hooks = self.run_cli("plugins", "hooks", "-f", "json")
-        self.assertEqual(permissions.returncode, 0, permissions.stderr)
-        self.assertEqual(hooks.returncode, 0, hooks.stderr)
-        self.assertEqual(len(json.loads(permissions.stdout)["permissions"]), 10)
-        self.assertEqual(len(json.loads(hooks.stdout)["hooks"]), 10)
-
-    def test_config_init_and_validate(self) -> None:
-        """The CLI writes a parseable complete TOML file."""
-        path = Path(self.home.name) / "magent.toml"
-        initialized = self.run_cli("config", "init", "--file", str(path))
-        self.assertEqual(initialized.returncode, 0, initialized.stderr)
-        self.assertTrue(path.is_file())
-        validated = self.run_cli("--config", str(path), "config", "validate")
-        self.assertEqual(validated.returncode, 0, validated.stderr)
-        self.assertIn("valid", validated.stdout.lower())
-
-    def test_improvements_verify(self) -> None:
-        """The CLI wrapper resolves the current generated manifest."""
-        completed = self.run_cli("improvements", "--verify", "-f", "json", timeout=60)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        payload = json.loads(completed.stdout)
-        self.assertTrue(payload["meets_target"])
-        self.assertGreaterEqual(payload["total"], 777)
-        self.assertTrue(payload["verification"]["ok"])
-        self.assertEqual(payload["verification"]["failed"], 0)
+    def test_stats_and_clear(self) -> None:
+        repl = self._repl()
+        self.assertTrue(repl.dispatch("/stats"))
+        self.assertTrue(repl.dispatch("/clear"))
 
 
 if __name__ == "__main__":

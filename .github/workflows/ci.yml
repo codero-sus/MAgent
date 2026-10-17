@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Check out MAgent
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile package, scripts, tests, and examples
+        run: python -m compileall -q src tests scripts examples
+
+      - name: Run stdlib unittest suite
+        env:
+          PYTHONPATH: src
+          XDG_DATA_HOME: ${{ runner.temp }}/magent-data
+          XDG_CONFIG_HOME: ${{ runner.temp }}/magent-config
+          XDG_CACHE_HOME: ${{ runner.temp }}/magent-cache
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Verify all numbered improvements
+        env:
+          PYTHONPATH: src
+        run: python scripts/verify_improvements.py --quiet
+
+      - name: Run offline application smoke
+        if: matrix.python-version == '3.11'
+        env:
+          PYTHONPATH: src
+        run: python scripts/smoke.py
+
+      - name: Execute safe built-in tool smoke cases
+        if: matrix.python-version == '3.11'
+        env:
+          PYTHONPATH: src
+        run: python scripts/smoke_tools.py
+
+      - name: Run every example
+        if: matrix.python-version == '3.11'
+        env:
+          PYTHONPATH: src
+          XDG_DATA_HOME: ${{ runner.temp }}/example-data
+          XDG_CONFIG_HOME: ${{ runner.temp }}/example-config
+          XDG_CACHE_HOME: ${{ runner.temp }}/example-cache
+        shell: bash
+        run: |
+          for example in examples/0*.py; do
+            echo "::group::$example"
+            python "$example"
+            echo "::endgroup::"
+          done
+
+  build:
+    name: Build and inspect distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: test
+
+    steps:
+      - name: Check out MAgent
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install build frontend
+        run: python -m pip install --upgrade build
+
+      - name: Build wheel and source archive
+        run: python -m build
+
+      - name: Verify distribution contents
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob
+          import tarfile
+          import zipfile
+
+          wheels = glob.glob("dist/*.whl")
+          sdists = glob.glob("dist/*.tar.gz")
+          assert len(wheels) == 1, wheels
+          assert len(sdists) == 1, sdists
+
+          with zipfile.ZipFile(wheels[0]) as archive:
+              names = set(archive.namelist())
+              required = {
+                  "magent/py.typed",
+                  "magent/server/static/index.html",
+                  "magent/_docs/index.md",
+                  "magent/_docs/cortex.md",
+                  "magent/_docs/testing.md",
+              }
+              missing = required - names
+              assert not missing, f"wheel is missing: {sorted(missing)}"
+
+          with tarfile.open(sdists[0]) as archive:
+              names = archive.getnames()
+              assert any(name.endswith("/README.md") for name in names)
+              assert any(name.endswith("/docs/index.md") for name in names)
+              assert any(name.endswith("/tests/test_cortex.py") for name in names)
+          PY
+
+      - name: Install wheel without dependencies and smoke it outside checkout
+        shell: bash
+        run: |
+          python -m venv "${RUNNER_TEMP}/wheel-env"
+          "${RUNNER_TEMP}/wheel-env/bin/pip" install --no-deps dist/*.whl
+          cd "${RUNNER_TEMP}"
+          "${RUNNER_TEMP}/wheel-env/bin/magent" version
+          "${RUNNER_TEMP}/wheel-env/bin/magent" --offline run -q "wheel smoke"
+          "${RUNNER_TEMP}/wheel-env/bin/python" -c \
+            'import importlib.resources as r, magent; assert r.files("magent").joinpath("_docs/index.md").is_file(); print(magent.__version__)'

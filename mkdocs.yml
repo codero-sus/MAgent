@@ -1,0 +1,39 @@
+site_name: MAgent
+site_description: Mr. Agent, Powerful — Python agents built for Cortex LLMHoster
+repo_url: https://github.com/codero-sus/MAgent
+repo_name: codero-sus/MAgent
+strict: true
+
+theme:
+  name: readthedocs
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Core:
+      - Agents: agents.md
+      - Cortex LLMHoster: cortex.md
+      - Tools and approvals: tools.md
+      - Configuration: configuration.md
+      - Memory and state: memory-and-state.md
+      - RAG and citations: rag.md
+      - Guardrails: guardrails.md
+  - Extending:
+      - Plugins and hooks: plugins.md
+      - Python API: api.md
+      - HTTP server: server.md
+  - Operating:
+      - CLI: cli.md
+      - Evaluation: evaluation.md
+      - Testing: testing.md
+      - Verified improvements: improvements.md
+  - Contributing: contributing.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+
+exclude_docs: |
+  _build/

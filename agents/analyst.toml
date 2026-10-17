@@ -1,0 +1,21 @@
+# MAgent preset: quantitative analysis with safe parallel read tools.
+
+[agent]
+persona = "analyst"
+loop_mode = "react"
+max_iterations = 10
+max_tool_calls_per_step = 8
+parallel_tools = true
+reflection = false
+
+[generation]
+temperature = 0.1
+
+[tools]
+approval_mode = "dangerous"
+allow_network = false
+
+[guardrails]
+enabled = true
+budget_max_steps = 10
+budget_max_tool_calls = 50

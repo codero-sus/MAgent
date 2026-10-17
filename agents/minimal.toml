@@ -1,0 +1,20 @@
+# MAgent preset: one short answer with no autonomous side effects.
+
+[agent]
+persona = "minimal"
+loop_mode = "single"
+max_iterations = 2
+max_tool_calls_per_step = 2
+planning = false
+reflection = false
+
+[generation]
+temperature = 0.0
+max_tokens = 256
+
+[tools]
+approval_mode = "never"
+allow_network = false
+
+[memory]
+enabled = false

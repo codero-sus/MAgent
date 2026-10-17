@@ -963,47 +963,125 @@ class ToolRegistry:
         *,
         parallel: bool = True,
         max_workers: int = 8,
+        timeout: float = 0.0,
         on_result: Callable[[ToolResult], None] | None = None,
     ) -> list[ToolResult]:
-        """Execute several calls, in parallel when they are all parallel safe."""
+        """Execute several calls, in parallel when they are all parallel safe.
+
+        Parallelism is only used when every call's tool declares itself
+        parallel safe; a single unsafe tool makes the whole batch sequential,
+        because a partially parallel batch is not something a caller can reason
+        about.
+
+        Args:
+            calls: the tool calls to execute
+            context: base context, specialized per call
+            parallel: allow parallel execution
+            max_workers: ceiling on concurrent tool threads
+            timeout: overall seconds for the parallel pass, 0 for no limit
+            on_result: callback invoked with each result as it arrives
+
+        Returns:
+            One result per call, in the order the calls were given.
+        """
         if not calls:
             return []
         base = context or ToolContext()
         use_parallel = (
             parallel
             and len(calls) > 1
-            and max_workers > 1
+            # A single worker still needs the pool when a deadline is requested:
+            # only the pool enforces one, so the sequential path would silently
+            # ignore ``timeout`` and block forever on a hung tool.
+            and (max_workers > 1 or timeout > 0)
             and all(
                 (self.get(call.name) is not None and self.get(call.name).spec.parallel_safe)  # type: ignore[union-attr]
                 for call in calls
             )
         )
-        results: list[ToolResult] = []
-        if use_parallel:
-            import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(calls))) as pool:
-                futures = {
-                    pool.submit(
-                        self.dispatch,
-                        call,
-                        base.sub(call_id=call.id, tool_name=call.name, step_index=index),
-                    ): call
-                    for index, call in enumerate(calls)
-                }
-                for future in concurrent.futures.as_completed(futures):
-                    result = future.result()
-                    results.append(result)
-                    if on_result is not None:
-                        on_result(result)
-            order = {call.id: index for index, call in enumerate(calls)}
-            results.sort(key=lambda item: order.get(item.call_id, len(order)))
+        def run_one(index: int) -> ToolResult:
+            call = calls[index]
+            return self.dispatch(
+                call, base.sub(call_id=call.id, tool_name=call.name, step_index=index)
+            )
+
+        if not use_parallel:
+            results = []
+            for index in range(len(calls)):
+                result = run_one(index)
+                results.append(result)
+                if on_result is not None:
+                    on_result(result)
             return results
-        for index, call in enumerate(calls):
-            result = self.dispatch(call, base.sub(call_id=call.id, tool_name=call.name, step_index=index))
-            results.append(result)
-            if on_result is not None:
-                on_result(result)
+
+        from ..concurrency.pool import parallel_map
+        from ..errors import PoolTimeoutError
+
+        def failure(index: int, error: str, *, timed_out: bool) -> ToolResult:
+            """Build a result for a call that never completed.
+
+            A missing result would silently shrink the batch, and the model
+            would be left waiting on a tool call id that never answers, so
+            every call gets a result even when the deadline expired.
+            """
+            call = calls[index]
+            return ToolResult(
+                call_id=call.id,
+                name=call.name,
+                ok=False,
+                content=None,
+                error=error,
+                error_code="timeout" if timed_out else "execution_error",
+            )
+
+        outcomes: dict[int, Any] = {}
+        timed_out = False
+        try:
+            batch = parallel_map(
+                run_one,
+                list(range(len(calls))),
+                max_workers=max(1, min(max_workers, len(calls))),
+                timeout=timeout,
+                ordered=True,
+                chunk_name="tool-dispatch",
+            )
+            outcomes = {outcome.index: outcome for outcome in batch.outcomes}
+        except PoolTimeoutError as exc:
+            # Keep whatever finished before the deadline; the error carries it.
+            timed_out = True
+            for record in (exc.details or {}).get("outcomes", []):
+                index = int(record.get("index", -1))
+                if index >= 0:
+                    outcomes[index] = record
+
+        results: list[ToolResult] = []
+        for index in range(len(calls)):
+            outcome = outcomes.get(index)
+            if isinstance(outcome, dict):
+                # Recovered from a timeout error: the value is the real result
+                # object, not a serialized dict, so it can be used directly.
+                value = outcome.get("value")
+                if outcome.get("ok") and isinstance(value, ToolResult):
+                    results.append(value)
+                elif outcome.get("ok"):
+                    results.append(failure(index, "result lost to timeout", timed_out=True))
+                else:
+                    results.append(failure(index, str(outcome.get("error") or "timeout"),
+                                           timed_out=True))
+            elif outcome is not None and outcome.ok:
+                results.append(outcome.value)
+            elif outcome is not None:
+                results.append(failure(index, outcome.error or "tool execution failed",
+                                       timed_out=(outcome.error == "timeout")))
+            else:
+                results.append(failure(index, "cancelled before execution", timed_out=timed_out))
+        if on_result is not None:
+            for result in results:
+                try:
+                    on_result(result)
+                except Exception:  # noqa: BLE001 - a bad callback must not lose results
+                    pass
         return results
 
     # -- telemetry -----------------------------------------------------------

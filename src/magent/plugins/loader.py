@@ -367,8 +367,21 @@ class PluginLoader:
         """Import a plugin's entry point under a namespaced module name."""
         entry = manifest.entry_path()
         module_name = f"magent_plugin_{manifest.name}"
-        if module_name in sys.modules:
-            return sys.modules[module_name]
+        existing = sys.modules.get(module_name)
+        if existing is not None:
+            existing_file = Path(str(getattr(existing, "__file__", "") or "")).resolve()
+            if existing_file == entry.resolve():
+                return existing
+            # Reusing the old module would execute neither the newly inspected
+            # file nor its checksum. Replacing it is unsafe too because tools
+            # already registered from the old module would remain live. Require
+            # an explicit unload before a same-name plugin can move locations.
+            raise PluginSecurityError(
+                f"plugin {manifest.name!r} is already loaded from {existing_file}; "
+                f"refusing a second entrypoint at {entry.resolve()}",
+                details={"plugin": manifest.name, "loaded": str(existing_file),
+                         "requested": str(entry.resolve())},
+            )
         spec = importlib.util.spec_from_file_location(module_name, entry)
         if spec is None or spec.loader is None:
             raise PluginError(f"cannot create an import spec for {entry}",

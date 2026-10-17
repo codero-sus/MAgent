@@ -37,8 +37,10 @@ from .commands import doctor as doctor_cmd
 from .commands import eval_cmd
 from .commands import memory as memory_cmd
 from .commands import misc as misc_cmd
+from .commands import plugins as plugins_cmd
 from .commands import rag as rag_cmd
 from .commands import run as run_cmd
+from .commands import serve as serve_cmd
 from .commands import sessions as sessions_cmd
 from .commands import tools as tools_cmd
 from .commands import config_cmd
@@ -68,6 +70,8 @@ examples:
   magent tools list --max-risk read
   magent cortex models
   magent eval run --dataset builtin --fail-below 0.6
+  magent serve --port 8700
+  magent plugins list --loaded
   magent doctor --strict
 
 Every command accepts the global options below; -s key=value overrides one
@@ -85,6 +89,8 @@ COMMAND_MODULES: tuple[Any, ...] = (
     rag_cmd,
     sessions_cmd,
     eval_cmd,
+    serve_cmd,
+    plugins_cmd,
     misc_cmd,
 )
 """Modules whose ``register`` adds subcommands, in help order."""
@@ -107,13 +113,84 @@ cached_parent: argparse.ArgumentParser | None = None
 """Memoized global-flag parent parser."""
 
 
-class _InjectingSubParsers(argparse._SubParsersAction):
-    """Subparser action that gives every command the global flags.
+class _FlagView:
+    """A read-only view of one parser's flags, usable as an argparse parent.
 
-    Without this, ``magent tools list --offline`` is rejected because argparse
-    only knows ``--offline`` on the root parser - so the accepted position of a
-    flag would depend on where the user happened to type it.
+    ``_add_container_actions`` only reads ``_actions``, ``_action_groups``, and
+    ``_mutually_exclusive_groups``, so a shim with those three is enough to copy
+    selected flags without copying the parser's subcommands. The group is titled
+    ``options`` on purpose: a leaf parser already has one, so argparse merges
+    into it instead of adding a second section to the help output.
     """
+
+    def __init__(self, actions: Sequence[argparse.Action]) -> None:
+        """Wrap the actions that should be inherited."""
+        self._actions = list(actions)
+        group = argparse._ArgumentGroup.__new__(argparse._ArgumentGroup)
+        group.title = "options"
+        group.description = None
+        group.conflict_handler = "error"
+        group._group_actions = self._actions
+        self._action_groups = [group]
+        self._mutually_exclusive_groups: list[Any] = []
+        self._defaults: dict[str, Any] = {}
+
+
+def _inheritable_flags(owner: argparse.ArgumentParser) -> list[argparse.Action]:
+    """Return the flags of a group parser that its actions should also accept.
+
+    Help, version, the subcommand action itself, and the global flags are left
+    out: the globals are already injected from :func:`_global_parent`, and
+    copying them twice would be a conflicting option string.
+    """
+    skip = set(id(action) for action in _global_parent()._actions)
+    found: list[argparse.Action] = []
+    for action in getattr(owner, "_actions", []):
+        if not action.option_strings or id(action) in skip:
+            continue  # positionals are consumed by the group itself
+        if isinstance(action, (argparse._HelpAction, argparse._VersionAction,
+                               argparse._SubParsersAction)):
+            continue
+        found.append(action)
+    return found
+
+
+def _inherit_group_flags(owner: argparse.ArgumentParser | None,
+                         leaf: argparse.ArgumentParser) -> None:
+    """Teach a leaf subparser its group's flags, once.
+
+    This is done at parse time rather than at ``add_parser`` time so a group
+    that adds flags after creating its subcommands still propagates them.
+    """
+    if owner is None:
+        return
+    known = set(leaf._option_string_actions)
+    wanted = [action for action in _inheritable_flags(owner)
+              if not any(option in known for option in action.option_strings)]
+    if wanted:
+        leaf._add_container_actions(_FlagView(wanted))
+
+
+class _InjectingSubParsers(argparse._SubParsersAction):
+    """Subparser action that makes flag position irrelevant.
+
+    Two argparse behaviours make a CLI with nested commands awkward, and both
+    are corrected here:
+
+    * A flag is only recognized by the parser that declares it, so
+      ``magent tools list --offline`` and ``magent plugins list --dir X`` were
+      rejected even though the flag exists one level up. Every subparser
+      therefore inherits the global flags and its own group's flags.
+    * ``_SubParsersAction.__call__`` parses the subcommand into a fresh
+      namespace and copies *every* key back over the parent's, so a global
+      typed before the command was overwritten by the subparser's own default -
+      ``magent -f json tools categories`` printed a table. The parent's values
+      are seeded into the subparser's defaults for the duration of that parse,
+      then restored, so an unspecified flag inherits and a specified one wins.
+    """
+
+    owner: argparse.ArgumentParser | None = None
+    """The parser whose ``add_subparsers`` created this action."""
 
     def add_parser(self, name: str, **kwargs: Any) -> argparse.ArgumentParser:
         """Create a subparser that inherits the global flags."""
@@ -127,6 +204,47 @@ class _InjectingSubParsers(argparse._SubParsersAction):
         # class, so nested subcommands inherit the globals without it.
         return super().add_parser(name, **kwargs)
 
+    def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace,
+                 values: Any, option_string: str | None = None) -> Any:
+        """Parse one subcommand, preserving values already on the namespace.
+
+        The inherited value has to be written to ``action.default``, not to the
+        parser's ``_defaults``: ``_parse_known_args`` initializes a fresh
+        namespace from each action's own ``default`` and only consults
+        ``_defaults`` for keys nothing declared. Defaults are restored
+        afterwards because ``parents=`` shares one action object between every
+        parser that inherited it.
+        """
+        name = values[0] if values else ""
+        leaf = self._name_parser_map.get(str(name))
+        if leaf is None:
+            return super().__call__(parser, namespace, values, option_string)
+        _inherit_group_flags(self.owner, leaf)
+        # The subcommand's own dest must not be inherited: it is still unset when
+        # this runs, and copying that placeholder down would overwrite the real
+        # name on the way back out.
+        reserved = {str(action.dest) for source in (self.owner, leaf) if source is not None
+                    for action in getattr(source, "_actions", [])
+                    if isinstance(action, argparse._SubParsersAction)}
+        reserved.add(str(self.dest))
+        by_dest: dict[str, list[argparse.Action]] = {}
+        for action in leaf._actions:
+            if action.dest is not argparse.SUPPRESS:
+                by_dest.setdefault(str(action.dest), []).append(action)
+        saved: list[tuple[argparse.Action, Any]] = []
+        for key, value in vars(namespace).items():
+            if key.startswith("_") or key in reserved or key not in by_dest:
+                continue
+            for action in by_dest[key]:
+                if action.default is not value:
+                    saved.append((action, action.default))
+                    action.default = value
+        try:
+            return super().__call__(parser, namespace, values, option_string)
+        finally:
+            for action, default in saved:
+                action.default = default
+
 
 class _HelpfulParser(argparse.ArgumentParser):
     """Parser that prints full help on an error instead of one terse line."""
@@ -135,6 +253,17 @@ class _HelpfulParser(argparse.ArgumentParser):
         """Create the parser and make nested subcommands inherit globals too."""
         super().__init__(*args, **kwargs)
         self.register("action", "parsers", _InjectingSubParsers)
+
+    def add_subparsers(self, **kwargs: Any) -> argparse.Action:
+        """Create the subcommand action, remembering this parser as its owner.
+
+        The back-reference is what lets a leaf action inherit the flags declared
+        one level up, without each command module passing them twice.
+        """
+        action = super().add_subparsers(**kwargs)
+        if isinstance(action, _InjectingSubParsers):
+            action.owner = self
+        return action
 
     def error(self, message: str) -> Any:
         """Report a usage error with the help text alongside it."""
@@ -174,17 +303,6 @@ def command_names() -> list[str]:
     return []
 
 
-def _apply_global_only(args: argparse.Namespace) -> argparse.Namespace:
-    """Lift global flags given after a subcommand up to the namespace.
-
-    ``argparse`` puts a subcommand's own values last, so ``magent run -q "x"``
-    and ``magent -q run "x"`` should behave identically. Subcommand parsers
-    inherit the global flags, which means the parsed value can land in either
-    position; this normalizes it.
-    """
-    return args
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return a process exit code.
 
@@ -197,7 +315,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help(sys.stdout)
         return EXIT_OK
     try:
-        args = _apply_global_only(parser.parse_args(arguments))
+        args = parser.parse_args(arguments)
     except SystemExit as exc:
         code = exc.code
         return int(code) if isinstance(code, int) else EXIT_USAGE

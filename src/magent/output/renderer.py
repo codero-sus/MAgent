@@ -90,11 +90,15 @@ class OutputOptions:
         section = getattr(config, "output", None)
         values: dict[str, Any] = {}
         if section is not None:
-            for name in ("format", "color", "unicode", "width", "show_usage", "show_timing",
+            # The config key is "format" and the field is "fmt", so it is mapped
+            # rather than copied; every other name matches exactly.
+            for name in ("color", "unicode", "width", "show_usage", "show_timing",
                          "show_tool_calls", "stream_to_terminal", "markdown", "quiet",
                          "verbosity", "spinner", "progress"):
                 if hasattr(section, name):
                     values[name] = getattr(section, name)
+            if hasattr(section, "format"):
+                values["fmt"] = getattr(section, "format")
         values.update({key: value for key, value in overrides.items() if value is not None})
         return cls(**values)
 

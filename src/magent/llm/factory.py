@@ -52,27 +52,45 @@ class BackendRequest:
 
     @classmethod
     def from_config(cls, config: Any) -> BackendRequest:
-        """Build a request from a loaded :class:`~magent.config.Config`."""
-        llm = getattr(config, "llm", None)
-        if llm is None:
+        """Build a request from a loaded :class:`~magent.config.Config`.
+
+        The resolved configuration splits backend concerns across three
+        sections - ``[model]`` chooses the backend and model ids, ``[server]``
+        carries the Cortex URL, credentials and timeouts, ``[cache]`` controls
+        response caching - so all three are read here. An ``api_key`` written as
+        a secret reference (``env:CORTEX_API_KEY``, ``file:~/.key``) is resolved
+        rather than passed through literally.
+
+        Args:
+            config: a resolved :class:`~magent.config.Config`; anything else
+                yields defaults
+        """
+        model = getattr(config, "model", None)
+        server = getattr(config, "server", None)
+        if model is None and server is None:
             return cls()
+        cache = getattr(config, "cache", None)
+        from ..secrets import is_secret_reference, resolve_secret
+
+        raw_key = str(getattr(server, "api_key", "") or "")
+        api_key = resolve_secret(raw_key) if is_secret_reference(raw_key) else raw_key
         return cls(
-            kind=str(getattr(llm, "backend", "auto")),
-            model=str(getattr(llm, "model", "") or ""),
-            embedding_model=str(getattr(llm, "embedding_model", "") or ""),
-            base_url=str(getattr(llm, "base_url", "") or ""),
-            api_key=str(getattr(llm, "api_key", "") or ""),
-            timeout=float(getattr(llm, "timeout", 120.0)),
-            api_prefix=str(getattr(llm, "api_prefix", "/v1")),
-            verify_ssl=bool(getattr(llm, "verify_ssl", True)),
-            max_retries=int(getattr(llm, "max_retries", 3)),
-            fallback_to_echo=bool(getattr(llm, "fallback_to_echo", True)),
-            probe_timeout=float(getattr(llm, "probe_timeout", 3.0)),
-            cache_dir=str(getattr(llm, "cache_dir", "") or ""),
-            cache_ttl=float(getattr(llm, "cache_ttl", 3600.0)),
-            cache_enabled=bool(getattr(llm, "cache_enabled", True)),
-            routes=list(getattr(llm, "routes", []) or []),
-            router_strategy=str(getattr(llm, "router_strategy", "priority")),
+            kind=str(getattr(model, "backend", "auto") or "auto"),
+            model=str(getattr(model, "model", "") or ""),
+            embedding_model=str(getattr(model, "embedding_model", "") or ""),
+            base_url=str(getattr(server, "base_url", "") or ""),
+            api_key=api_key,
+            timeout=float(getattr(server, "timeout", 120.0) or 120.0),
+            api_prefix=str(getattr(server, "api_prefix", "/v1") or "/v1"),
+            verify_ssl=bool(getattr(server, "verify_ssl", True)),
+            max_retries=int(getattr(server, "max_retries", 3) or 3),
+            fallback_to_echo=bool(getattr(model, "fallback_to_echo", True)),
+            probe_timeout=float(getattr(server, "probe_timeout", 3.0) or 3.0),
+            cache_dir=str(getattr(cache, "directory", "") or ""),
+            cache_ttl=float(getattr(cache, "ttl", 3600.0) or 3600.0),
+            cache_enabled=bool(getattr(cache, "enabled", True)),
+            routes=list(getattr(model, "routes", []) or []),
+            router_strategy=str(getattr(model, "router_strategy", "priority") or "priority"),
         )
 
     @classmethod

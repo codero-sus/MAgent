@@ -100,7 +100,11 @@ class Printer:
         Returns:
             Whether anything was written.
         """
-        if self.quiet or not self.at_least(min_level):
+        # ``min_level="quiet"`` means "emit even when quiet", which is how the
+        # answer itself and errors are marked; everything else is gated by the
+        # verbosity ladder. Testing self.quiet here as well would suppress the
+        # one thing --quiet promises to print.
+        if not self.at_least(min_level):
             return False
         target = stream or self.out
         with self._lock:
@@ -115,9 +119,11 @@ class Printer:
         return True
 
     def error(self, text: str) -> bool:
-        """Write to stderr, bypassing the verbosity ladder but not ``quiet``."""
-        if self.quiet:
-            return False
+        """Write to stderr, bypassing the verbosity ladder.
+
+        Errors are always shown: ``--quiet`` means "no chatter", not "hide the
+        reason the command failed".
+        """
         return self.write(self.themed(text, "error"), stream=self.err, min_level="quiet")
 
     def warn(self, text: str) -> bool:

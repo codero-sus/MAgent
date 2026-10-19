@@ -202,11 +202,17 @@ reference no longer resolves, so the number cannot drift away from the code.
 
 ## Cortex LLMHoster licence
 
-MAgent integrates with Cortex purely as an **HTTP client**. Cortex is licensed
-`LicenseRef-Cortex-Personal-NonCommercial-NoModification-NoRedistribution`, which
-forbids modification and redistribution — so no Cortex source is vendored,
-patched or copied into this repository.
+This integration is intended for **personal, non-commercial use**. MAgent talks
+to Cortex purely as an external **HTTP client**. Cortex is distributed under its
+own separate personal, non-commercial, no-modification licence; those terms
+permit running an unmodified official copy for personal, non-commercial use and
+forbid modification and redistribution. No Cortex source is vendored, patched
+or copied into this repository. Cortex's licence remains separate from MAgent's.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+MAgent is licensed under the
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/).
+It permits use, modification and distribution for permitted non-commercial
+purposes, including qualifying personal uses, but does not grant commercial-use
+rights. See [LICENSE](LICENSE) for the complete terms.

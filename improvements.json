@@ -6000,7 +6000,7 @@
    "ref": "README.md",
    "description": "Page shipped at README.md",
    "metadata": {
-    "bytes": 8610
+    "bytes": 9117
    }
   },
   {
@@ -6044,7 +6044,7 @@
    "ref": "docs/contributing.md",
    "description": "Page shipped at docs/contributing.md",
    "metadata": {
-    "bytes": 3723
+    "bytes": 3894
    }
   },
   {
@@ -6066,7 +6066,7 @@
    "ref": "docs/index.md",
    "description": "Page shipped at docs/index.md",
    "metadata": {
-    "bytes": 3107
+    "bytes": 3421
    }
   },
   {
@@ -26678,7 +26678,7 @@
    "ref": "LICENSE",
    "description": "License shipped at LICENSE",
    "metadata": {
-    "bytes": 1542
+    "bytes": 4563
    }
   },
   {
@@ -26689,7 +26689,7 @@
    "ref": "pyproject.toml",
    "description": "Manifest shipped at pyproject.toml",
    "metadata": {
-    "bytes": 3356
+    "bytes": 3424
    }
   },
   {

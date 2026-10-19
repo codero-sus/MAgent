@@ -75,6 +75,8 @@ make verify       # the improvements manifest
 
 ## Working with Cortex LLMHoster
 
-MAgent talks to Cortex over HTTP only. Cortex's licence forbids modification and
-redistribution, so never vendor, patch or copy its source into this repository -
-and never make MAgent depend on an undocumented endpoint.
+MAgent and its Cortex integration are intended for personal, non-commercial use.
+MAgent talks to Cortex over HTTP only. Cortex's separate licence permits running
+an unmodified official copy for personal, non-commercial use and forbids
+modification and redistribution, so never vendor, patch or copy its source into
+this repository—and never make MAgent depend on an undocumented endpoint.

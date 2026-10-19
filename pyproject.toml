@@ -10,7 +10,8 @@ version = "1.0.0"
 description = "Mr. Agent, Powerful - a zero-dependency Python agent framework built for Cortex LLMHoster"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
 authors = [{ name = "codero-sus" }]
 keywords = [
   "agent",
@@ -29,7 +30,6 @@ classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
@@ -57,6 +57,7 @@ Homepage = "https://the-codero.web.app/"
 Repository = "https://github.com/codero-sus/MAgent"
 Issues = "https://github.com/codero-sus/MAgent/issues"
 Author = "https://github.com/codero-sus"
+License = "https://polyformproject.org/licenses/noncommercial/1.0.0/"
 "Cortex LLMHoster" = "https://github.com/codero-sus/Cortex_LLMHoster"
 
 [project.scripts]

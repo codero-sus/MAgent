@@ -56,7 +56,13 @@ magent serve                                      # REST API + web UI
 
 ## Licence note
 
-MAgent talks to Cortex LLMHoster over HTTP. Cortex is licensed
-`LicenseRef-Cortex-Personal-NonCommercial-NoModification-NoRedistribution`, so
-MAgent never vendors, patches or copies its source - integration happens through
-the documented API only.
+MAgent is available under the
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+for permitted non-commercial purposes, including qualifying personal uses.
+Commercial-use rights are not granted.
+
+MAgent's Cortex integration is intended for personal, non-commercial use and
+communicates only through Cortex's documented HTTP API. Cortex has its own
+separate personal, non-commercial, no-modification licence, so MAgent never
+vendors, patches or copies Cortex source. Each project remains subject to its
+own licence.

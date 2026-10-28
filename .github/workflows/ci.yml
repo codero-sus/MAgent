@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "arena/**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  MAGENT_LOG_LEVEL: WARNING
+
+jobs:
+  test:
+    name: tests (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Unit and integration tests
+        run: python -m unittest discover -s tests -t . -v 2>&1 | tail -40
+      - name: Offline end-to-end smoke test
+        run: python scripts/smoke.py
+      - name: Every registered tool dispatches
+        run: python scripts/smoke_tools.py
+      - name: Improvements manifest verifies
+        run: python scripts/verify_improvements.py --strict
+      - name: The manifest is current
+        run: python scripts/build_improvements.py --check
+      - name: CLI works from a checkout
+        run: |
+          python -m magent version
+          python -m magent tools --format json > /tmp/tools.json
+          python -c "import json;print(len(json.load(open('/tmp/tools.json'))),'tools')"
+          python -m magent doctor --offline --format json | head -20
+
+  quality:
+    name: lint, types and docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy build
+      - name: Ruff lint
+        run: ruff check src tests scripts examples
+      - name: Ruff format check
+        run: ruff format --check src tests scripts examples
+      - name: Mypy
+        run: mypy src/magent --ignore-missing-imports
+        continue-on-error: true
+      - name: Build the distribution
+        run: python -m build
+      - name: Check the wheel contains the UI and the docs
+        run: |
+          python - <<'PY'
+          import zipfile, glob
+          wheel = sorted(glob.glob("dist/*.whl"))[-1]
+          names = zipfile.ZipFile(wheel).namelist()
+          assert any(name.endswith("server/static/index.html") for name in names), names[:20]
+          assert any("py.typed" in name for name in names)
+          assert any(name.endswith("_docs/index.md") for name in names)
+          assert any(name.endswith("agents/team.py") for name in names)
+          assert any(name.endswith("skills/library.py") for name in names)
+          print(f"{wheel}: {len(names)} files")
+          PY
+
+  eval:
+    name: evaluation gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e .
+      - name: Run the sample dataset
+        run: |
+          python -m magent eval sample --output /tmp/sample.json
+          python -m magent eval --dataset /tmp/sample.json --threshold 0.5 \
+            --report-format junit --output /tmp/report.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: /tmp/report.xml

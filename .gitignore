@@ -1,0 +1,66 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+.env
+!.env.example
+
+# --- Tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- MAgent runtime artifacts (never commit local state) ---
+.magent/
+*.magent.db
+*.magent.db-wal
+*.magent.db-shm
+magent.toml
+sessions/
+workspaces/
+artifacts/
+audit.log
+*.trace.jsonl
+cache/
+models/
+
+# --- Secrets ---
+*.pem
+*.key
+secrets.toml
+credentials.json

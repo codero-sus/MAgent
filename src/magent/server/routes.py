@@ -117,6 +117,14 @@ class Router:
         """Register a POST route."""
         return self.add("POST", path, handler, **kwargs)
 
+    def put(self, path: str, handler: Callable[..., Any], **kwargs: Any) -> Route:
+        """Register a PUT route."""
+        return self.add("PUT", path, handler, **kwargs)
+
+    def patch(self, path: str, handler: Callable[..., Any], **kwargs: Any) -> Route:
+        """Register a PATCH route."""
+        return self.add("PATCH", path, handler, **kwargs)
+
     def delete(self, path: str, handler: Callable[..., Any], **kwargs: Any) -> Route:
         """Register a DELETE route."""
         return self.add("DELETE", path, handler, **kwargs)

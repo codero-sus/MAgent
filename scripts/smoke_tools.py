@@ -32,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from magent.config import load_config  # noqa: E402
+from magent.tools.approval import ApprovalManager, ApprovalPolicy  # noqa: E402
 from magent.tools.base import ToolContext, default_registry  # noqa: E402
 from magent.tools.builtin import load_errors, tools_by_category  # noqa: E402
 from magent.tools.sandbox import Sandbox, SandboxPolicy  # noqa: E402
@@ -251,6 +252,50 @@ def smoke_calls(root: Path) -> list[tuple[str, dict[str, Any]]]:
         ("make_plan", {"goal": "ship the smoke test", "steps": '["write code","run it"]'}),
         ("summarize_for_context", {"text": "x" * 5000, "max_chars": 500}),
         ("parse_url_tool", {"url": "https://user:pass@example.com:8624/v1/models?x=1"}),
+        # -- desktop (recording backend; never touches the real machine) -----
+        ("desktop_capabilities", {}),
+        ("desktop_screen", {}),
+        ("desktop_pointer", {}),
+        ("desktop_move", {"x": 100, "y": 120, "duration": 0}),
+        ("desktop_click", {"x": 100, "y": 120}),
+        ("desktop_drag", {"x": 150, "y": 180, "duration": 0}),
+        ("desktop_scroll", {"amount": -2}),
+        ("desktop_type", {"text": "MAgent smoke", "interval": 0}),
+        ("desktop_key", {"key": "enter", "presses": 1}),
+        ("desktop_hotkey", {"keys": ["ctrl", "s"]}),
+        ("desktop_screenshot", {"path": str(root / "desktop-smoke.png")}),
+        ("desktop_pixel", {"x": 10, "y": 10}),
+        ("desktop_locate", {"image": str(root / "sample.png")}),
+        ("desktop_windows", {"query": "MAgent"}),
+        ("desktop_active_window", {}),
+        ("desktop_focus_window", {"window_id": "1"}),
+        ("desktop_window_action", {"window_id": "1", "action": "minimize"}),
+        (
+            "desktop_move_window",
+            {"window_id": "1", "x": 20, "y": 20, "width": 640, "height": 480},
+        ),
+        ("desktop_launch", {"app": "editor", "args": ["notes.txt"]}),
+        ("desktop_open", {"target": str(root / "docs" / "guide.md")}),
+        ("desktop_clipboard_read", {}),
+        ("desktop_clipboard_write", {"text": "clipboard smoke"}),
+        ("desktop_wait_window", {"query": "MAgent", "timeout": 0}),
+        (
+            "desktop_preview_workflow",
+            {"workflow": json.dumps({"steps": [{"action": "click", "x": 5, "y": 5}]})},
+        ),
+        (
+            "desktop_run_workflow",
+            {
+                "workflow": json.dumps(
+                    {"steps": [{"action": "type", "text": "workflow smoke", "interval": 0}]}
+                )
+            },
+        ),
+        ("desktop_queue_add", {"prompt": "smoke queue task"}),
+        ("desktop_queue_list", {}),
+        ("desktop_queue_cancel", {"task_id": "missing-smoke-task"}),
+        ("desktop_queue_retry", {"task_id": "missing-smoke-task"}),
+        ("desktop_queue_stats", {}),
         # -- cortex ----------------------------------------------------------
         ("cortex_diagnose", {}),
     ]
@@ -280,11 +325,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         build_workspace(root)
         config = load_config()
+        config.desktop.backend = "recording"
+        config.desktop.fail_safe = False
+        config.desktop.action_pause = 0
+        config.desktop.queue_path = str(root / "desktop-queue.db")
+        config.desktop.state_path = str(root / "desktop-state.json")
+        config.desktop.screenshot_directory = str(root / "screenshots")
         policy = SandboxPolicy(
             roots=[str(root)], command_policy="open", allow_network=False, deny_action="raise"
         )
         sandbox = Sandbox(policy, workspace=root)
-        context = ToolContext(workspace=root, sandbox=sandbox, config=config, registry=registry)
+        approval = ApprovalManager(ApprovalPolicy(mode="never"))
+        context = ToolContext(
+            workspace=root,
+            sandbox=sandbox,
+            approval=approval,
+            config=config,
+            registry=registry,
+        )
         for index, (name, arguments) in enumerate(smoke_calls(root), start=1):
             result = registry.dispatch(
                 ToolCall(id=f"smoke_{index}", name=name, arguments=arguments), context

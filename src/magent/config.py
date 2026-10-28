@@ -350,6 +350,76 @@ class ToolsConfig:
 
 
 @dataclass(slots=True)
+class DesktopConfig:
+    """Desktop automation, persistent queue, and floating-panel settings."""
+
+    enabled: bool = True
+    backend: str = "auto"
+    allow_mouse: bool = True
+    allow_keyboard: bool = True
+    allow_screenshots: bool = True
+    allow_clipboard: bool = True
+    allow_window_control: bool = True
+    allow_launch: bool = True
+    fail_safe: bool = True
+    panic_corner_size: int = 4
+    action_pause: float = 0.05
+    max_type_chars: int = 10_000
+    max_clipboard_chars: int = 100_000
+    max_wait_seconds: float = 120.0
+    max_workflow_steps: int = 100
+    allowed_apps: list[str] = field(default_factory=list)
+    allowed_open_schemes: list[str] = field(
+        default_factory=lambda: ["file", "http", "https", "mailto"]
+    )
+    screenshot_directory: str = ""
+    queue_path: str = ""
+    state_path: str = ""
+    logo_theme: str = "orbit"
+    always_on_top: bool = True
+    panel_width: int = 500
+    panel_height: int = 720
+    queue_poll_interval: float = 0.25
+    recover_tasks: bool = True
+    autostart: bool = False
+
+    def validate(self) -> None:
+        """Reject unsafe or unusable desktop limits."""
+        if self.backend not in {"auto", "pyautogui", "native", "recording"}:
+            raise ConfigValidationError(
+                "[desktop] backend must be auto, pyautogui, native, or recording"
+            )
+        if self.panic_corner_size < 0:
+            raise ConfigValidationError("[desktop] panic_corner_size cannot be negative")
+        if self.action_pause < 0:
+            raise ConfigValidationError("[desktop] action_pause cannot be negative")
+        if self.max_type_chars < 1 or self.max_clipboard_chars < 1:
+            raise ConfigValidationError("[desktop] text limits must be positive")
+        if self.max_wait_seconds <= 0:
+            raise ConfigValidationError("[desktop] max_wait_seconds must be positive")
+        if not 1 <= self.max_workflow_steps <= 500:
+            raise ConfigValidationError("[desktop] max_workflow_steps must be within 1..500")
+        if any(not str(item).strip() for item in self.allowed_apps):
+            raise ConfigValidationError("[desktop] allowed_apps cannot contain empty names")
+        valid_schemes = {"file", "http", "https", "mailto"}
+        normalized_schemes = {str(item).strip().lower() for item in self.allowed_open_schemes}
+        if not normalized_schemes.issubset(valid_schemes):
+            raise ConfigValidationError(
+                "[desktop] allowed_open_schemes may contain file, http, https, or mailto"
+            )
+        if not 320 <= self.panel_width <= 2400 or not 400 <= self.panel_height <= 2400:
+            raise ConfigValidationError("[desktop] panel dimensions are outside safe bounds")
+        if self.queue_poll_interval < 0.05:
+            raise ConfigValidationError("[desktop] queue_poll_interval must be at least 0.05")
+        from .desktop.branding import logo_ids
+
+        if self.logo_theme not in logo_ids():
+            raise ConfigValidationError(
+                f"[desktop] logo_theme must be one of {', '.join(logo_ids())}"
+            )
+
+
+@dataclass(slots=True)
 class GuardrailsConfig:
     """Safety checks applied before and after model calls."""
 
@@ -544,6 +614,7 @@ SECTION_TYPES: dict[str, type] = {
     "agent": AgentConfig,
     "memory": MemoryConfig,
     "tools": ToolsConfig,
+    "desktop": DesktopConfig,
     "guardrails": GuardrailsConfig,
     "cache": CacheConfig,
     "output": OutputConfig,
@@ -583,6 +654,15 @@ ENV_MAP: dict[str, tuple[str, str, type]] = {
     "MAGENT_ALLOW_NETWORK": ("tools", "allow_network", bool),
     "MAGENT_TOOLS_ENABLED": ("tools", "enabled", list),
     "MAGENT_TOOLS_DISABLED": ("tools", "disabled", list),
+    "MAGENT_DESKTOP_ENABLED": ("desktop", "enabled", bool),
+    "MAGENT_DESKTOP_BACKEND": ("desktop", "backend", str),
+    "MAGENT_DESKTOP_FAIL_SAFE": ("desktop", "fail_safe", bool),
+    "MAGENT_DESKTOP_LOGO": ("desktop", "logo_theme", str),
+    "MAGENT_DESKTOP_QUEUE": ("desktop", "queue_path", str),
+    "MAGENT_DESKTOP_TOPMOST": ("desktop", "always_on_top", bool),
+    "MAGENT_DESKTOP_ALLOWED_APPS": ("desktop", "allowed_apps", list),
+    "MAGENT_DESKTOP_OPEN_SCHEMES": ("desktop", "allowed_open_schemes", list),
+    "MAGENT_DESKTOP_MAX_WORKFLOW_STEPS": ("desktop", "max_workflow_steps", int),
     "MAGENT_MEMORY_ENABLED": ("memory", "enabled", bool),
     "MAGENT_MEMORY_MAX_MESSAGES": ("memory", "max_messages", int),
     "MAGENT_RETRIEVAL_MODE": ("memory", "retrieval_mode", str),
@@ -617,6 +697,7 @@ class Config:
     agent: AgentConfig = field(default_factory=AgentConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
+    desktop: DesktopConfig = field(default_factory=DesktopConfig)
     guardrails: GuardrailsConfig = field(default_factory=GuardrailsConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
@@ -668,6 +749,12 @@ class Config:
             self.guardrails.audit_log = str(self.data_dir / "logs" / "audit.jsonl")
         if not self.tools.plugins_dir:
             self.tools.plugins_dir = str(self.data_dir / "plugins")
+        if not self.desktop.screenshot_directory:
+            self.desktop.screenshot_directory = str(self.data_dir / "desktop" / "screenshots")
+        if not self.desktop.queue_path:
+            self.desktop.queue_path = str(self.data_dir / "desktop" / "queue.db")
+        if not self.desktop.state_path:
+            self.desktop.state_path = str(self.data_dir / "desktop" / "state.json")
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         """Serialize the configuration, masking secrets by default."""
@@ -1087,6 +1174,28 @@ allow_network = false
 max_file_read_bytes = 2097152
 command_timeout = 60.0
 
+[desktop]
+# Desktop-changing tools still pass through the approval gate above.
+enabled = true
+backend = "auto"              # auto | pyautogui | native | recording
+fail_safe = true               # top-left pointer corner stops automation
+panic_corner_size = 4
+action_pause = 0.05
+allow_mouse = true
+allow_keyboard = true
+allow_screenshots = true
+allow_clipboard = true
+allow_window_control = true
+allow_launch = true
+allowed_apps = []              # empty = any app; otherwise executable allowlist
+allowed_open_schemes = ["file", "http", "https", "mailto"]
+max_workflow_steps = 100
+logo_theme = "orbit"          # orbit | core | command | neural | flow | window | pulse | beacon
+always_on_top = true
+panel_width = 500
+panel_height = 720
+autostart = false
+
 [guardrails]
 enabled = true
 injection_detection = true
@@ -1167,6 +1276,7 @@ __all__ = [
     "CacheConfig",
     "Config",
     "ConfigError",
+    "DesktopConfig",
     "EvalConfig",
     "GenerationConfig",
     "GuardrailsConfig",

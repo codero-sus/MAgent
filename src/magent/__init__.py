@@ -51,6 +51,10 @@ __all__ = [
     "Config",
     "ContextBuilder",
     "CostEstimate",
+    "DesktopConfig",
+    "DesktopController",
+    "DesktopTaskQueue",
+    "DesktopWorkflow",
     "EvalRunner",
     "EventBus",
     "EventKind",
@@ -100,7 +104,12 @@ _LAZY: dict[str, tuple[str, str]] = {
     "make_agent": ("magent.agent", "make_agent"),
     # configuration
     "Config": ("magent.config", "Config"),
+    "DesktopConfig": ("magent.config", "DesktopConfig"),
     "load_config": ("magent.config", "load_config"),
+    # desktop
+    "DesktopController": ("magent.desktop", "DesktopController"),
+    "DesktopTaskQueue": ("magent.desktop", "DesktopTaskQueue"),
+    "DesktopWorkflow": ("magent.desktop", "DesktopWorkflow"),
     # events
     "EventBus": ("magent.events", "EventBus"),
     # backend
@@ -148,6 +157,7 @@ _SUBPACKAGES: tuple[str, ...] = (
     "cli",
     "concurrency",
     "context",
+    "desktop",
     "errors",
     "eval",
     "events",

@@ -130,6 +130,13 @@ class ServerTest(MAgentTestCase):
         self.assertEqual(status, 404)
         self.assertIn("suggestions", payload)
 
+    def test_direct_desktop_tool_call_is_denied_without_an_approver(self) -> None:
+        status, payload = self._request(
+            "/api/tools/desktop_click", method="POST", body={"x": 10, "y": 20}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error_code"], "approval_required")
+
     def test_chat_returns_a_run(self) -> None:
         status, payload = self._request("/api/chat", method="POST", body={"prompt": "hello api"})
         self.assertEqual(status, 200)
@@ -153,6 +160,57 @@ class ServerTest(MAgentTestCase):
 
     def test_sessions_endpoint(self) -> None:
         self.assertEqual(self._request("/api/sessions")[0], 200)
+
+    def test_desktop_queue_lifecycle_api(self) -> None:
+        status, payload = self._request("/api/desktop")
+        self.assertEqual(status, 200)
+        self.assertIn("capabilities", payload["desktop"])
+        self.assertEqual(len(payload["logo_options"]), 8)
+        self.assertEqual(self._request("/api/desktop/tasks", method="POST", body={})[0], 400)
+        status, payload = self._request(
+            "/api/desktop/tasks",
+            method="POST",
+            body={"prompt": "Draft a local report", "priority": 75, "max_attempts": 2},
+        )
+        self.assertEqual(status, 201)
+        task_id = payload["task"]["id"]
+        self.assertEqual(self._request(f"/api/desktop/tasks/{task_id}")[0], 200)
+        self.assertEqual(len(self._request("/api/desktop/tasks?status=queued")[1]["tasks"]), 1)
+        status, payload = self._request(
+            f"/api/desktop/tasks/{task_id}", method="PATCH", body={"action": "pause"}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["task"]["status"], "paused")
+        self.assertEqual(
+            self._request(
+                f"/api/desktop/tasks/{task_id}",
+                method="PATCH",
+                body={"action": "resume"},
+            )[0],
+            200,
+        )
+        status, payload = self._request(
+            f"/api/desktop/tasks/{task_id}", method="PATCH", body={"action": "cancel"}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["task"]["status"], "cancelled")
+        self.assertEqual(
+            self._request(
+                f"/api/desktop/tasks/{task_id}", method="PATCH", body={"action": "retry"}
+            )[0],
+            200,
+        )
+        self.assertEqual(
+            self._request("/api/desktop/queue", method="POST", body={"action": "pause"})[1][
+                "stats"
+            ]["paused"],
+            True,
+        )
+        self.assertEqual(
+            self._request("/api/desktop/queue", method="POST", body={"action": "resume"})[0],
+            200,
+        )
+        self.assertEqual(self._request(f"/api/desktop/tasks/{task_id}", method="DELETE")[0], 200)
 
     def test_ui_is_served(self) -> None:
         request = urllib.request.Request(self.url + "/", method="GET")

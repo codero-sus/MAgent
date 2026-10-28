@@ -29,6 +29,12 @@ curl -s localhost:8765/api/health | python -m json.tool
 | GET | `/api/metrics` | metrics snapshot, or Prometheus text with `?format=prometheus` |
 | GET | `/api/rag/search` | retrieve cited chunks (`?q=`, `?limit=`) |
 | POST | `/api/rag/ingest` | index paths or inline text |
+| GET | `/api/desktop` | desktop capabilities, UI, logos, startup, and queue status |
+| GET/POST | `/api/desktop/tasks` | list or enqueue durable desktop work |
+| GET | `/api/desktop/tasks/{id}` | one task with lifecycle details and result |
+| PATCH | `/api/desktop/tasks/{id}` | cancel, retry, pause, or resume a task |
+| DELETE | `/api/desktop/tasks/{id}` | delete a non-running task |
+| POST | `/api/desktop/queue` | pause, resume, or clear terminal queue entries |
 | GET | `/` | the web UI |
 
 ## Examples
@@ -43,6 +49,12 @@ curl -s -X POST localhost:8765/api/tools/calculate -H 'Content-Type: application
   -d '{"expression": "6*7"}'
 
 curl -s 'localhost:8765/api/metrics?format=prometheus'
+
+curl -s -X POST localhost:8765/api/desktop/tasks -H 'Content-Type: application/json' \
+  -d '{"prompt":"Prepare the weekly report","priority":80}'
+
+curl -s -X PATCH localhost:8765/api/desktop/tasks/TASK_ID \
+  -H 'Content-Type: application/json' -d '{"action":"cancel"}'
 ```
 
 ## Authentication and origins
@@ -52,6 +64,11 @@ Set `[http].api_key` (or `MAGENT_HTTP_API_KEY`) to require
 and the UI. Origins come from `[http].cors_origins`, or `allow_origins_any =
 true` for local use. Preflights are answered, and no framing headers are sent, so
 the UI works behind a proxy.
+
+Queue requests do not grant blanket desktop control. The desktop panel's worker
+still routes each changing tool call through human approval. Direct calls to
+`/api/tools/desktop_*` that change the machine are denied when no approver is
+available unless the operator explicitly configures approval mode `never`.
 
 ## Client code
 

@@ -265,6 +265,7 @@ class ApprovalTest(MAgentTestCase):
             risk=tool_obj.spec.risk,
             destructive=tool_obj.spec.destructive,
             network=tool_obj.spec.network,
+            required=tool_obj.spec.requires_approval,
         )
 
     def test_never_mode_approves_everything(self) -> None:
@@ -280,6 +281,12 @@ class ApprovalTest(MAgentTestCase):
     def test_always_mode_asks_for_everything(self) -> None:
         manager = self._manager("always")
         self.assertTrue(manager.needs_approval(self._request("read_file"))[0])
+
+    def test_explicit_requirement_asks_even_for_read_risk(self) -> None:
+        manager = self._manager("dangerous")
+        request = build_request("sensitive_read", {}, risk="read", required=True)
+        self.assertTrue(manager.needs_approval(request)[0])
+        self.assertFalse(self._manager("never").needs_approval(request)[0])
 
     def test_denial_raises_and_is_remembered(self) -> None:
         manager = self._manager("always", prompt=deny_all)

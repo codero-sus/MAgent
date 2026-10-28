@@ -115,6 +115,46 @@ def doctor_command(ctx: Any, args: argparse.Namespace) -> int:
         problems += 1
         checks.append(("tools", "fail", str(exc), "reinstall or check plugin errors"))
 
+    # desktop automation and durable queue
+    try:
+        from ...desktop import DesktopTaskQueue
+        from ...desktop.app import tkinter_status
+        from ...desktop.driver import build_desktop_controller
+
+        capabilities = build_desktop_controller(ctx.config).capabilities
+        ready = capabilities.ready
+        checks.append(
+            (
+                "desktop",
+                "ok" if ready else "warn",
+                f"{capabilities.driver}/{capabilities.session}; "
+                f"input={capabilities.mouse and capabilities.keyboard}, "
+                f"screen={capabilities.screenshots}, windows={capabilities.window_control}",
+                "run `magent desktop status`; install `MAgent[desktop]`" if not ready else "",
+            )
+        )
+        with DesktopTaskQueue(ctx.config.desktop.queue_path, recover=False) as queue:
+            stats = queue.stats()
+        checks.append(
+            (
+                "desktop queue",
+                "ok",
+                f"{stats['total']} tasks at {ctx.config.desktop.queue_path}",
+                "",
+            )
+        )
+        ui = tkinter_status()
+        checks.append(
+            (
+                "desktop UI",
+                "ok" if ui["available"] else "warn",
+                ui["version"] if ui["available"] else ui["error"],
+                "install Tk support for this Python" if not ui["available"] else "",
+            )
+        )
+    except Exception as exc:
+        checks.append(("desktop", "warn", str(exc), "run `magent desktop status`"))
+
     # sandbox
     try:
         from ...tools import build_sandbox

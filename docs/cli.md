@@ -1,6 +1,6 @@
 # CLI
 
-26 commands, all of which accept `--format text|json|jsonl|yaml|csv|md`,
+27 commands, all of which accept `--format text|json|jsonl|yaml|csv|md`,
 `--quiet`, `--verbose`, `--no-color`, `--output-file PATH` and the global
 `--config`, `--profile`, `--workspace`, `--backend`, `--model`, `--offline`,
 `--set KEY=VALUE` flags - before or after the subcommand.
@@ -20,7 +20,7 @@ magent reflect "explain the guardrail pipeline"
 ## Tools, presets, skills
 
 ```bash
-magent tools                                     # 113 tools, 16 categories
+magent tools                                     # 143 tools, 17 categories
 magent tools --category git --format json
 magent tools inspect write_file                  # the schema the model sees
 magent tools call calculate '{"expression": "6*7"}'
@@ -43,6 +43,26 @@ magent sessions show ses_abc123 --transcript-format markdown
 magent sessions search "flaky test"
 magent sessions export ses_abc123 --output transcript.md
 ```
+
+## Desktop
+
+```bash
+magent desktop                                   # floating launcher and panel
+magent desktop open --background
+magent desktop status --format json
+magent desktop queue add "Prepare the weekly report" --priority 80
+magent desktop queue list --status queued
+magent desktop queue pause
+magent desktop queue resume
+magent desktop queue cancel TASK_ID
+magent desktop queue retry TASK_ID
+magent desktop logos                             # eight icon/lockup pairs
+magent desktop logos beacon
+magent desktop autostart install | status | remove
+```
+
+See [desktop.md](desktop.md) for operating-system permissions, workflow JSON,
+queue semantics, API routes, and safety controls.
 
 ## System
 

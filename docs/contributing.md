@@ -67,7 +67,7 @@ completions follow from it. Give it examples - `magent <cmd> --help` shows them.
 make fmt          # ruff format
 make lint         # ruff check
 make type         # mypy on src
-make test         # 487 tests
+make test         # 514 tests
 make smoke        # end-to-end, offline
 make smoke-tools  # every registered tool
 make verify       # the improvements manifest

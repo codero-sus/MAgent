@@ -54,6 +54,7 @@ class ApprovalRequest:
     category: str = "general"
     destructive: bool = False
     network: bool = False
+    required: bool = False
     session_id: str = ""
     run_id: str = ""
     sandbox_decision: dict[str, Any] | None = None
@@ -90,6 +91,7 @@ class ApprovalRequest:
             "category": self.category,
             "destructive": self.destructive,
             "network": self.network,
+            "required": self.required,
             "session_id": self.session_id,
             "run_id": self.run_id,
             "signature": self.signature,
@@ -188,6 +190,8 @@ class ApprovalManager:
             request.summary(), policy.auto_approve_patterns
         ):
             return False, "tool is on the auto-approve list"
+        if request.required:
+            return True, "tool explicitly requires approval"
         if self._matches_any(request.tool, policy.always_ask_tools):
             return True, "tool is on the always-ask list"
         if policy.mode == "always":
@@ -400,6 +404,7 @@ def build_request(
     category: str = "general",
     destructive: bool = False,
     network: bool = False,
+    required: bool = False,
     reason: str = "",
     session_id: str = "",
     run_id: str = "",
@@ -413,6 +418,7 @@ def build_request(
         category=category,
         destructive=destructive,
         network=network,
+        required=required,
         reason=reason,
         session_id=session_id,
         run_id=run_id,

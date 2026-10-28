@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..config import Config, default_config, load_config
 from ..logging_ import get_logger
@@ -322,6 +322,18 @@ class CliContext:
         if loop_mode:
             config.loop_mode = loop_mode
         session = self.sessions if self.config.session.enabled else None
+        if "approval" not in overrides:
+            import sys
+
+            from ..tools.approval import ApprovalManager, ApprovalPolicy, prompter_for_mode
+            from ..types import ApprovalMode
+
+            mode = cast(ApprovalMode, self.config.tools.approval_mode)
+            overrides["approval"] = ApprovalManager(
+                ApprovalPolicy(mode=mode),
+                prompt=prompter_for_mode(mode, interactive=sys.stdin.isatty()),
+                events=self.events,
+            )
         agent = Agent(
             backend=self.backend,
             settings=self.config,

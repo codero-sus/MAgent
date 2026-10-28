@@ -51,9 +51,10 @@ for step in result.steps:
         print("called", call.name, call.arguments)
 ```
 
-Tools run inside a sandbox: paths are resolved and jailed to the workspace,
-denied patterns win over allowed ones, and dangerous commands are refused
-outright. See [tools.md](tools.md).
+Filesystem and command tools run inside a sandbox: paths are resolved and jailed
+to the workspace, denied patterns win over allowed ones, and dangerous commands
+are refused outright. Desktop tools use separate capability, limit, fail-safe,
+and human-approval controls. See [tools.md](tools.md).
 
 ## 5. Remember something
 
@@ -85,7 +86,19 @@ print(result.context)          # numbered, cited context
 print(result.verify("..."))    # are the citations real?
 ```
 
-## 7. Evaluate it
+## 7. Keep it on your desktop
+
+```bash
+pip install 'MAgent[desktop]'    # optional but recommended backend
+magent desktop status
+magent desktop                   # click the floating logo for task/queue/chat
+```
+
+The queue is local SQLite, actions that change the desktop ask for approval, and
+the red **Stop** control cancels current work. See [desktop.md](desktop.md) before
+using automation on a real session.
+
+## 8. Evaluate it
 
 ```bash
 magent eval sample --output evals/smoke.json
@@ -98,4 +111,5 @@ The exit code is non-zero below the threshold, so it drops straight into CI.
 
 * [agents.md](agents.md) for loop modes, plans and streaming
 * [guardrails.md](guardrails.md) before you let an agent touch a real system
+* [desktop.md](desktop.md) for launcher, queue, workflows, permissions, and safety
 * [cli.md](cli.md) for the full command list

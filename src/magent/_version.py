@@ -7,17 +7,17 @@ MAgent sends to Cortex LLMHoster.
 
 from __future__ import annotations
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 """Semantic version of MAgent."""
 
-__version_info__ = (1, 0, 0)
+__version_info__ = (1, 1, 0)
 """Version split into integers for comparison."""
 
-RELEASE_NAME = "Mr. Agent"
+RELEASE_NAME = "Desktop Agent"
 """Human friendly release name."""
 
-CODENAME = "Genesis"
-"""Codename for the 1.0 line."""
+CODENAME = "Orbit"
+"""Codename for the 1.1 line."""
 
 BUILD_CHANNEL = "stable"
 """Distribution channel: ``stable``, ``beta`` or ``dev``."""

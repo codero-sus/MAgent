@@ -31,7 +31,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .config import AgentConfig, Config, GenerationConfig, load_config
 from .errors import (
@@ -70,6 +70,7 @@ from .tools.sandbox import Sandbox, build_sandbox
 from .types import (
     AgentEvent,
     ApprovalDecision,
+    ApprovalMode,
     ChatResponse,
     EventKind,
     Message,
@@ -422,7 +423,7 @@ class Agent:
         self.workspace = resolved_workspace
         self.sandbox = sandbox or build_sandbox(self.settings, workspace=resolved_workspace)
         self.approval = approval or ApprovalManager(
-            ApprovalPolicy(mode=self.settings.tools.approval_mode),
+            ApprovalPolicy(mode=cast(ApprovalMode, self.settings.tools.approval_mode)),
             events=self.events,
         )
         self.memory = memory
@@ -1352,6 +1353,7 @@ class Agent:
             category=spec.category if spec else "general",
             destructive=bool(spec.destructive) if spec else False,
             network=bool(spec.network) if spec else False,
+            required=bool(spec.requires_approval) if spec else False,
             session_id=context.session_id,
             run_id=run_id,
         )
@@ -1364,6 +1366,9 @@ class Agent:
             # should adapt instead of the whole run aborting.
             return self._denial_result(call, str(exc), "operator")
         if record.decision in {ApprovalDecision.APPROVE, ApprovalDecision.APPROVE_SESSION}:
+            approved = context.extras.setdefault("__approved_call_ids__", set())
+            if isinstance(approved, set):
+                approved.add(call.id)
             return None
         reason = record.reason or "denied by approval policy"
         self.emit(

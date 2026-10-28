@@ -20,6 +20,8 @@ Endpoints (see :meth:`MAgentServer.routes` for the live list):
 ``GET  /api/presets``     agent presets
 ``POST /api/rag/ingest``  index files for retrieval
 ``GET  /api/rag/search``  retrieve cited chunks
+``GET  /api/desktop``     desktop capabilities and durable queue status
+``POST /api/desktop/tasks`` enqueue work for the floating desktop agent
 
 Auth is a bearer token when ``http.api_key`` (or ``MAGENT_HTTP_API_KEY``) is set;
 origins come from ``http.cors_origins`` unless ``allow_origins_any`` is set, which
@@ -140,6 +142,7 @@ class MAgentServer:
         retriever: Any = None,
         skills: Any = None,
         observability: Any = None,
+        desktop_queue: Any = None,
         agent_factory: Any = None,
     ) -> None:
         """Wire the server.
@@ -154,6 +157,7 @@ class MAgentServer:
             retriever: RAG retriever
             skills: skill library
             observability: observability façade, used for metrics
+            desktop_queue: optional shared :class:`DesktopTaskQueue`
             agent_factory: callable ``(session_id, options) -> Agent`` overriding the default
         """
         self.config = config
@@ -165,6 +169,8 @@ class MAgentServer:
         self.retriever = retriever
         self.skills = skills
         self.observability = observability
+        self.desktop_queue = desktop_queue
+        self._owns_desktop_queue = desktop_queue is None
         self.agent_factory = agent_factory
         self.stats = ServerStats()
         self.started_at = time.time()
@@ -322,6 +328,27 @@ class MAgentServer:
         router.get("/api/metrics", self.api_metrics, description="Metrics snapshot")
         router.get("/api/rag/search", self.api_rag_search, description="Retrieve cited chunks")
         router.post("/api/rag/ingest", self.api_rag_ingest, description="Index files")
+        router.get("/api/desktop", self.api_desktop, description="Desktop and queue status")
+        router.get("/api/desktop/tasks", self.api_desktop_tasks, description="List desktop tasks")
+        router.post(
+            "/api/desktop/tasks", self.api_desktop_task_add, description="Queue desktop work"
+        )
+        router.get("/api/desktop/tasks/{id}", self.api_desktop_task, description="One desktop task")
+        router.patch(
+            "/api/desktop/tasks/{id}",
+            self.api_desktop_task_update,
+            description="Cancel or retry desktop work",
+        )
+        router.delete(
+            "/api/desktop/tasks/{id}",
+            self.api_desktop_task_delete,
+            description="Delete a desktop task",
+        )
+        router.post(
+            "/api/desktop/queue",
+            self.api_desktop_queue,
+            description="Pause, resume, or clear the desktop queue",
+        )
         router.get("/", self.serve_index, description="Web UI", auth=False)
         router.get("/index.html", self.serve_index, description="Web UI", auth=False)
         router.get("/favicon.ico", self.serve_favicon, description="Favicon", auth=False)
@@ -613,6 +640,127 @@ class MAgentServer:
         report = self.retriever.ingest(paths, root=str(payload.get("root", "") or "") or None)
         return 201, {"report": report.to_dict(), "stats": self.retriever.stats()}
 
+    def api_desktop(self, request: Request) -> tuple[int, Any]:
+        """Return desktop capabilities, branding options, and queue telemetry."""
+        del request
+        from ..desktop.app import tkinter_status
+        from ..desktop.autostart import autostart_status
+        from ..desktop.branding import (
+            LOGO_THEMES,
+            DesktopAppearanceStore,
+            logo_theme,
+        )
+        from ..desktop.driver import build_desktop_controller
+
+        controller = build_desktop_controller(self.config)
+        desktop = getattr(self.config, "desktop", None)
+        selected = str(getattr(desktop, "logo_theme", "orbit"))
+        state_path = Path(str(getattr(desktop, "state_path", ""))).expanduser()
+        if state_path.is_file():
+            selected = DesktopAppearanceStore(state_path).load().logo_theme
+        return 200, {
+            "desktop": controller.describe(),
+            "ui": tkinter_status(),
+            "queue": self._desktop_tasks().stats(),
+            "autostart": autostart_status(),
+            "logo": logo_theme(selected).to_dict(),
+            "logo_options": [theme.to_dict() for theme in LOGO_THEMES],
+        }
+
+    def api_desktop_tasks(self, request: Request) -> tuple[int, Any]:
+        """List durable desktop tasks, optionally filtered by lifecycle state."""
+        status = request.query.get("status", "")
+        limit = max(1, min(_int(request.query.get("limit", 100), 100), 1000))
+        try:
+            tasks = self._desktop_tasks().list(status=status, limit=limit)
+        except ValueError:
+            return 400, {"error": "invalid desktop task status", "status": status}
+        return 200, {
+            "tasks": [task.to_dict() for task in tasks],
+            "stats": self._desktop_tasks().stats(),
+        }
+
+    def api_desktop_task_add(self, request: Request) -> tuple[int, Any]:
+        """Append one prompt to the persistent desktop queue."""
+        payload = request.json or {}
+        prompt = str(payload.get("prompt", "")).strip()
+        if not prompt:
+            return 400, {"error": "prompt is required"}
+        metadata = payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return 400, {"error": "metadata must be an object"}
+        try:
+            task = self._desktop_tasks().enqueue(
+                prompt,
+                title=str(payload.get("title", "")),
+                priority=_int(payload.get("priority", 50), 50),
+                max_attempts=_int(payload.get("max_attempts", 1), 1),
+                session_id=str(payload.get("session_id", "desktop-api")),
+                metadata={**metadata, "source": metadata.get("source", "api")},
+            )
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+        return 201, {"task": task.to_dict(), "stats": self._desktop_tasks().stats()}
+
+    def api_desktop_task(self, request: Request) -> tuple[int, Any]:
+        """Return one durable desktop task."""
+        task = self._desktop_tasks().get(request.params.get("id", ""))
+        if task is None:
+            return 404, {"error": "unknown desktop task"}
+        return 200, {"task": task.to_dict()}
+
+    def api_desktop_task_update(self, request: Request) -> tuple[int, Any]:
+        """Cancel or retry one desktop task."""
+        payload = request.json or {}
+        action = str(payload.get("action") or payload.get("status") or "").lower()
+        task_id = request.params.get("id", "")
+        queue = self._desktop_tasks()
+        if action in {"cancel", "cancelled"}:
+            task = queue.cancel(task_id)
+        elif action in {"retry", "queued"}:
+            task = queue.retry(task_id, reset_attempts=bool(payload.get("reset_attempts", True)))
+        elif action in {"pause", "paused"}:
+            task = queue.pause_task(task_id)
+        elif action == "resume":
+            task = queue.resume_task(task_id)
+        else:
+            return 400, {"error": "action must be cancel, retry, pause, or resume"}
+        if task is None:
+            return 409 if queue.get(task_id) is not None else 404, {
+                "error": "task does not exist or cannot make that transition"
+            }
+        return 200, {"task": task.to_dict(), "stats": queue.stats()}
+
+    def api_desktop_task_delete(self, request: Request) -> tuple[int, Any]:
+        """Delete a non-running desktop task."""
+        task_id = request.params.get("id", "")
+        queue = self._desktop_tasks()
+        existing = queue.get(task_id)
+        if existing is None:
+            return 404, {"error": "unknown desktop task"}
+        if not queue.delete(task_id):
+            return 409, {"error": "a running desktop task cannot be deleted; cancel it first"}
+        return 200, {"deleted": True, "id": task_id, "stats": queue.stats()}
+
+    def api_desktop_queue(self, request: Request) -> tuple[int, Any]:
+        """Pause, resume, or clear terminal items from the durable queue."""
+        payload = request.json or {}
+        action = str(payload.get("action", "")).lower()
+        queue = self._desktop_tasks()
+        if action in {"pause", "resume"}:
+            queue.set_paused(action == "pause")
+            return 200, {"action": action, "stats": queue.stats()}
+        if action == "clear":
+            statuses = payload.get("statuses")
+            if statuses is not None and not isinstance(statuses, list):
+                return 400, {"error": "statuses must be an array"}
+            try:
+                count = queue.clear(statuses=statuses)
+            except ValueError:
+                return 400, {"error": "statuses contains an invalid task state"}
+            return 200, {"action": action, "removed": count, "stats": queue.stats()}
+        return 400, {"error": "action must be pause, resume, or clear"}
+
     def serve_index(self, request: Request) -> tuple[int, Any]:
         """Serve the bundled web UI (or a JSON hint when it is disabled)."""
         del request
@@ -655,13 +803,36 @@ class MAgentServer:
             self.sessions = build_session_manager(self.config)
         return self.sessions
 
+    def _desktop_tasks(self) -> Any:
+        """Return the process-shared persistent desktop task queue."""
+        if self.desktop_queue is None:
+            from ..desktop import DesktopTaskQueue
+
+            path = getattr(getattr(self.config, "desktop", None), "queue_path", ":memory:")
+            self.desktop_queue = DesktopTaskQueue(path or ":memory:", recover=False)
+        return self.desktop_queue
+
+    def _close_desktop_tasks(self) -> None:
+        """Close a lazily owned desktop queue without touching injected fixtures."""
+        queue = self.desktop_queue
+        if queue is not None and self._owns_desktop_queue:
+            try:
+                queue.close()
+            except Exception:
+                pass
+            self.desktop_queue = None
+
     def _tool_context(self) -> Any:
         """Build a tool context for API-dispatched calls."""
-        from ..tools import ToolContext, build_sandbox
+        from ..tools import ApprovalManager, ApprovalPolicy, ToolContext, build_sandbox
 
+        approval = ApprovalManager(
+            ApprovalPolicy(mode=getattr(self.config.tools, "approval_mode", "dangerous"))
+        )
         return ToolContext(
             config=self.config,
             registry=self.registry,
+            approval=approval,
             sandbox=build_sandbox(
                 self.config,
                 workspace=getattr(getattr(self.config, "tools", None), "workspace", None),
@@ -741,6 +912,7 @@ class MAgentServer:
             LOGGER.info("shutting down")
         finally:
             httpd.server_close()
+            self._close_desktop_tasks()
 
     def start_background(self, *, host: str = "", port: int = 0) -> str:
         """Start the server on a daemon thread and return its URL."""
@@ -763,6 +935,7 @@ class MAgentServer:
         thread, self._thread = self._thread, None
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
+        self._close_desktop_tasks()
 
     @property
     def running(self) -> bool:

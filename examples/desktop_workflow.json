@@ -1,0 +1,37 @@
+{
+  "name": "draft-note",
+  "description": "A bounded example showing pointer, keyboard, clipboard, and waits.",
+  "variables": {
+    "message": "Hello from MAgent desktop automation"
+  },
+  "steps": [
+    {
+      "name": "move-to-editor",
+      "action": "move",
+      "x": 420,
+      "y": 260,
+      "duration": 0.2
+    },
+    {
+      "action": "click",
+      "button": "left"
+    },
+    {
+      "action": "type",
+      "text": "${message}",
+      "interval": 0.02
+    },
+    {
+      "action": "clipboard_write",
+      "text": "${message}"
+    },
+    {
+      "action": "wait",
+      "seconds": 0.25
+    },
+    {
+      "action": "hotkey",
+      "keys": ["ctrl", "s"]
+    }
+  ]
+}

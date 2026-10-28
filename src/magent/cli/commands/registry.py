@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from . import Command
 from .agent_cmds import COMMANDS as AGENT_COMMANDS
+from .desktop_cmds import COMMANDS as DESKTOP_COMMANDS
 from .knowledge_cmds import COMMANDS as KNOWLEDGE_COMMANDS
 from .quality_cmds import COMMANDS as QUALITY_COMMANDS
 from .server_cmds import COMMANDS as SERVER_COMMANDS
@@ -17,6 +18,7 @@ from .tools_cmds import COMMANDS as TOOLS_COMMANDS
 
 COMMAND_MODULES: tuple[str, ...] = (
     "agent_cmds",
+    "desktop_cmds",
     "knowledge_cmds",
     "tools_cmds",
     "system_cmds",
@@ -35,6 +37,7 @@ def all_commands() -> list[Command]:
     merged: dict[str, Command] = {}
     for group in (
         AGENT_COMMANDS,
+        DESKTOP_COMMANDS,
         KNOWLEDGE_COMMANDS,
         TOOLS_COMMANDS,
         SYSTEM_COMMANDS,

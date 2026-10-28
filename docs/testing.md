@@ -82,7 +82,7 @@ print(observability.metrics.prometheus())
 
 ## The improvements manifest
 
-The build ships a machine-checkable claim: **3,335 improvements**, each traced to
+The build ships a machine-checkable claim: **3,539 improvements**, each traced to
 a file and symbol that exists in this repository.
 
 ```bash

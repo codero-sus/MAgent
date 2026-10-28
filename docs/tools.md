@@ -1,6 +1,6 @@
 # Tools
 
-MAgent ships 113 tools in 16 categories. They are ordinary Python functions with
+MAgent ships 143 tools in 17 categories. They are ordinary Python functions with
 type hints and docstrings; the JSON schema the model sees is inferred from both.
 
 ## Writing a tool
@@ -40,6 +40,7 @@ defaults (not required) and `**Argument docs in the docstring** (descriptions).
 | --- | --- | --- |
 | files | 17 | `read_file`, `write_file`, `edit_file`, `glob_files`, `delete_path` |
 | cortex | 12 | `cortex_health`, `cortex_models`, `cortex_model_control` |
+| desktop | 30 | `desktop_click`, `desktop_screenshot`, `desktop_run_workflow`, `desktop_queue_add` |
 | text | 10 | `text_stats`, `regex_replace`, `extractive_summary` |
 | git | 10 | `git_status`, `git_diff`, `git_commit`, `git_blame` |
 | data | 8 | `csv_read`, `csv_stats`, `sqlite_query`, `group_aggregate` |
@@ -52,7 +53,8 @@ Risk levels are ordered: `safe < read < write < execute < destructive < network`
 
 ## The sandbox
 
-Every path a tool touches is resolved and checked against the workspace jail:
+Every filesystem path a file, shell, or code tool touches is resolved and checked
+against the workspace jail:
 
 ```python
 from magent.tools import build_sandbox
@@ -71,7 +73,9 @@ byte ceilings apply to reads and writes, and every decision is recorded for
 decision object instead of an exception.
 
 > The sandbox is a guardrail, not a security boundary. Run untrusted code in a
-> container.
+> container. Desktop automation is outside the filesystem jail and is instead
+> controlled by tool policy, explicit approvals, capability gates, limits, and
+> fail-safe stops; it is not an operating-system security boundary either.
 
 ## Approvals
 
@@ -86,7 +90,9 @@ approval_mode = "dangerous"   # never | ask | always | dangerous
 * `always` - prompt for every call
 
 A denied request becomes a tool result with `error_code="approval_denied"`; the
-run continues and the model is told the call was refused.
+run continues and the model is told the call was refused. Desktop-changing tools
+also have `requires_approval=true` and enforce approval when dispatched directly,
+so an HTTP tool call cannot silently bypass the agent loop.
 
 ## Calling tools directly
 

@@ -95,6 +95,7 @@ class CommandGroup:
 
 GROUPS: tuple[tuple[str, str], ...] = (
     ("agent", "run the agent"),
+    ("desktop", "desktop automation, queue and floating control"),
     ("knowledge", "memory, retrieval and sessions"),
     ("models", "backends, models and Cortex control"),
     ("tools", "tools, presets and skills"),

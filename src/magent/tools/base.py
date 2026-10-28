@@ -385,6 +385,9 @@ class Tool:
                 duration_ms=(time.perf_counter() - started) * 1000.0,
                 metadata={"dry_run": True},
             )
+        active_arguments = ctx.extras.setdefault("__tool_arguments__", {})
+        if isinstance(active_arguments, dict):
+            active_arguments[call_id] = dict(parsed)
         try:
             outcome = self._invoke(parsed, ctx)
         except ToolError as exc:
@@ -392,6 +395,9 @@ class Tool:
         except Exception as exc:
             LOGGER.debug("tool %s raised %s", self.name, exc)
             return self._record_failure(call_id, exc, started, code="tool_execution_error")
+        finally:
+            if isinstance(active_arguments, dict):
+                active_arguments.pop(call_id, None)
         duration = (time.perf_counter() - started) * 1000.0
         with self._lock:
             self.call_count += 1

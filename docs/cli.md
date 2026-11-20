@@ -47,17 +47,21 @@ magent sessions export ses_abc123 --output transcript.md
 ## Desktop
 
 ```bash
-magent desktop                                   # floating launcher and panel
+magent desktop                                   # floating launcher + workbench
 magent desktop open --background
 magent desktop status --format json
-magent desktop queue add "Prepare the weekly report" --priority 80
-magent desktop queue list --status queued
-magent desktop queue pause
-magent desktop queue resume
+magent desktop projects create --title Research --kind documents
+magent desktop projects create --title Code --kind code --workspace .
+magent desktop projects list
+magent desktop sessions create --project PROJECT_ID --title "Source review"
+magent desktop sessions create --project PROJECT_ID --parent SESSION_ID --title "Fact check"
+magent desktop files attach ./brief.pdf --project PROJECT_ID
+magent desktop files list --project PROJECT_ID
+magent desktop queue add "Prepare the weekly report" --project PROJECT_ID --session SESSION_ID
+magent desktop queue list --project PROJECT_ID --status queued
+magent desktop queue pause | resume
 magent desktop queue cancel TASK_ID
-magent desktop queue retry TASK_ID
 magent desktop logos                             # eight icon/lockup pairs
-magent desktop logos beacon
 magent desktop autostart install | status | remove
 ```
 

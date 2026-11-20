@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import threading
 import unittest
 from pathlib import Path
@@ -26,7 +27,9 @@ from magent.desktop.driver import (
     RecordingDesktopDriver,
 )
 from magent.desktop.models import Point, Rect, TaskStatus
+from magent.desktop.projects import DesktopProjectStore, ProjectKind
 from magent.desktop.queue import DesktopQueueWorker, DesktopTaskQueue
+from magent.desktop.workbench import DesktopWorkbench
 from magent.desktop.workflow import DesktopWorkflow, DesktopWorkflowRunner
 from tests.support import MAgentTestCase
 
@@ -357,6 +360,141 @@ class DesktopQueueTest(MAgentTestCase):
             self.assertIn("recovered", current.error)  # type: ignore[union-attr]
 
 
+class DesktopProjectsAndWorkbenchTest(MAgentTestCase):
+    """Projects and sessions keep background work and artifacts locally organized."""
+
+    def project_store(self) -> DesktopProjectStore:
+        return DesktopProjectStore(
+            self.home.path / "desktop" / "projects.db",
+            workspace_root=self.home.path / "desktop" / "projects",
+        )
+
+    def test_project_and_session_lifecycle_persists_without_deleting_files(self) -> None:
+        path = self.home.path / "codebase"
+        path.mkdir()
+        (path / "keep.txt").write_text("keep", encoding="utf-8")
+        with self.project_store() as store:
+            project = store.create_project(
+                "Desktop redesign",
+                kind=ProjectKind.CODE,
+                workspace=path,
+                instructions="Keep the UI local-first.",
+                model="cortex-local",
+                pinned=True,
+            )
+            session = store.create_session(project.id, title="Research", pinned=True)
+            child = store.create_session(project.id, title="Implementation", parent_id=session.id)
+            self.assertEqual(store.ensure_session(project.id).id, session.id)
+            store.update_session(child.id, archived=True)
+            self.assertEqual([item.id for item in store.list_sessions(project.id)], [session.id])
+            store.update_project(project.id, name="Agent workbench", archived=True)
+            self.assertEqual(store.list_projects(), [])
+            self.assertEqual(store.list_projects(include_archived=True)[0].name, "Agent workbench")
+            self.assertTrue(store.delete_project(project.id))
+            self.assertIsNone(store.get_session(session.id))
+        self.assertEqual((path / "keep.txt").read_text(encoding="utf-8"), "keep")
+
+    def test_workspace_files_are_bounded_previewable_and_traversal_safe(self) -> None:
+        source = self.workspace / "source.txt"
+        source.write_text("attached material", encoding="utf-8")
+        with self.project_store() as store:
+            project = store.create_project("Documents", kind="documents")
+            root = Path(project.workspace)
+            (root / "notes").mkdir()
+            (root / "notes" / "brief.md").write_text("# Brief\n" + "A" * 300, encoding="utf-8")
+            (root / ".secret").write_text("hidden", encoding="utf-8")
+            listed = store.list_files(project.id)
+            self.assertEqual([item.path for item in listed], ["notes/brief.md"])
+            preview = store.preview_file(project.id, "notes/brief.md", max_bytes=256)
+            self.assertTrue(preview["truncated"])
+            self.assertTrue(preview["content"].startswith("# Brief\n"))
+            self.assertEqual(len(preview["content"]), 256)
+            attached = store.attach_file(project.id, source)
+            self.assertEqual(attached.path, "attachments/source.txt")
+            self.assertEqual(
+                store.preview_file(project.id, attached.path)["content"], "attached material"
+            )
+            with self.assertRaises(ValueError):
+                store.preview_file(project.id, "../../outside.txt")
+
+    def test_workbench_switches_context_while_tasks_continue_in_background(self) -> None:
+        with self.project_store() as projects, DesktopTaskQueue(":memory:") as queue:
+            workbench = DesktopWorkbench(projects, queue)
+            inbox = workbench.project
+            first_session = workbench.session
+            first = workbench.enqueue(
+                "@research-brief Compare the options",
+                skills=["doc-writer"],
+            )
+            self.assertEqual(first.project_id, inbox.id)
+            self.assertEqual(first.session_id, first_session.id)
+            self.assertEqual(first.metadata["skills"], ["doc-writer", "research-brief"])
+            code = workbench.new_project("Code", kind="code")
+            second = workbench.enqueue("Review this repository")
+            self.assertEqual(second.project_id, code.id)
+            self.assertNotEqual(second.session_id, first.session_id)
+            self.assertEqual(len(queue.list(project_id=inbox.id)), 1)
+            self.assertEqual(len(queue.list(project_id=code.id)), 1)
+            workbench.select_session(first.session_id)
+            transcript = workbench.transcript()
+            self.assertEqual(transcript[0].role, "user")
+            self.assertIn("Queued", transcript[1].text)
+            self.assertEqual(workbench.snapshot()["queue"]["total"], 1)
+
+    def test_workbench_context_includes_project_and_explicit_skill(self) -> None:
+        from magent.skills import SkillLibrary
+
+        with self.project_store() as projects, DesktopTaskQueue(":memory:") as queue:
+            project = projects.create_project(
+                "Release",
+                kind="documents",
+                instructions="Use concise language.",
+            )
+            session = projects.create_session(project.id, title="Notes")
+            workbench = DesktopWorkbench(
+                projects,
+                queue,
+                project_id=project.id,
+                session_id=session.id,
+            )
+            first = workbench.enqueue("Collect the changes")
+            queue.claim_next("test")
+            queue.complete(first.id, "Added project sessions and file previews.")
+            task = workbench.enqueue("Write the release notes", skills=["release-notes"])
+            context = workbench.context_block(task, SkillLibrary())
+            self.assertIn("Release", context)
+            self.assertIn("Use concise language", context)
+            self.assertIn("release-notes", context)
+            self.assertIn("Added project sessions", context)
+            self.assertIn(project.workspace, context)
+
+    def test_queue_migrates_old_database_and_filters_project_activity(self) -> None:
+        path = self.home.path / "old-queue.db"
+        connection = sqlite3.connect(path)
+        connection.executescript(
+            """
+            CREATE TABLE desktop_tasks (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL,
+                status TEXT NOT NULL, priority INTEGER NOT NULL, created_at REAL NOT NULL,
+                updated_at REAL NOT NULL, started_at REAL NOT NULL DEFAULT 0,
+                completed_at REAL NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 1, worker_id TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL DEFAULT 'desktop', result TEXT NOT NULL DEFAULT '',
+                error TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE desktop_queue_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            """
+        )
+        connection.commit()
+        connection.close()
+        with DesktopTaskQueue(path, recover=False) as queue:
+            one = queue.enqueue("one", project_id="alpha", session_id="session-a")
+            queue.enqueue("two", project_id="beta", session_id="session-b")
+            self.assertEqual(queue.get(one.id).project_id, "alpha")  # type: ignore[union-attr]
+            self.assertEqual(queue.stats(project_id="alpha")["total"], 1)
+            self.assertEqual(queue.list(session_id="session-b")[0].prompt, "two")
+
+
 class DesktopBrandingAndConfigTest(MAgentTestCase):
     """Branding, persisted appearance, config, and startup files stay deterministic."""
 
@@ -375,11 +513,18 @@ class DesktopBrandingAndConfigTest(MAgentTestCase):
     def test_appearance_store_round_trips_and_recovers_bad_json(self) -> None:
         path = self.home.path / "appearance.json"
         store = DesktopAppearanceStore(path)
-        state = DesktopAppearance(logo_theme="pulse", bubble_x=123, bubble_y=456)
+        state = DesktopAppearance(
+            logo_theme="pulse",
+            bubble_x=123,
+            bubble_y=456,
+            project_id="project_local",
+            session_id="session_local",
+        )
         store.save(state)
         loaded = store.load()
         self.assertEqual(loaded.logo_theme, "pulse")
         self.assertEqual((loaded.bubble_x, loaded.bubble_y), (123, 456))
+        self.assertEqual((loaded.project_id, loaded.session_id), ("project_local", "session_local"))
         path.write_text("not json", encoding="utf-8")
         self.assertEqual(store.load().logo_theme, "orbit")
 
@@ -396,6 +541,8 @@ class DesktopBrandingAndConfigTest(MAgentTestCase):
         config.validate()
         self.assertEqual(config.desktop.backend, "recording")
         self.assertEqual(config.desktop.allowed_apps, ["Editor", "Browser"])
+        self.assertTrue(config.desktop.projects_path.endswith("desktop/projects.db"))
+        self.assertTrue(config.desktop.workspace_directory.endswith("desktop/projects"))
         invalid = DesktopConfig(logo_theme="missing")
         with self.assertRaises(Exception):
             invalid.validate()
@@ -456,6 +603,58 @@ class DesktopAppHeadlessTest(MAgentTestCase):
         finally:
             app.close()
 
+    def test_task_execution_uses_project_workspace_model_instructions_and_skills(self) -> None:
+        from types import SimpleNamespace
+
+        from magent.desktop.app import DesktopApp
+
+        captured: dict[str, object] = {}
+
+        class FakeAgent:
+            def reset_cancel(self) -> None:
+                captured["reset"] = True
+
+            def run(self, prompt: str, **options: object) -> object:
+                captured["prompt"] = prompt
+                captured["options"] = options
+                return SimpleNamespace(output="project result", error="")
+
+            def cancel(self, *, reason: str = "") -> None:
+                captured["cancel"] = reason
+
+        config = self.config()
+        with (
+            DesktopTaskQueue(":memory:") as queue,
+            DesktopProjectStore(
+                ":memory:", workspace_root=self.home.path / "project-workspaces"
+            ) as projects,
+        ):
+            project = projects.create_project(
+                "Code project",
+                kind="code",
+                instructions="Run focused checks.",
+                model="cortex-code",
+            )
+            session = projects.create_session(project.id, title="Implementation")
+
+            def build_agent(_approval: object, workspace: str) -> FakeAgent:
+                captured["workspace"] = workspace
+                return FakeAgent()
+
+            app = DesktopApp(config, queue=queue, projects=projects, agent_builder=build_agent)
+            try:
+                app.workbench.select_session(session.id)
+                task = app.workbench.enqueue("Review this change", skills=["code-review"])
+                self.assertEqual(app._execute_task(task), "project result")
+            finally:
+                app.close()
+        self.assertEqual(captured["workspace"], project.workspace)
+        options = captured["options"]
+        self.assertEqual(options["model"], "cortex-code")  # type: ignore[index]
+        self.assertTrue(options["include_files"])  # type: ignore[index]
+        self.assertIn("Run focused checks", options["context_block"])  # type: ignore[index]
+        self.assertIn("code-review", options["context_block"])  # type: ignore[index]
+
 
 class DesktopCliAndToolsTest(MAgentTestCase):
     """The desktop feature is discoverable from CLI and the default registry."""
@@ -481,6 +680,63 @@ class DesktopCliAndToolsTest(MAgentTestCase):
         code, output, _ = self.run_cli("desktop", "status", "--format", "json")
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output)["logo"]["id"], "beacon")
+
+    def test_cli_manages_projects_sessions_files_and_scoped_queue_work(self) -> None:
+        code, output, _ = self.run_cli(
+            "desktop",
+            "projects",
+            "create",
+            "--title",
+            "Research desk",
+            "--kind",
+            "documents",
+            "--format",
+            "json",
+        )
+        self.assertEqual(code, 0)
+        created = json.loads(output)
+        project_id = created["project"]["id"]
+        session_id = created["session"]["id"]
+
+        source = self.workspace / "brief.txt"
+        source.write_text("local source", encoding="utf-8")
+        code, output, _ = self.run_cli(
+            "desktop",
+            "files",
+            "attach",
+            str(source),
+            "--project",
+            project_id,
+            "--format",
+            "json",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["path"], "attachments/brief.txt")
+
+        code, output, _ = self.run_cli(
+            "desktop",
+            "queue",
+            "add",
+            "Summarize",
+            "the",
+            "brief",
+            "--project",
+            project_id,
+            "--session",
+            session_id,
+            "--format",
+            "json",
+        )
+        self.assertEqual(code, 0)
+        task = json.loads(output)
+        self.assertEqual(task["project_id"], project_id)
+        self.assertEqual(task["session_id"], session_id)
+
+        code, output, _ = self.run_cli(
+            "desktop", "sessions", "list", "--project", project_id, "--format", "json"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["sessions"][0]["last_task_id"], task["id"])
 
     def test_registry_exposes_approval_aware_desktop_tools(self) -> None:
         registry = self.registry()

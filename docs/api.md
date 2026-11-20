@@ -29,9 +29,14 @@ curl -s localhost:8765/api/health | python -m json.tool
 | GET | `/api/metrics` | metrics snapshot, or Prometheus text with `?format=prometheus` |
 | GET | `/api/rag/search` | retrieve cited chunks (`?q=`, `?limit=`) |
 | POST | `/api/rag/ingest` | index paths or inline text |
-| GET | `/api/desktop` | desktop capabilities, UI, logos, startup, and queue status |
-| GET/POST | `/api/desktop/tasks` | list or enqueue durable desktop work |
-| GET | `/api/desktop/tasks/{id}` | one task with lifecycle details and result |
+| GET | `/api/desktop` | desktop capabilities, UI, logos, projects, startup, and queue status |
+| GET/POST | `/api/desktop/projects` | list or create local workbench projects |
+| GET/PATCH/DELETE | `/api/desktop/projects/{id}` | inspect/update/delete project metadata; files are preserved |
+| GET/POST | `/api/desktop/projects/{id}/sessions` | list/create sessions or sub-sessions |
+| GET | `/api/desktop/projects/{id}/files` | list files, or bounded preview with `?path=` |
+| GET/PATCH/DELETE | `/api/desktop/sessions/{id}` | inspect/update/delete session metadata; tasks are preserved |
+| GET/POST | `/api/desktop/tasks` | list or enqueue durable work, filter by project/session |
+| GET | `/api/desktop/tasks/{id}` | one task with lifecycle, project/session, and result |
 | PATCH | `/api/desktop/tasks/{id}` | cancel, retry, pause, or resume a task |
 | DELETE | `/api/desktop/tasks/{id}` | delete a non-running task |
 | POST | `/api/desktop/queue` | pause, resume, or clear terminal queue entries |
@@ -50,8 +55,12 @@ curl -s -X POST localhost:8765/api/tools/calculate -H 'Content-Type: application
 
 curl -s 'localhost:8765/api/metrics?format=prometheus'
 
+curl -s -X POST localhost:8765/api/desktop/projects \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Research desk","kind":"documents","instructions":"Cite local files"}'
+
 curl -s -X POST localhost:8765/api/desktop/tasks -H 'Content-Type: application/json' \
-  -d '{"prompt":"Prepare the weekly report","priority":80}'
+  -d '{"prompt":"Prepare the weekly report","priority":80,"project_id":"PROJECT_ID","session_id":"SESSION_ID"}'
 
 curl -s -X PATCH localhost:8765/api/desktop/tasks/TASK_ID \
   -H 'Content-Type: application/json' -d '{"action":"cancel"}'

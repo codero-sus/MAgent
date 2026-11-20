@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS desktop_tasks (
     attempts INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 1,
     worker_id TEXT NOT NULL DEFAULT '',
+    project_id TEXT NOT NULL DEFAULT '',
     session_id TEXT NOT NULL DEFAULT 'desktop',
     result TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '',
@@ -73,6 +74,22 @@ class DesktopTaskQueue:
         self._connection.row_factory = sqlite3.Row
         with self._lock:
             self._connection.executescript(_SCHEMA)
+            columns = {
+                str(row["name"])
+                for row in self._connection.execute("PRAGMA table_info(desktop_tasks)").fetchall()
+            }
+            if "project_id" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE desktop_tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT ''"
+                )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_desktop_tasks_project "
+                "ON desktop_tasks(project_id, updated_at DESC)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_desktop_tasks_session "
+                "ON desktop_tasks(session_id, updated_at DESC)"
+            )
             if str(self.path) != ":memory:":
                 self._connection.execute("PRAGMA journal_mode=WAL")
             self._connection.execute("PRAGMA busy_timeout=30000")
@@ -129,6 +146,7 @@ class DesktopTaskQueue:
         title: str = "",
         priority: int = 50,
         max_attempts: int = 1,
+        project_id: str = "",
         session_id: str = "desktop",
         metadata: dict[str, Any] | None = None,
     ) -> DesktopTask:
@@ -140,6 +158,7 @@ class DesktopTaskQueue:
             title=title,
             priority=priority,
             max_attempts=max_attempts,
+            project_id=project_id,
             session_id=session_id or "desktop",
             metadata=dict(metadata or {}),
         )
@@ -148,8 +167,9 @@ class DesktopTaskQueue:
                 """
                 INSERT INTO desktop_tasks (
                     id,title,prompt,status,priority,created_at,updated_at,started_at,
-                    completed_at,attempts,max_attempts,worker_id,session_id,result,error,metadata
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    completed_at,attempts,max_attempts,worker_id,project_id,session_id,
+                    result,error,metadata
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 self._values(task),
             )
@@ -169,18 +189,29 @@ class DesktopTaskQueue:
         self,
         *,
         status: str | TaskStatus = "",
+        project_id: str = "",
+        session_id: str = "",
         limit: int = 100,
         newest_first: bool = True,
     ) -> list[DesktopTask]:
-        """List tasks, optionally filtered by status."""
+        """List tasks, optionally filtered by state, project, or session."""
         bounded = max(1, min(int(limit), 1000))
         order = "updated_at DESC" if newest_first else "priority DESC, created_at ASC"
+        clauses: list[str] = []
         params: list[Any] = []
-        sql = "SELECT * FROM desktop_tasks"
         if status:
             normalized = TaskStatus(str(getattr(status, "value", status))).value
-            sql += " WHERE status = ?"
+            clauses.append("status = ?")
             params.append(normalized)
+        if project_id:
+            clauses.append("project_id = ?")
+            params.append(str(project_id))
+        if session_id:
+            clauses.append("session_id = ?")
+            params.append(str(session_id))
+        sql = "SELECT * FROM desktop_tasks"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         sql += f" ORDER BY {order} LIMIT ?"
         params.append(bounded)
         with self._lock:
@@ -482,15 +513,26 @@ class DesktopTaskQueue:
             self._connection.commit()
         self._emit("paused" if paused else "resumed", None)
 
-    def stats(self) -> dict[str, Any]:
-        """Return counts and basic queue telemetry."""
+    def stats(self, *, project_id: str = "", session_id: str = "") -> dict[str, Any]:
+        """Return counts and telemetry, optionally scoped to a workbench context."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if project_id:
+            clauses.append("project_id=?")
+            params.append(str(project_id))
+        if session_id:
+            clauses.append("session_id=?")
+            params.append(str(session_id))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        queued_where = where + (" AND " if where else " WHERE ") + "status=?"
         with self._lock:
             rows = self._connection.execute(
-                "SELECT status, COUNT(*) AS count FROM desktop_tasks GROUP BY status"
+                "SELECT status, COUNT(*) AS count FROM desktop_tasks" + where + " GROUP BY status",
+                params,
             ).fetchall()
             oldest = self._connection.execute(
-                "SELECT MIN(created_at) AS value FROM desktop_tasks WHERE status=?",
-                (TaskStatus.QUEUED.value,),
+                "SELECT MIN(created_at) AS value FROM desktop_tasks" + queued_where,
+                [*params, TaskStatus.QUEUED.value],
             ).fetchone()
         counts = {status.value: 0 for status in TaskStatus}
         counts.update({str(row["status"]): int(row["count"]) for row in rows})
@@ -498,6 +540,8 @@ class DesktopTaskQueue:
         return {
             "path": str(self.path),
             "paused": self.paused,
+            "project_id": str(project_id),
+            "session_id": str(session_id),
             "counts": counts,
             "total": sum(counts.values()),
             "queued_age_seconds": round(max(0.0, time.time() - queued_since), 3)
@@ -535,6 +579,7 @@ class DesktopTaskQueue:
             task.attempts,
             task.max_attempts,
             task.worker_id,
+            task.project_id,
             task.session_id,
             task.result,
             task.error,
@@ -560,6 +605,7 @@ class DesktopTaskQueue:
             attempts=int(row["attempts"]),
             max_attempts=int(row["max_attempts"]),
             worker_id=str(row["worker_id"]),
+            project_id=str(row["project_id"]),
             session_id=str(row["session_id"]),
             result=str(row["result"]),
             error=str(row["error"]),

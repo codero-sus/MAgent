@@ -280,8 +280,10 @@ class DesktopAppearance:
     logo_theme: str = DEFAULT_LOGO_THEME
     bubble_x: int = -1
     bubble_y: int = 90
-    panel_geometry: str = "500x720"
+    panel_geometry: str = "1180x760"
     always_on_top: bool = True
+    project_id: str = ""
+    session_id: str = ""
 
     def __post_init__(self) -> None:
         self.logo_theme = logo_theme(self.logo_theme).id
@@ -305,7 +307,15 @@ class DesktopAppearanceStore:
             return DesktopAppearance()
         if not isinstance(payload, dict):
             return DesktopAppearance()
-        known = {"logo_theme", "bubble_x", "bubble_y", "panel_geometry", "always_on_top"}
+        known = {
+            "logo_theme",
+            "bubble_x",
+            "bubble_y",
+            "panel_geometry",
+            "always_on_top",
+            "project_id",
+            "session_id",
+        }
         try:
             return DesktopAppearance(
                 **{key: value for key, value in payload.items() if key in known}

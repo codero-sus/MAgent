@@ -168,6 +168,7 @@ class DesktopTask:
     attempts: int = 0
     max_attempts: int = 1
     worker_id: str = ""
+    project_id: str = ""
     session_id: str = "desktop"
     result: str = ""
     error: str = ""
@@ -182,6 +183,8 @@ class DesktopTask:
         self.priority = max(0, min(100, int(self.priority)))
         self.max_attempts = max(1, min(20, int(self.max_attempts)))
         self.attempts = max(0, int(self.attempts))
+        self.project_id = str(self.project_id).strip()
+        self.session_id = str(self.session_id).strip() or "desktop"
 
     def _default_title(self) -> str:
         """Build a compact title from the first non-empty prompt line."""
@@ -213,6 +216,7 @@ class DesktopTask:
             "attempts": self.attempts,
             "max_attempts": self.max_attempts,
             "worker_id": self.worker_id,
+            "project_id": self.project_id,
             "session_id": self.session_id,
             "result": self.result,
             "error": self.error,
@@ -237,6 +241,7 @@ class DesktopTask:
             "attempts",
             "max_attempts",
             "worker_id",
+            "project_id",
             "session_id",
             "result",
             "error",

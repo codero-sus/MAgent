@@ -91,7 +91,7 @@ print(result.verify("..."))    # are the citations real?
 ```bash
 pip install 'MAgent[desktop]'    # optional but recommended backend
 magent desktop status
-magent desktop                   # click the floating logo for task/queue/chat
+magent desktop                   # click the logo for projects, sessions, files, and work
 ```
 
 The queue is local SQLite, actions that change the desktop ask for approval, and

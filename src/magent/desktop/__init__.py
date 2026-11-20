@@ -37,7 +37,15 @@ from .models import (
     WorkflowResult,
     WorkflowStepResult,
 )
+from .projects import (
+    DesktopProject,
+    DesktopProjectStore,
+    DesktopSession,
+    ProjectKind,
+    WorkspaceEntry,
+)
 from .queue import DesktopQueueWorker, DesktopTaskQueue
+from .workbench import DesktopWorkbench, TranscriptItem
 from .workflow import DesktopStep, DesktopWorkflow, DesktopWorkflowRunner, load_workflow
 
 __all__ = [
@@ -49,24 +57,31 @@ __all__ = [
     "DesktopCapabilities",
     "DesktopController",
     "DesktopDriver",
+    "DesktopProject",
+    "DesktopProjectStore",
     "DesktopQueueWorker",
+    "DesktopSession",
     "DesktopStep",
     "DesktopTask",
     "DesktopTaskQueue",
     "DesktopUnavailableError",
+    "DesktopWorkbench",
     "DesktopWorkflow",
     "DesktopWorkflowRunner",
     "LogoTheme",
     "MonitorInfo",
     "NativeDesktopDriver",
     "Point",
+    "ProjectKind",
     "PyAutoGUIDriver",
     "RecordingDesktopDriver",
     "Rect",
     "TaskStatus",
+    "TranscriptItem",
     "WindowInfo",
     "WorkflowResult",
     "WorkflowStepResult",
+    "WorkspaceEntry",
     "build_desktop_controller",
     "icon_svg",
     "load_workflow",

@@ -32,9 +32,9 @@ LLMHoster already serves on your machine.
 | --- | --- |
 | **No dependencies** | `dependencies = []` in `pyproject.toml`. Stdlib only, by design and by test. |
 | **Local first** | Cortex LLMHoster over its documented `/v1` and `/admin/api` endpoints; an echo backend keeps everything working with no models running. |
-| **Always available** | Draggable topmost launcher, native task/queue/chat panel, durable SQLite work, eight selectable logo pairs, and no cloud control plane. |
+| **Always available** | Draggable topmost launcher, native project/session workbench, workspace files, reusable skills, durable background work, eight selectable logo pairs, and no cloud control plane. |
 | **Honest failure** | Typed errors with codes and exit codes; headless and partially supported desktops report exact capabilities instead of crashing. |
-| **Verifiable** | 514 tests, plus an auto-generated manifest of **3,539 improvements** where every entry is re-checked against the code by `make verify`. |
+| **Verifiable** | 522 tests, plus an auto-generated manifest of **3,601 improvements** where every entry is re-checked against the code by `make verify`. |
 
 ## Install
 
@@ -42,7 +42,7 @@ LLMHoster already serves on your machine.
 pip install -e .              # optional — `python -m magent` works from a checkout
 pip install 'MAgent[desktop]'  # optional cross-platform desktop backend
 magent --help
-make test                     # 514 tests, offline, ~35 seconds
+make test                     # 522 tests, offline, ~35 seconds
 make verify                   # re-check the improvements manifest
 ```
 
@@ -66,7 +66,7 @@ magent chat                                     # interactive session
 magent plan "add pagination to the sessions API"
 magent rag ingest docs/ && magent rag search --query "how do guardrails work"
 magent eval sample --output evals/smoke.json    # evaluate an agent
-magent desktop                                  # floating logo + task/queue/chat panel
+magent desktop                                  # floating logo + project/session workbench
 magent serve                                    # http://127.0.0.1:8765
 ```
 
@@ -107,19 +107,29 @@ def count_lines(path: str, skip_blank: bool = False) -> dict:
 ### Always-available desktop agent
 
 ```bash
-magent desktop status                         # exact live capabilities
-magent desktop                                # floating always-on-top MAgent logo
-magent desktop queue add "Prepare my report" # persistent prioritized work
-magent desktop logos                          # eight icon + lockup pairs
-magent desktop autostart install              # optional start-at-login
+magent desktop                                      # launcher + local workbench
+magent desktop status                               # exact live capabilities
+magent desktop projects create --title Research     # durable project + session
+magent desktop queue add "Prepare my report"        # persistent background work
+magent desktop files list --project PROJECT_ID       # local artifacts
+magent desktop logos                                # eight icon + lockup pairs
+magent desktop autostart install                    # optional start-at-login
 ```
 
-Clicking the draggable logo opens a native task/list, queue, agent-chat, status,
-and settings panel. The SQLite queue survives restarts and uses queued, paused,
-running, completed, failed, and cancelled states. Mouse, keyboard, clipboard, screen,
-window, application, wait, and composed JSON-workflow operations are available
-through 30 tools; desktop-changing calls require human approval. A top-left
-pointer fail-safe and panel emergency stop provide immediate interruption.
+Clicking the draggable logo opens an original three-column MAgent workbench:
+projects and sessions, the active conversation/composer, and project files,
+background activity, and reusable skills. Per-project workspaces, instructions,
+Cortex model choices, pinned/archived sessions, sub-sessions, attachments, and
+bounded file previews remain local. Switching context does not stop queued work.
+The SQLite queue survives restarts and uses queued, paused, running, completed,
+failed, and cancelled states.
+
+Mouse, keyboard, clipboard, screen, window, application, wait, and composed
+JSON-workflow operations remain available through 30 approval-aware tools. A
+top-left pointer fail-safe and workbench emergency stop provide immediate
+interruption. The interaction model is informed by modern project/session agent
+workbenches such as LM Studio Bionic, but the UI, code, storage, branding, and
+safety controls are original to MAgent.
 
 The core stays dependency-free. `MAgent[desktop]` adds PyAutoGUI/Pillow for the
 most consistent backend; native Windows, macOS, X11, and Wayland helpers are
@@ -174,8 +184,9 @@ Every command accepts `--format text|json|jsonl|yaml|csv|md`, `--quiet`,
 `magent serve` exposes the same objects over REST, plus a single-page UI at `/`
 that uses relative URLs and works behind a proxy. Endpoints cover health, info,
 models, tools, chat (JSON and server-sent events), sessions, memory, metrics
-(Prometheus), RAG, desktop capabilities, and durable desktop-task lifecycle.
-Optional bearer-token auth; configurable CORS. Direct desktop-changing tool
+(Prometheus), RAG, desktop capabilities, local projects/sessions/files, and the
+durable desktop-task lifecycle. Optional bearer-token auth; configurable CORS.
+Direct desktop-changing tool
 calls remain approval-gated.
 
 ### Extensibility
@@ -192,7 +203,7 @@ src/magent/
 ├── llm/ http/ secrets.py                        the wiring to models
 ├── tools/ (113 builtins) guardrails/            what it may do
 ├── memory/ rag/                                 what it knows
-├── desktop/                                     local automation + floating UI
+├── desktop/                                     automation + projects + workbench
 ├── agents/ (presets, teams) skills/ plugins/    how it is extended
 ├── session/ eval/ observability/ concurrency/   how it is operated
 ├── output/ server/ cli/                         how you talk to it
@@ -207,7 +218,7 @@ src/magent/
 ## Testing and evaluation
 
 ```bash
-make test            # 514 tests: unit, integration, CLI, HTTP, doctests
+make test            # 522 tests: unit, integration, CLI, HTTP, doctests
 make smoke           # one end-to-end offline run of the whole stack
 make smoke-tools     # dispatch every registered tool
 make eval            # run the sample dataset

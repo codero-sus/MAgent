@@ -20,8 +20,9 @@ Endpoints (see :meth:`MAgentServer.routes` for the live list):
 ``GET  /api/presets``     agent presets
 ``POST /api/rag/ingest``  index files for retrieval
 ``GET  /api/rag/search``  retrieve cited chunks
-``GET  /api/desktop``     desktop capabilities and durable queue status
-``POST /api/desktop/tasks`` enqueue work for the floating desktop agent
+``GET  /api/desktop``     desktop capabilities and workbench status
+``GET  /api/desktop/projects`` local projects, sessions, and workspace files
+``POST /api/desktop/tasks`` enqueue project-scoped work for the desktop agent
 
 Auth is a bearer token when ``http.api_key`` (or ``MAGENT_HTTP_API_KEY``) is set;
 origins come from ``http.cors_origins`` unless ``allow_origins_any`` is set, which
@@ -143,6 +144,7 @@ class MAgentServer:
         skills: Any = None,
         observability: Any = None,
         desktop_queue: Any = None,
+        desktop_projects: Any = None,
         agent_factory: Any = None,
     ) -> None:
         """Wire the server.
@@ -158,6 +160,7 @@ class MAgentServer:
             skills: skill library
             observability: observability façade, used for metrics
             desktop_queue: optional shared :class:`DesktopTaskQueue`
+            desktop_projects: optional shared :class:`DesktopProjectStore`
             agent_factory: callable ``(session_id, options) -> Agent`` overriding the default
         """
         self.config = config
@@ -171,6 +174,8 @@ class MAgentServer:
         self.observability = observability
         self.desktop_queue = desktop_queue
         self._owns_desktop_queue = desktop_queue is None
+        self.desktop_projects = desktop_projects
+        self._owns_desktop_projects = desktop_projects is None
         self.agent_factory = agent_factory
         self.stats = ServerStats()
         self.started_at = time.time()
@@ -328,7 +333,62 @@ class MAgentServer:
         router.get("/api/metrics", self.api_metrics, description="Metrics snapshot")
         router.get("/api/rag/search", self.api_rag_search, description="Retrieve cited chunks")
         router.post("/api/rag/ingest", self.api_rag_ingest, description="Index files")
-        router.get("/api/desktop", self.api_desktop, description="Desktop and queue status")
+        router.get("/api/desktop", self.api_desktop, description="Desktop and workbench status")
+        router.get(
+            "/api/desktop/projects",
+            self.api_desktop_projects,
+            description="List workbench projects",
+        )
+        router.post(
+            "/api/desktop/projects",
+            self.api_desktop_project_add,
+            description="Create a workbench project",
+        )
+        router.get(
+            "/api/desktop/projects/{id}",
+            self.api_desktop_project,
+            description="One workbench project",
+        )
+        router.patch(
+            "/api/desktop/projects/{id}",
+            self.api_desktop_project_update,
+            description="Update a workbench project",
+        )
+        router.delete(
+            "/api/desktop/projects/{id}",
+            self.api_desktop_project_delete,
+            description="Delete workbench project metadata",
+        )
+        router.get(
+            "/api/desktop/projects/{id}/sessions",
+            self.api_desktop_project_sessions,
+            description="List project sessions",
+        )
+        router.post(
+            "/api/desktop/projects/{id}/sessions",
+            self.api_desktop_session_add,
+            description="Create a project session",
+        )
+        router.get(
+            "/api/desktop/projects/{id}/files",
+            self.api_desktop_project_files,
+            description="List or preview project files",
+        )
+        router.get(
+            "/api/desktop/sessions/{id}",
+            self.api_desktop_session,
+            description="One workbench session",
+        )
+        router.patch(
+            "/api/desktop/sessions/{id}",
+            self.api_desktop_session_update,
+            description="Update a workbench session",
+        )
+        router.delete(
+            "/api/desktop/sessions/{id}",
+            self.api_desktop_session_delete,
+            description="Delete workbench session metadata",
+        )
         router.get("/api/desktop/tasks", self.api_desktop_tasks, description="List desktop tasks")
         router.post(
             "/api/desktop/tasks", self.api_desktop_task_add, description="Queue desktop work"
@@ -662,22 +722,227 @@ class MAgentServer:
             "desktop": controller.describe(),
             "ui": tkinter_status(),
             "queue": self._desktop_tasks().stats(),
+            "projects": self._desktop_project_store().stats(),
             "autostart": autostart_status(),
             "logo": logo_theme(selected).to_dict(),
             "logo_options": [theme.to_dict() for theme in LOGO_THEMES],
         }
 
+    def api_desktop_projects(self, request: Request) -> tuple[int, Any]:
+        """List local workbench projects."""
+        include_archived = _bool(request.query.get("include_archived", ""))
+        limit = max(1, min(_int(request.query.get("limit", 100), 100), 1000))
+        query = request.query.get("q", "")
+        store = self._desktop_project_store()
+        projects = store.list_projects(
+            include_archived=include_archived,
+            query=query,
+            limit=limit,
+        )
+        return 200, {
+            "projects": [project.to_dict() for project in projects],
+            "stats": store.stats(),
+        }
+
+    def api_desktop_project_add(self, request: Request) -> tuple[int, Any]:
+        """Create a local workbench project and its first session."""
+        payload = request.json or {}
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            return 400, {"error": "name is required"}
+        metadata = payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return 400, {"error": "metadata must be an object"}
+        store = self._desktop_project_store()
+        try:
+            project = store.create_project(
+                name,
+                kind=str(payload.get("kind", "general")),
+                workspace=str(payload.get("workspace", "")),
+                instructions=str(payload.get("instructions", "")),
+                model=str(payload.get("model", "")),
+                pinned=bool(payload.get("pinned", False)),
+                metadata={**metadata, "source": metadata.get("source", "api")},
+            )
+            session = store.create_session(
+                project.id,
+                title=str(payload.get("session_title", "New session")),
+            )
+        except (OSError, ValueError) as exc:
+            return 400, {"error": str(exc)}
+        return 201, {
+            "project": project.to_dict(),
+            "session": session.to_dict(),
+            "stats": store.stats(),
+        }
+
+    def api_desktop_project(self, request: Request) -> tuple[int, Any]:
+        """Return one workbench project and its sessions."""
+        store = self._desktop_project_store()
+        project = store.get_project(request.params.get("id", ""))
+        if project is None:
+            return 404, {"error": "unknown desktop project"}
+        sessions = store.list_sessions(project.id, include_archived=True, limit=1000)
+        return 200, {
+            "project": project.to_dict(),
+            "sessions": [session.to_dict() for session in sessions],
+            "queue": self._desktop_tasks().stats(project_id=project.id),
+        }
+
+    def api_desktop_project_update(self, request: Request) -> tuple[int, Any]:
+        """Update safe mutable project metadata."""
+        payload = request.json or {}
+        allowed = {"name", "kind", "instructions", "model", "pinned", "archived"}
+        changes = {key: value for key, value in payload.items() if key in allowed}
+        if not changes:
+            return 400, {"error": "no supported project fields were provided"}
+        store = self._desktop_project_store()
+        try:
+            project = store.update_project(request.params.get("id", ""), **changes)
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+        if project is None:
+            return 404, {"error": "unknown desktop project"}
+        return 200, {"project": project.to_dict(), "stats": store.stats()}
+
+    def api_desktop_project_delete(self, request: Request) -> tuple[int, Any]:
+        """Delete project metadata while deliberately preserving workspace files."""
+        project_id = request.params.get("id", "")
+        store = self._desktop_project_store()
+        if store.get_project(project_id) is None:
+            return 404, {"error": "unknown desktop project"}
+        store.delete_project(project_id)
+        return 200, {
+            "deleted": True,
+            "id": project_id,
+            "workspace_preserved": True,
+            "stats": store.stats(),
+        }
+
+    def api_desktop_project_sessions(self, request: Request) -> tuple[int, Any]:
+        """List sessions belonging to one workbench project."""
+        project_id = request.params.get("id", "")
+        store = self._desktop_project_store()
+        project = store.get_project(project_id)
+        if project is None:
+            return 404, {"error": "unknown desktop project"}
+        sessions = store.list_sessions(
+            project_id,
+            include_archived=_bool(request.query.get("include_archived", "")),
+            limit=max(1, min(_int(request.query.get("limit", 200), 200), 1000)),
+        )
+        return 200, {
+            "project": project.to_dict(),
+            "sessions": [session.to_dict() for session in sessions],
+        }
+
+    def api_desktop_session_add(self, request: Request) -> tuple[int, Any]:
+        """Create a session or sub-session inside a project."""
+        project_id = request.params.get("id", "")
+        payload = request.json or {}
+        store = self._desktop_project_store()
+        if store.get_project(project_id) is None:
+            return 404, {"error": "unknown desktop project"}
+        metadata = payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return 400, {"error": "metadata must be an object"}
+        try:
+            session = store.create_session(
+                project_id,
+                title=str(payload.get("title", "New session")),
+                model=str(payload.get("model", "")),
+                pinned=bool(payload.get("pinned", False)),
+                parent_id=str(payload.get("parent_id", "")),
+                metadata={**metadata, "source": metadata.get("source", "api")},
+            )
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+        return 201, {"session": session.to_dict()}
+
+    def api_desktop_project_files(self, request: Request) -> tuple[int, Any]:
+        """List project files or return one bounded text preview."""
+        project_id = request.params.get("id", "")
+        store = self._desktop_project_store()
+        project = store.get_project(project_id)
+        if project is None:
+            return 404, {"error": "unknown desktop project"}
+        relative = request.query.get("path", "")
+        if relative:
+            try:
+                preview = store.preview_file(
+                    project_id,
+                    relative,
+                    max_bytes=int(
+                        getattr(self.config.desktop, "max_file_preview_bytes", 128 * 1024)
+                    ),
+                )
+            except (OSError, ValueError) as exc:
+                return 400, {"error": str(exc)}
+            return 200, {"project": project.to_dict(), "file": preview}
+        files = store.list_files(
+            project_id,
+            query=request.query.get("q", ""),
+            limit=max(1, min(_int(request.query.get("limit", 500), 500), 5000)),
+        )
+        return 200, {
+            "project": project.to_dict(),
+            "files": [entry.to_dict() for entry in files],
+        }
+
+    def api_desktop_session(self, request: Request) -> tuple[int, Any]:
+        """Return one workbench session and its queue summary."""
+        session = self._desktop_project_store().get_session(request.params.get("id", ""))
+        if session is None:
+            return 404, {"error": "unknown desktop session"}
+        return 200, {
+            "session": session.to_dict(),
+            "queue": self._desktop_tasks().stats(session_id=session.id),
+        }
+
+    def api_desktop_session_update(self, request: Request) -> tuple[int, Any]:
+        """Rename, pin, archive, or change the model for a workbench session."""
+        payload = request.json or {}
+        allowed = {"title", "model", "pinned", "archived"}
+        changes = {key: value for key, value in payload.items() if key in allowed}
+        if not changes:
+            return 400, {"error": "no supported session fields were provided"}
+        session = self._desktop_project_store().update_session(
+            request.params.get("id", ""), **changes
+        )
+        if session is None:
+            return 404, {"error": "unknown desktop session"}
+        return 200, {"session": session.to_dict()}
+
+    def api_desktop_session_delete(self, request: Request) -> tuple[int, Any]:
+        """Delete session metadata while preserving durable task history."""
+        session_id = request.params.get("id", "")
+        store = self._desktop_project_store()
+        if store.get_session(session_id) is None:
+            return 404, {"error": "unknown desktop session"}
+        store.delete_session(session_id)
+        return 200, {"deleted": True, "id": session_id, "task_history_preserved": True}
+
     def api_desktop_tasks(self, request: Request) -> tuple[int, Any]:
         """List durable desktop tasks, optionally filtered by lifecycle state."""
         status = request.query.get("status", "")
+        project_id = request.query.get("project_id", "")
+        session_id = request.query.get("session_id", "")
         limit = max(1, min(_int(request.query.get("limit", 100), 100), 1000))
         try:
-            tasks = self._desktop_tasks().list(status=status, limit=limit)
+            tasks = self._desktop_tasks().list(
+                status=status,
+                project_id=project_id,
+                session_id=session_id,
+                limit=limit,
+            )
         except ValueError:
             return 400, {"error": "invalid desktop task status", "status": status}
         return 200, {
             "tasks": [task.to_dict() for task in tasks],
-            "stats": self._desktop_tasks().stats(),
+            "stats": self._desktop_tasks().stats(
+                project_id=project_id,
+                session_id=session_id,
+            ),
         }
 
     def api_desktop_task_add(self, request: Request) -> tuple[int, Any]:
@@ -689,18 +954,60 @@ class MAgentServer:
         metadata = payload.get("metadata", {})
         if not isinstance(metadata, dict):
             return 400, {"error": "metadata must be an object"}
+        project_id = str(payload.get("project_id", "")).strip()
+        session_id = str(payload.get("session_id", "")).strip()
+        project = None
+        session = None
+        store = self._desktop_project_store()
+        if project_id:
+            project = store.get_project(project_id)
+            if project is None:
+                return 400, {"error": "unknown desktop project"}
+        if session_id:
+            session = store.get_session(session_id)
+            if session is not None:
+                if project is not None and session.project_id != project.id:
+                    return 400, {"error": "session does not belong to project"}
+                project = project or store.get_project(session.project_id)
+            elif project_id:
+                return 400, {"error": "unknown desktop session"}
+        if project is not None and session is None:
+            session = store.ensure_session(project.id)
+            session_id = session.id
+        if not project_id and not session_id:
+            project = store.ensure_default()
+            session = store.ensure_session(project.id)
+            project_id, session_id = project.id, session.id
+        elif project is not None:
+            project_id = project.id
+        details = {**metadata, "source": metadata.get("source", "api")}
+        if project is not None:
+            details.update(
+                {
+                    "project_id": project.id,
+                    "session_id": session_id,
+                    "workspace": project.workspace,
+                    "model": (session.model if session is not None else "") or project.model,
+                }
+            )
         try:
             task = self._desktop_tasks().enqueue(
                 prompt,
                 title=str(payload.get("title", "")),
                 priority=_int(payload.get("priority", 50), 50),
                 max_attempts=_int(payload.get("max_attempts", 1), 1),
-                session_id=str(payload.get("session_id", "desktop-api")),
-                metadata={**metadata, "source": metadata.get("source", "api")},
+                project_id=project_id,
+                session_id=session_id or "desktop-api",
+                metadata=details,
             )
         except ValueError as exc:
             return 400, {"error": str(exc)}
-        return 201, {"task": task.to_dict(), "stats": self._desktop_tasks().stats()}
+        if session is not None:
+            store.touch_session(session.id, task_id=task.id)
+        return 201, {
+            "task": task.to_dict(),
+            "stats": self._desktop_tasks().stats(project_id=project_id),
+        }
 
     def api_desktop_task(self, request: Request) -> tuple[int, Any]:
         """Return one durable desktop task."""
@@ -812,8 +1119,19 @@ class MAgentServer:
             self.desktop_queue = DesktopTaskQueue(path or ":memory:", recover=False)
         return self.desktop_queue
 
-    def _close_desktop_tasks(self) -> None:
-        """Close a lazily owned desktop queue without touching injected fixtures."""
+    def _desktop_project_store(self) -> Any:
+        """Return the local project/session store used by desktop clients."""
+        if self.desktop_projects is None:
+            from ..desktop import DesktopProjectStore
+
+            desktop = getattr(self.config, "desktop", None)
+            path = getattr(desktop, "projects_path", ":memory:") or ":memory:"
+            workspaces = getattr(desktop, "workspace_directory", "") or None
+            self.desktop_projects = DesktopProjectStore(path, workspace_root=workspaces)
+        return self.desktop_projects
+
+    def _close_desktop_state(self) -> None:
+        """Close lazily owned desktop stores without touching injected fixtures."""
         queue = self.desktop_queue
         if queue is not None and self._owns_desktop_queue:
             try:
@@ -821,6 +1139,13 @@ class MAgentServer:
             except Exception:
                 pass
             self.desktop_queue = None
+        projects = self.desktop_projects
+        if projects is not None and self._owns_desktop_projects:
+            try:
+                projects.close()
+            except Exception:
+                pass
+            self.desktop_projects = None
 
     def _tool_context(self) -> Any:
         """Build a tool context for API-dispatched calls."""
@@ -912,7 +1237,7 @@ class MAgentServer:
             LOGGER.info("shutting down")
         finally:
             httpd.server_close()
-            self._close_desktop_tasks()
+            self._close_desktop_state()
 
     def start_background(self, *, host: str = "", port: int = 0) -> str:
         """Start the server on a daemon thread and return its URL."""
@@ -935,7 +1260,7 @@ class MAgentServer:
         thread, self._thread = self._thread, None
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
-        self._close_desktop_tasks()
+        self._close_desktop_state()
 
     @property
     def running(self) -> bool:
@@ -1231,6 +1556,11 @@ def _int(value: Any, default: int) -> int:
         return int(str(value).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _bool(value: Any) -> bool:
+    """Parse common truthy query-string values."""
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _sse(event: str, payload: Mapping[str, Any]) -> bytes:

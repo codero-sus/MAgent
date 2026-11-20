@@ -351,7 +351,7 @@ class ToolsConfig:
 
 @dataclass(slots=True)
 class DesktopConfig:
-    """Desktop automation, persistent queue, and floating-panel settings."""
+    """Desktop automation, project workbench, queue, and launcher settings."""
 
     enabled: bool = True
     backend: str = "auto"
@@ -374,11 +374,15 @@ class DesktopConfig:
     )
     screenshot_directory: str = ""
     queue_path: str = ""
+    projects_path: str = ""
+    workspace_directory: str = ""
     state_path: str = ""
     logo_theme: str = "orbit"
     always_on_top: bool = True
-    panel_width: int = 500
-    panel_height: int = 720
+    panel_width: int = 1180
+    panel_height: int = 760
+    max_workspace_files: int = 1000
+    max_file_preview_bytes: int = 128 * 1024
     queue_poll_interval: float = 0.25
     recover_tasks: bool = True
     autostart: bool = False
@@ -409,6 +413,12 @@ class DesktopConfig:
             )
         if not 320 <= self.panel_width <= 2400 or not 400 <= self.panel_height <= 2400:
             raise ConfigValidationError("[desktop] panel dimensions are outside safe bounds")
+        if not 10 <= self.max_workspace_files <= 5000:
+            raise ConfigValidationError("[desktop] max_workspace_files must be within 10..5000")
+        if not 256 <= self.max_file_preview_bytes <= 2 * 1024 * 1024:
+            raise ConfigValidationError(
+                "[desktop] max_file_preview_bytes must be within 256 bytes..2 MiB"
+            )
         if self.queue_poll_interval < 0.05:
             raise ConfigValidationError("[desktop] queue_poll_interval must be at least 0.05")
         from .desktop.branding import logo_ids
@@ -659,6 +669,8 @@ ENV_MAP: dict[str, tuple[str, str, type]] = {
     "MAGENT_DESKTOP_FAIL_SAFE": ("desktop", "fail_safe", bool),
     "MAGENT_DESKTOP_LOGO": ("desktop", "logo_theme", str),
     "MAGENT_DESKTOP_QUEUE": ("desktop", "queue_path", str),
+    "MAGENT_DESKTOP_PROJECTS": ("desktop", "projects_path", str),
+    "MAGENT_DESKTOP_WORKSPACES": ("desktop", "workspace_directory", str),
     "MAGENT_DESKTOP_TOPMOST": ("desktop", "always_on_top", bool),
     "MAGENT_DESKTOP_ALLOWED_APPS": ("desktop", "allowed_apps", list),
     "MAGENT_DESKTOP_OPEN_SCHEMES": ("desktop", "allowed_open_schemes", list),
@@ -753,6 +765,10 @@ class Config:
             self.desktop.screenshot_directory = str(self.data_dir / "desktop" / "screenshots")
         if not self.desktop.queue_path:
             self.desktop.queue_path = str(self.data_dir / "desktop" / "queue.db")
+        if not self.desktop.projects_path:
+            self.desktop.projects_path = str(self.data_dir / "desktop" / "projects.db")
+        if not self.desktop.workspace_directory:
+            self.desktop.workspace_directory = str(self.data_dir / "desktop" / "projects")
         if not self.desktop.state_path:
             self.desktop.state_path = str(self.data_dir / "desktop" / "state.json")
 
@@ -1192,8 +1208,10 @@ allowed_open_schemes = ["file", "http", "https", "mailto"]
 max_workflow_steps = 100
 logo_theme = "orbit"          # orbit | core | command | neural | flow | window | pulse | beacon
 always_on_top = true
-panel_width = 500
-panel_height = 720
+panel_width = 1180
+panel_height = 760
+max_workspace_files = 1000
+max_file_preview_bytes = 131072
 autostart = false
 
 [guardrails]

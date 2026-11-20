@@ -558,17 +558,24 @@ def desktop_queue_add(
     title: str = "",
     priority: int = 50,
     max_attempts: int = 1,
+    project_id: str = "",
+    session_id: str = "",
     context: ToolContext | None = None,
 ) -> dict[str, Any]:
-    """Add an agent prompt to the persistent desktop queue."""
+    """Add an agent prompt to the persistent desktop queue, optionally scoped to a project."""
     with DesktopTaskQueue(_queue_path(context), recover=False) as queue:
         task = queue.enqueue(
             prompt,
             title=title,
             priority=priority,
             max_attempts=max_attempts,
-            session_id=(context.session_id if context else "") or "desktop",
-            metadata={"source": "agent-tool", "run_id": context.run_id if context else ""},
+            project_id=project_id,
+            session_id=session_id or (context.session_id if context else "") or "desktop",
+            metadata={
+                "source": "agent-tool",
+                "run_id": context.run_id if context else "",
+                "project_id": project_id,
+            },
         )
     return task.to_dict()
 
@@ -576,13 +583,20 @@ def desktop_queue_add(
 @tool(category="desktop", risk="read", tags=["queue", "list"])
 def desktop_queue_list(
     status: str = "",
+    project_id: str = "",
+    session_id: str = "",
     limit: int = 50,
     context: ToolContext | None = None,
 ) -> dict[str, Any]:
-    """List queued, running, and completed desktop tasks."""
+    """List queued, running, and completed desktop tasks with optional workbench filters."""
     with DesktopTaskQueue(_queue_path(context), recover=False) as queue:
-        tasks = queue.list(status=status, limit=limit)
-        stats = queue.stats()
+        tasks = queue.list(
+            status=status,
+            project_id=project_id,
+            session_id=session_id,
+            limit=limit,
+        )
+        stats = queue.stats(project_id=project_id, session_id=session_id)
     return {"tasks": [task.to_dict() for task in tasks], "stats": stats}
 
 
@@ -607,10 +621,14 @@ def desktop_queue_retry(
 
 
 @tool(category="desktop", risk="safe", tags=["queue", "stats"])
-def desktop_queue_stats(context: ToolContext | None = None) -> dict[str, Any]:
-    """Report persistent desktop queue counts and pause state."""
+def desktop_queue_stats(
+    project_id: str = "",
+    session_id: str = "",
+    context: ToolContext | None = None,
+) -> dict[str, Any]:
+    """Report persistent queue counts, optionally scoped to a project or session."""
     with DesktopTaskQueue(_queue_path(context), recover=False) as queue:
-        return queue.stats()
+        return queue.stats(project_id=project_id, session_id=session_id)
 
 
 TOOLS: list[Any] = [

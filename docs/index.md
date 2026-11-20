@@ -12,7 +12,7 @@ beyond the standard library.
 | --- | --- |
 | Agent loop | react, plan, reflect and single-shot modes, streaming, structured output |
 | Tools | 143 built-in tools in 17 categories behind sandbox, policy, and approval controls |
-| Desktop | draggable topmost launcher, native task/queue/chat panel, full input/screen/window automation, eight logo pairs |
+| Desktop | draggable launcher, native project/session workbench, files, skills, background work, full input/screen/window automation, eight logo pairs |
 | Backends | Cortex LLMHoster over its OpenAI-compatible `/v1` API, plus echo and scripted backends for tests |
 | Memory | hybrid BM25 + vector long-term store, token-aware short-term window, rolling summaries |
 | Retrieval | five chunking strategies, hybrid search, MMR re-ranking, citations you can verify |
@@ -21,7 +21,7 @@ beyond the standard library.
 | Sessions | JSON records, transcripts, search, export, pruning, redaction |
 | Extensibility | presets, personas, prompt templates, skills, plugins with hooks |
 | Interface | a 27-command CLI, floating desktop control, interactive REPL, REST API and web UI |
-| Quality | evaluation datasets with deterministic metrics, tracing, metrics, 514 tests, 3,539 verified improvements |
+| Quality | evaluation datasets with deterministic metrics, tracing, metrics, 522 tests, 3,601 verified improvements |
 
 ## Install
 

@@ -1,10 +1,15 @@
 # Desktop automation
 
 MAgent can stay available as a small, draggable, always-on-top logo. Clicking it
-opens a native local panel for tasks, the durable automation queue, agent chat,
-status, approvals, and emergency controls. No browser or cloud service is
-required, and model requests still go to Cortex LLMHoster over its external HTTP
-API.
+opens a native, local-first agent workbench: projects and sessions on the left,
+the active conversation in the center, and workspace files, background activity,
+and reusable skills on the right. No browser or cloud control plane is required;
+model requests still go to Cortex LLMHoster over its external HTTP API.
+
+The workbench takes broad interaction inspiration from project/session agent
+interfaces such as LM Studio Bionic while retaining an original MAgent visual
+system, implementation, safety model, and data format. No LM Studio source,
+assets, branding, or proprietary implementation is copied.
 
 ## Install and launch
 
@@ -50,22 +55,76 @@ Tk is part of many Python distributions but is packaged separately on some
 Linux systems (often as `python3-tk`). The status command reports when it is
 missing.
 
-## Floating control
+## Launcher and workbench
 
-The 64-pixel launcher can be dragged to any screen edge and remains above normal
-windows by default. Click it to open or hide the panel. The panel provides:
+The 76-pixel launcher can be dragged to any screen edge and remains above normal
+windows by default. Click it to open or hide the workbench. Its three-column
+layout keeps context visible instead of hiding each subsystem behind unrelated
+tabs:
 
-- **Tasks:** persisted history and task details.
-- **Queue:** add, pause, resume, retry, cancel, clear, and inspect work.
-- **Agent:** chat with the same MAgent/Cortex agent used by the CLI.
-- **Status:** live driver capability checks, active work, and queue counts.
-- **Settings:** choose a logo, toggle always-on-top, and manage start-at-login.
-- **Stop:** an emergency control that cancels the active agent run and stops the
-  current worker before another task is claimed.
+- **Projects and sessions:** pinned/recent navigation, rename and archive menus,
+  new sessions, and nested sub-sessions.
+- **Session:** a durable conversation reconstructed from queue history, an
+  explicit skill picker, file attachment, priority, and background send.
+- **Project files:** bounded, traversal-safe workspace indexing and text preview.
+  Attachments are copied into the project's `attachments/` directory.
+- **Activity:** every queued, paused, or running task remains visible even after
+  switching to another project or session.
+- **Skills:** the twelve bundled skills plus project skills from
+  `.magent/skills/`, `skills/`, and `docs/skills/`; type `@skill-name` or use the
+  picker to apply one explicitly. Otherwise MAgent matches skills to the task.
+- **Tasks:** full project history with retry, pause/resume, cancel, delete, result,
+  error, and applied-skill details.
+- **Project settings:** per-project Cortex model ID and instructions, logo,
+  topmost preference, and start-at-login controls.
+- **Stop:** an emergency control that cancels the active agent run before another
+  task is claimed.
 
-Panel and launcher placement, topmost preference, and logo choice are saved in
-`desktop.state_path`. The work list is stored separately in a SQLite database at
-`desktop.queue_path`, so tasks survive closing the panel or restarting MAgent.
+Project sessions continue in the background when another session is selected.
+Desktop automation remains single-consumer by design: two independent tasks must
+not race to control one mouse and keyboard.
+
+Panel/launcher placement, active context, topmost preference, and logo choice are
+saved in `desktop.state_path`. Durable tasks use `desktop.queue_path`; project and
+session metadata use `desktop.projects_path`; ordinary project folders live under
+`desktop.workspace_directory` unless a code project points at an existing local
+folder. Deleting project metadata never deletes workspace files.
+
+## Projects, sessions, and files
+
+Projects supply a workspace, type, optional Cortex model, and reusable
+instructions. Three presets are available:
+
+- `general` for quick mixed work;
+- `code` for a repository or source folder (workspace files are included for
+  orientation and file/shell tools are sandboxed to that folder);
+- `documents` for research, writing, spreadsheets, presentations, and artifacts.
+
+A first-run **Inbox** project is created locally. Every queued workbench task is
+stamped with its project and session IDs, workspace, model choice, and explicit
+skills. Existing pre-workbench queue databases migrate in place by adding a
+`project_id` column; legacy tasks remain readable.
+
+```bash
+magent desktop projects create --title "Website refresh" --kind code --workspace .
+magent desktop projects list
+magent desktop projects show PROJECT_ID
+magent desktop projects update PROJECT_ID --instructions "Run focused checks"
+magent desktop projects pin PROJECT_ID
+magent desktop projects archive PROJECT_ID
+
+magent desktop sessions create --project PROJECT_ID --title "Research"
+magent desktop sessions create --project PROJECT_ID --title "Fact check" --parent SESSION_ID
+magent desktop sessions list --project PROJECT_ID
+magent desktop sessions pin SESSION_ID
+
+magent desktop files attach ./brief.pdf --project PROJECT_ID
+magent desktop files list --project PROJECT_ID
+magent desktop files preview attachments/brief.txt --project PROJECT_ID
+```
+
+Project/session deletion removes only metadata. Queue history and workspace files
+are deliberately preserved so a mistaken cleanup cannot destroy user work.
 
 ## Eight bundled logo pairs
 
@@ -189,13 +248,19 @@ full path to be tested without touching the real desktop.
 `magent serve` exposes the same persistent queue:
 
 ```text
-GET    /api/desktop
-GET    /api/desktop/tasks?status=queued&limit=100
-POST   /api/desktop/tasks
-GET    /api/desktop/tasks/{id}
-PATCH  /api/desktop/tasks/{id}     {"action":"cancel"|"retry"|"pause"|"resume"}
-DELETE /api/desktop/tasks/{id}
-POST   /api/desktop/queue          {"action":"pause"|"resume"|"clear"}
+GET/POST    /api/desktop/projects
+GET/PATCH   /api/desktop/projects/{id}
+DELETE      /api/desktop/projects/{id}          # workspace is preserved
+GET/POST    /api/desktop/projects/{id}/sessions
+GET         /api/desktop/projects/{id}/files    # ?path= for bounded preview
+GET/PATCH   /api/desktop/sessions/{id}
+DELETE      /api/desktop/sessions/{id}          # task history is preserved
+GET         /api/desktop/tasks?project_id=...&session_id=...&status=queued
+POST        /api/desktop/tasks
+GET         /api/desktop/tasks/{id}
+PATCH       /api/desktop/tasks/{id}  {"action":"cancel"|"retry"|"pause"|"resume"}
+DELETE      /api/desktop/tasks/{id}
+POST        /api/desktop/queue       {"action":"pause"|"resume"|"clear"}
 ```
 
 Example:
@@ -252,16 +317,19 @@ allowed_apps = []                # empty means any executable
 allowed_open_schemes = ["file", "http", "https", "mailto"]
 logo_theme = "orbit"
 always_on_top = true
-panel_width = 500
-panel_height = 720
+panel_width = 1180
+panel_height = 760
+max_workspace_files = 1000
+max_file_preview_bytes = 131072
 queue_poll_interval = 0.25
 recover_tasks = true
 autostart = false
 ```
 
 Paths default under MAgent's local data directory and can be overridden with
-`queue_path`, `state_path`, and `screenshot_directory`. Common environment
-overrides include `MAGENT_DESKTOP_ENABLED`, `MAGENT_DESKTOP_BACKEND`,
-`MAGENT_DESKTOP_FAIL_SAFE`, `MAGENT_DESKTOP_LOGO`,
-`MAGENT_DESKTOP_ALLOWED_APPS`, `MAGENT_DESKTOP_OPEN_SCHEMES`, and
-`MAGENT_DESKTOP_MAX_WORKFLOW_STEPS`.
+`queue_path`, `projects_path`, `workspace_directory`, `state_path`, and
+`screenshot_directory`. Common environment overrides include
+`MAGENT_DESKTOP_ENABLED`, `MAGENT_DESKTOP_BACKEND`,
+`MAGENT_DESKTOP_FAIL_SAFE`, `MAGENT_DESKTOP_LOGO`, `MAGENT_DESKTOP_PROJECTS`,
+`MAGENT_DESKTOP_WORKSPACES`, `MAGENT_DESKTOP_ALLOWED_APPS`,
+`MAGENT_DESKTOP_OPEN_SCHEMES`, and `MAGENT_DESKTOP_MAX_WORKFLOW_STEPS`.

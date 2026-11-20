@@ -334,6 +334,7 @@ class CliContext:
                 prompt=prompter_for_mode(mode, interactive=sys.stdin.isatty()),
                 events=self.events,
             )
+        workspace = overrides.pop("workspace", self.workspace)
         agent = Agent(
             backend=self.backend,
             settings=self.config,
@@ -343,7 +344,7 @@ class CliContext:
             guardrails=self.guardrails,
             session=session,
             events=self.events,
-            workspace=self.workspace,
+            workspace=workspace,
             name=overrides.pop("name", "MAgent"),
             **overrides,
         )

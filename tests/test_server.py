@@ -212,6 +212,76 @@ class ServerTest(MAgentTestCase):
         )
         self.assertEqual(self._request(f"/api/desktop/tasks/{task_id}", method="DELETE")[0], 200)
 
+    def test_desktop_project_session_and_workspace_api(self) -> None:
+        status, payload = self._request(
+            "/api/desktop/projects",
+            method="POST",
+            body={
+                "name": "Research workspace",
+                "kind": "documents",
+                "instructions": "Cite local sources.",
+                "model": "cortex-local",
+            },
+        )
+        self.assertEqual(status, 201)
+        project_id = payload["project"]["id"]
+        session_id = payload["session"]["id"]
+        workspace = payload["project"]["workspace"]
+        with open(f"{workspace}/brief.txt", "w", encoding="utf-8") as handle:
+            handle.write("local evidence")
+
+        status, projects = self._request("/api/desktop/projects")
+        self.assertEqual(status, 200)
+        self.assertEqual(projects["projects"][0]["id"], project_id)
+        status, files = self._request(f"/api/desktop/projects/{project_id}/files")
+        self.assertEqual(status, 200)
+        self.assertEqual(files["files"][0]["path"], "brief.txt")
+        status, preview = self._request(f"/api/desktop/projects/{project_id}/files?path=brief.txt")
+        self.assertEqual(status, 200)
+        self.assertEqual(preview["file"]["content"], "local evidence")
+        self.assertEqual(
+            self._request(f"/api/desktop/projects/{project_id}/files?path=../../etc/passwd")[0],
+            400,
+        )
+
+        status, task = self._request(
+            "/api/desktop/tasks",
+            method="POST",
+            body={
+                "prompt": "Summarize the brief",
+                "project_id": project_id,
+                "session_id": session_id,
+            },
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(task["task"]["project_id"], project_id)
+        self.assertEqual(
+            self._request(f"/api/desktop/tasks?project_id={project_id}&session_id={session_id}")[1][
+                "stats"
+            ]["total"],
+            1,
+        )
+        status, session = self._request(
+            f"/api/desktop/sessions/{session_id}",
+            method="PATCH",
+            body={"title": "Brief analysis", "pinned": True},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(session["session"]["title"], "Brief analysis")
+        self.assertTrue(session["session"]["pinned"])
+
+        status, child = self._request(
+            f"/api/desktop/projects/{project_id}/sessions",
+            method="POST",
+            body={"title": "Fact check", "parent_id": session_id},
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(child["session"]["parent_id"], session_id)
+        self.assertEqual(
+            self._request(f"/api/desktop/sessions/{child['session']['id']}", method="DELETE")[0],
+            200,
+        )
+
     def test_ui_is_served(self) -> None:
         request = urllib.request.Request(self.url + "/", method="GET")
         with urllib.request.urlopen(request, timeout=10) as response:
